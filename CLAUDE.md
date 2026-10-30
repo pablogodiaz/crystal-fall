@@ -23,7 +23,8 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
 - **City loop** (`state.phase`):
   1. `explore` — find the Crystal (violet beam) in the plaza block. It counts as "found" when
      you get within 19 units or shoot it.
-  2. Shoot the Crystal (HP `30 + 15*(level-1)`) → `horde` — `28 + 12*(level-1)` horde zombies
+  2. Shoot the Crystal (HP `30 + 15*(level-1)`; melee and molotov fire also damage it; any bullet
+     entering its tile counts as a hit) → `horde` — `28 + 12*(level-1)` horde zombies
      spawn 15–30 units away; all zombies become alert.
   3. When the horde is dead → `open` — the barricade on the east wall disappears and a green exit
      marker appears.
@@ -42,7 +43,8 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   radius (alerts zombies).
 - **Melee:** F any time (left click falls back to it when the held gun has no mag or reserve): a
   0.4 s butt-stroke animation (`poseMelee` in `player.js`); the blow lands 42% in (`meleeStrike`),
-  hitting zombies in a ±1 rad cone within ~1.7 units for 1 damage (× `dmgMul`) plus knockback.
+  hitting zombies (and the Crystal) in a ±1 rad cone within ~1.7 units for 1 damage (× `dmgMul`)
+  plus knockback.
   0.55 s cooldown, small noise radius, blocks firing while swinging.
 - **Inventory:** 8 slots of stackable items (`player.inv`, `ITEMS`): bandage, medkit, canned food,
   scrap, molotov, pipe bomb. Keys 1–8 (or click) use a slot, right-click drops the stack. Full pack →
@@ -60,7 +62,8 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   `3 + level` zombies that stay near the door and never despawn), pharmacy (bandages, medkits),
   supermarket (food), hardware store (scrap, maybe a pipe bomb). Each has a roof sign and a door;
   discovered once the tile in front of the door is revealed, then shown on the minimap.
-- **Crafting** (C, `RECIPES`): molotov (3 scrap) burns a 2.6-unit area for 6 s; pipe bomb (4 scrap)
+- **Crafting** (C, `RECIPES`): molotov (3 scrap) burns a 2.6-unit area for 6 s, also damaging the
+  Crystal if it's in the fire; pipe bomb (4 scrap)
   beeps for 3.5 s (alerted zombies within 32 units walk to it via `world.lure`), then explodes.
   Both are thrown at the cursor (max 13 units), landing short of walls. They hurt the player too.
 - **Zombies:** `walker`, `runner`, `brute` (`ZTYPES` in `js/zombies.js`). HP scales +30%/level,
@@ -143,6 +146,8 @@ js/
   on a 7-unit disc around them. Buildings hiding the player always fade; buildings hiding the disc
   fade only if their center is on the camera side of the player, so buildings beyond stay solid.
   Opacity eases toward 0.2 / 1; `faded` maps mesh → current opacity.
+- **Ground heights:** roads are at y=0, block slabs (sidewalk, park, lot, plaza) top out at 0.08.
+  Anything flat drawn on the ground (decals 0.09, fire 0.12) must sit above 0.08 off-road.
 - **No runtime lights.** Adding/removing lights recompiles shaders; reuse `muzzleLight`/`fxLight`.
 
 ## Testing

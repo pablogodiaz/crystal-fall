@@ -9,7 +9,7 @@ import { state, world, zombies, throwns, hazards } from './state.js';
 import { isBlockedTile } from './grid.js';
 import { player, aimPoint } from './player.js';
 import { damageZombie, makeNoise } from './zombies.js';
-import { hurtPlayer } from './combat.js';
+import { hurtPlayer, hitCrystal, CRYSTAL_R } from './combat.js';
 import { burst } from './fx.js';
 import { sfx } from './audio.js';
 
@@ -33,7 +33,7 @@ export function throwItem(id){
 function land(o){
   const x = o.ex, z = o.ez;
   if (o.id === 'molotov'){
-    const m = new THREE.Mesh(SH.fireGeo, SH.fireMat); m.rotation.x = -Math.PI/2; m.position.set(x, 0.07, z); m.scale.setScalar(FIRE_R);
+    const m = new THREE.Mesh(SH.fireGeo, SH.fireMat); m.rotation.x = -Math.PI/2; m.position.set(x, 0.12, z); m.scale.setScalar(FIRE_R);  // above block slabs (top at 0.08) and decals
     scene.add(m);
     hazards.push({ kind:'fire', x, z, mesh:m, t:FIRE_TIME, tick:0 });
     burst(new THREE.Vector3(x, 0.5, z), 'fire', 16, 4); burst(new THREE.Vector3(x, 0.5, z), 'spark', 8, 4);
@@ -82,6 +82,8 @@ export function updateThrowables(dt){
         h.tick = 0.25;
         const dmg = FIRE_DPS*0.25*(1 + 0.3*(state.level-1));
         for (const z of zombies.slice()) if (Math.hypot(z.pos.x - h.x, z.pos.z - h.z) < FIRE_R + z.r*0.5) damageZombie(z, dmg, 0, 0, true);
+        const cr = world.crystal;
+        if (cr && cr.alive && Math.hypot(cr.pos.x - h.x, cr.pos.z - h.z) < FIRE_R + CRYSTAL_R) hitCrystal(dmg);
         if (Math.hypot(player.pos.x - h.x, player.pos.z - h.z) < FIRE_R) hurtPlayer(2, null);
         if (state.mode !== 'play') return;
       }

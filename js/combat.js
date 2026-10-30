@@ -57,13 +57,22 @@ function dryMelee(){
   if (performance.now() - dryWarned > 6000){ dryWarned = performance.now(); toast(`Out of ${WEAPONS[curWeapon().id].ammo}. Search the city or press Q to swap`, 'bad'); }
   melee();
 }
+// Angle between the player's facing and the direction to (dx,dz).
+const offAim = (dx, dz) => Math.abs(((Math.atan2(dx,dz) - player.angle) % (Math.PI*2) + Math.PI*3) % (Math.PI*2) - Math.PI);
 export function meleeStrike(){
   makeNoise(player.pos.x, player.pos.z, 6);
+  const dmg = 1*player.dmgMul;
   for (const z of zombies.slice()){
     const dx = z.pos.x - player.pos.x, dz = z.pos.z - player.pos.z, d = Math.hypot(dx,dz) || 0.001;
     if (d > 1.7 + z.r) continue;
-    const da = Math.abs(((Math.atan2(dx,dz) - player.angle) % (Math.PI*2) + Math.PI*3) % (Math.PI*2) - Math.PI);
-    if (da < 1.0) damageZombie(z, 1*player.dmgMul, dx/d*1.8, dz/d*1.8);
+    if (offAim(dx, dz) < 1.0) damageZombie(z, dmg, dx/d*1.8, dz/d*1.8);
+  }
+  const crystal = world.crystal;
+  if (crystal && crystal.alive){
+    const dx = crystal.pos.x - player.pos.x, dz = crystal.pos.z - player.pos.z;
+    if (Math.hypot(dx,dz) < 1.7 + CRYSTAL_R && offAim(dx, dz) < 1.0){
+      hitCrystal(dmg); burst(new THREE.Vector3(crystal.pos.x - dx*0.3, 1.2, crystal.pos.z - dz*0.3), 'crystal', 6, 3);
+    }
   }
 }
 export function updateBullets(dt){
@@ -75,11 +84,13 @@ export function updateBullets(dt){
     for (let s=0;s<steps && !dead;s++){
       const bp = b.mesh.position;
       bp.x += b.dx*b.speed*sdt; bp.z += b.dz*b.speed*sdt;
+      const tx = Math.floor(bp.x/TILE), tz = Math.floor(bp.z/TILE);
       if (crystal && crystal.alive){
-        const cx = bp.x - crystal.pos.x, cz = bp.z - crystal.pos.z;
-        if (cx*cx + cz*cz < 1.0){ hitCrystal(b.damage); burst(bp.clone(), 'crystal', 5, 3); dead = true; break; }
+        // The Crystal's whole tile is solid, so anything entering it counts as a hit (not a wall spark).
+        const cx = bp.x - crystal.pos.x, cz = bp.z - crystal.pos.z, ct = world.city.crystalTile;
+        if (cx*cx + cz*cz < CRYSTAL_R*CRYSTAL_R || (tx === ct.x && tz === ct.z)){ hitCrystal(b.damage); burst(bp.clone(), 'crystal', 5, 3); dead = true; break; }
       }
-      if (isBlockedTile(Math.floor(bp.x/TILE), Math.floor(bp.z/TILE))){ burst(bp.clone(), 'spark', 4, 2.5); dead = true; break; }
+      if (isBlockedTile(tx, tz)){ burst(bp.clone(), 'spark', 4, 2.5); dead = true; break; }
       for (const z of zombies){
         if (b.hit.has(z)) continue;
         const zx = bp.x - z.pos.x, zz = bp.z - z.pos.z, rr = z.r + 0.14;
@@ -109,7 +120,8 @@ export function drainHp(n){
   if (player.hp <= 0){ player.hp = 0; die(); return true; }
   return false;
 }
-function hitCrystal(dmg){
+export const CRYSTAL_R = 1.15;  // pedestal radius
+export function hitCrystal(dmg){
   const crystal = world.crystal;
   crystal.hp -= dmg; crystal.flash = 0.1; sfx.crystal();
   if (!state.crystalFound) foundCrystal();
