@@ -5,7 +5,7 @@ import { state, keys, mouse, mouseNDC } from './state.js';
 import { tryReload, melee } from './combat.js';
 import { toggleMute } from './audio.js';
 import { newRun, togglePause, toggleCraft } from './game.js';
-import { swapWeapon, useSlot } from './inventory.js';
+import { swapWeapon, useSlot, throwSelected, cycleThrowable } from './inventory.js';
 import { craftFromKey } from './hud.js';
 
 export function initInput(){
@@ -16,6 +16,8 @@ export function initInput(){
     if (e.code === 'KeyR') tryReload();
     if (e.code === 'KeyQ') swapWeapon();
     if (e.code === 'KeyF') melee();
+    if (e.code === 'KeyG') throwSelected();
+    if (e.code === 'KeyT') cycleThrowable(1);
     if (e.code === 'KeyC') toggleCraft();
     const digit = /^Digit([1-8])$/.exec(e.code);
     if (digit){ if (state.mode === 'craft') craftFromKey(+digit[1] - 1); else useSlot(+digit[1] - 1); }
@@ -28,6 +30,16 @@ export function initInput(){
   cv.addEventListener('mousedown', e => { if (e.button === 0 && state.mode === 'play') mouse.down = true; });
   addEventListener('mouseup', e => { if (e.button === 0) mouse.down = false; });
   cv.addEventListener('contextmenu', e => e.preventDefault());
+  // Mouse wheel picks the throwable. Trackpads send bursts of small deltas, so accumulate and
+  // allow at most one step per 150 ms.
+  let wheelAcc = 0, wheelT = 0;
+  cv.addEventListener('wheel', e => {
+    if (state.mode !== 'play') return;
+    e.preventDefault();
+    wheelAcc += e.deltaY;
+    const now = performance.now();
+    if (Math.abs(wheelAcc) >= 40 && now - wheelT > 150){ cycleThrowable(Math.sign(wheelAcc)); wheelAcc = 0; wheelT = now; }
+  }, { passive:false });
   addEventListener('blur', () => { for (const k in keys) keys[k] = false; mouse.down = false; if (state.mode === 'play') togglePause(); });
   document.addEventListener('visibilitychange', () => { if (document.hidden && state.mode === 'play') togglePause(); });
   $('startBtn').addEventListener('click', newRun);

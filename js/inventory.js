@@ -2,7 +2,7 @@
 // Item stacks in player.inv (INV_SLOTS slots of { id, n } or null), two weapon slots in
 // player.weapons ({ id, mag } or null), reserve ammo per weapon in player.ammo.
 // All of it lives on `player`, so it carries over between cities.
-import { WEAPONS, ITEMS, RECIPES } from './items.js';
+import { WEAPONS, ITEMS, RECIPES, THROWABLES } from './items.js';
 import { state } from './state.js';
 import { player, refreshGun } from './player.js';
 import { spawnDrop } from './loot.js';
@@ -74,6 +74,29 @@ export function useSlot(i){
     case 'molotov': case 'pipebomb':
       if (throwItem(s.id)) consume(i); return;
   }
+}
+// ---------- Throwables ----------
+// The selection is a preference: if you have none of the selected kind but some of another,
+// G throws (and the HUD shows) the one you have.
+export function selectedThrowable(){
+  if (countItem(player.throwSel)) return player.throwSel;
+  return THROWABLES.find(id => countItem(id)) || player.throwSel;
+}
+export function throwSelected(){
+  if (state.mode !== 'play') return;
+  const id = selectedThrowable();
+  if (!countItem(id)) return toast('No throwables. Craft some with scrap (C)');
+  if (throwItem(id)) removeItem(id, 1);
+}
+// Picks the next throwable kind you're carrying. Carrying none just changes the preference.
+export function cycleThrowable(dir){
+  if (state.mode !== 'play') return;
+  const n = THROWABLES.length, cur = THROWABLES.indexOf(selectedThrowable());
+  const order = Array.from({ length:n-1 }, (_, i) => THROWABLES[((cur + dir*(i+1)) % n + n) % n]);
+  const next = order.find(id => countItem(id));
+  if (next){ player.throwSel = next; sfx.swap(); }
+  else if (countItem(THROWABLES[cur])) toast(`Only ${ITEMS[THROWABLES[cur]].name.toLowerCase()}s in your pack`);
+  else player.throwSel = order[0];
 }
 // Right-click a slot: drop the whole stack at your feet.
 export function dropSlot(i){

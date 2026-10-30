@@ -66,6 +66,10 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   Crystal if it's in the fire; pipe bomb (4 scrap)
   beeps for 3.5 s (alerted zombies within 32 units walk to it via `world.lure`), then explodes.
   Both are thrown at the cursor (max 13 units), landing short of walls. They hurt the player too.
+- **Throwing** (`THROWABLES` in `items.js`): G throws the selected kind from wherever it sits in the
+  pack; mouse wheel / T cycles (`cycleThrowable`). `player.throwSel` is a preference: if you carry
+  none of it but some of another kind, `selectedThrowable()` falls back to that. Shown under the
+  weapon panel. Keys 1–8 can still throw from a specific slot.
 - **Zombies:** `walker`, `runner`, `brute` (`ZTYPES` in `js/zombies.js`). HP scales +30%/level,
   speed +4%/level; runner/brute odds rise with level. Unalerted zombies wander and despawn when
   >62 units away; they alert within 15 units, when shot, or when you fire within 28 units.
@@ -76,7 +80,7 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   brutes or when below 40% HP), otherwise ~7% a small ammo box.
 - **Meta:** best run (`{ city, kills }`) stored in `localStorage['crystal-fall-best']`.
 - **Controls:** WASD/arrows move, mouse aims, hold left click to fire, Shift sprints, R reloads,
-  F melee, Q swaps guns, hold E searches, 1–8 use items (right-click a slot drops it), C crafts, Esc/P pauses,
+  F melee, Q swaps guns, G throws (wheel/T picks molotov or pipe bomb), hold E searches, 1–8 use items (right-click a slot drops it), C crafts, Esc/P pauses,
   M mutes.
 
 ## Folder structure
