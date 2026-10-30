@@ -54,4 +54,4 @@ export const ZMODS = {
 // interval = [base, perCity, min] s (shrinking by up to `ramp` as the clock runs down) while fewer
 // than cap[0] + cap[1]*city of them are alive. ammoDrop replaces the usual ammo-box chance.
 export const CRYSTAL = { pulseFrom:3, pulseAt:0.5, pulseR:60, pulseSpawn:[8,2,18], pulseDist:[4,12],
-  takeover:300, surge:[10,3], interval:[1.8,0.15,0.8], ramp:0.4, cap:[10,4], ammoDrop:0.14 };
+  takeover:180, surge:[10,3], interval:[1.8,0.15,0.8], ramp:0.4, cap:[10,4], ammoDrop:0.14 };

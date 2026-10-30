@@ -7,8 +7,8 @@ import { scene } from './renderer.js';
 import { SH } from './assets.js';
 import { world, keys, drops } from './state.js';
 import { player } from './player.js';
-import { WEAPONS, ITEMS, LOOT, LANDMARKS, FOUND_WEAPONS } from './items.js';
-import { addItem, addAmmo, giveWeapon, replaceWeapon, carried } from './inventory.js';
+import { WEAPONS, ITEMS, LOOT, LANDMARKS, FOUND_WEAPONS, AMMO_ODDS } from './items.js';
+import { addItem, addAmmo, giveWeapon, replaceWeapon, carried, curWeapon } from './inventory.js';
 import { makeNoise } from './zombies.js';
 import { burst } from './fx.js';
 import { toast, floatText } from './hud.js';
@@ -25,10 +25,12 @@ function wpick(table){
   for (const e of table){ r -= e[1]; if (r <= 0) return e[0]; }
   return table[0][0];
 }
-// Ammo finds lean toward the guns you're carrying.
+// Ammo finds lean toward the gun in your hands, then your other one (see AMMO_ODDS).
 function ammoType(){
-  const own = carried();
-  return own.length && Math.random() < 0.65 ? mpick(own) : mpick(Object.keys(WEAPONS));
+  const held = curWeapon().id, r = Math.random();
+  const want = [held, ...carried().filter(w => w !== held)].filter(w => player.ammo[w] < WEAPONS[w].maxAmmo);
+  if (want.length && r < AMMO_ODDS.held + AMMO_ODDS.carried) return r < AMMO_ODDS.held ? want[0] : want[want.length - 1];
+  return mpick(Object.keys(WEAPONS));
 }
 const ammoRoll = (w, f) => ({ ammo:w, n:Math.ceil(mri(WEAPONS[w].find[0], WEAPONS[w].find[1]) * (f || 1)) });
 function rollEntry(k){
