@@ -82,7 +82,7 @@ export function selectedThrowable(){
   if (countItem(player.throwSel)) return player.throwSel;
   return THROWABLES.find(id => countItem(id)) || player.throwSel;
 }
-// Hold G to aim (throwables.js draws the landing preview), release to throw, right-click cancels.
+// Hold right click to aim (throwables.js draws the landing preview), release to throw, left click cancels.
 export function startAim(){
   if (state.mode !== 'play') return;
   if (!countItem(selectedThrowable())) return toast('No throwables. Craft some with scrap (C)');

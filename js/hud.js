@@ -4,10 +4,10 @@ import { TILE, N, T } from './config.js';
 import { $, fmtTime } from './utils.js';
 import { camera } from './renderer.js';
 import { WEAPONS, ITEMS, RECIPES, LANDMARKS, INV_SLOTS } from './items.js';
-import { state, world, zombies } from './state.js';
+import { state, world, zombies, drops, pickups } from './state.js';
 import { player } from './player.js';
 import { useSlot, dropSlot, craft, countItem, magSize, selectedThrowable } from './inventory.js';
-import { interact } from './loot.js';
+import { interact, dropName } from './loot.js';
 
 const mm = $('minimap'), mctx = mm.getContext('2d');
 // Explored tiles are cached on an offscreen layer, redrawn only when world.mmDirty.
@@ -84,6 +84,7 @@ export function updateHUD(dt, t){
   $('throwLine').classList.toggle('none', !thn);
   renderInventory();
   updateInteractPrompt();
+  updateFloaters(dt); updateTags();
   let obj, sub = '';
   if (state.phase === 'explore'){
     if (!state.crystalFound){ obj = 'Find the Crystal'; sub = 'Follow the violet light. Gunfire draws the dead.'; }
@@ -134,6 +135,46 @@ function updateInteractPrompt(){
   el.style.transform = `translate(${((ipos.x+1)/2*innerWidth).toFixed(1)}px, ${((1-ipos.y)/2*innerHeight).toFixed(1)}px)`;
   setText('interactLabel', interact.label);
   $('interactRing').style.strokeDashoffset = ((1 - Math.min(1, interact.p))*RING).toFixed(1);
+}
+
+// ---------- Floating text ----------
+// Pickups ("+1 🩹 Bandage") rise and fade above the player; several at once (a search) go up
+// one after another. Ground drops and health crosses near the player get a small name tag.
+const floaters = [], tags = [], fpos = new THREE.Vector3(), FLOAT_T = 1.6;
+const toScreen = (x, y, z) => { fpos.set(x, y, z).project(camera); return [(fpos.x+1)/2*innerWidth, (1-fpos.y)/2*innerHeight]; };
+export function floatText(msg, kind){
+  const el = document.createElement('div');
+  el.className = 'floater' + (kind ? ' ' + kind : ''); el.textContent = msg; el.style.opacity = 0;
+  $('floaters').appendChild(el);
+  const queued = floaters.filter(f => f.t < 0.45).length;
+  floaters.push({ el, t:-0.45*queued });
+}
+function updateFloaters(dt){
+  const [sx, sy] = toScreen(player.pos.x, 2.3, player.pos.z);
+  for (let i=floaters.length-1;i>=0;i--){
+    const f = floaters[i]; f.t += dt;
+    if (f.t >= FLOAT_T){ f.el.remove(); floaters.splice(i,1); continue; }
+    if (f.t < 0) continue;
+    f.el.style.opacity = Math.min(1, f.t/0.12, (FLOAT_T - f.t)/0.5).toFixed(2);
+    f.el.style.transform = `translate(${sx.toFixed(1)}px, ${(sy - f.t*40).toFixed(1)}px) translate(-50%, -100%)`;
+  }
+}
+function updateTags(){
+  let n = 0;
+  const show = (x, z, text) => {
+    const el = tags[n] || (tags[n] = $('floaters').appendChild(Object.assign(document.createElement('div'), { className:'droptag' })));
+    n++;
+    if (el.textContent !== text) el.textContent = text;
+    const [tx, ty] = toScreen(x, 0, z);
+    el.style.transform = `translate(${tx.toFixed(1)}px, ${(ty + 10).toFixed(1)}px) translate(-50%, 0)`;
+    el.classList.remove('hidden');
+  };
+  if (state.mode === 'play'){
+    const near = (x, z) => Math.hypot(x - player.pos.x, z - player.pos.z) < 2.8;
+    for (const d of drops) if (n < 5 && near(d.px, d.pz)) show(d.px, d.pz, dropName(d));
+    for (const p of pickups) if (n < 5 && near(p.g.position.x, p.g.position.z)) show(p.g.position.x, p.g.position.z, '✚ Health +20');
+  }
+  for (let i=n;i<tags.length;i++) tags[i].classList.add('hidden');
 }
 
 // ---------- Toasts ----------

@@ -11,7 +11,7 @@ import { WEAPONS, ITEMS, LOOT, LANDMARKS, FOUND_WEAPONS } from './items.js';
 import { addItem, addAmmo, giveWeapon, replaceWeapon, carried } from './inventory.js';
 import { makeNoise } from './zombies.js';
 import { burst } from './fx.js';
-import { toast } from './hud.js';
+import { toast, floatText } from './hud.js';
 import { sfx } from './audio.js';
 
 // What E would act on right now; read by the HUD for the prompt and progress ring.
@@ -56,9 +56,10 @@ export function rollLoot(c){
   for (let i=0;i<n;i++) out.push(rollEntry(wpick(L.table)));
   return out;
 }
-// Hands loot to the player; anything that doesn't fit lands on the ground.
+// Hands loot to the player: each gain floats up over them; anything that doesn't fit lands on the
+// ground. Returns notes worth a toast (full pack, new gun) and whether anything was found.
 function grantLoot(raw){
-  const msgs = [], x = player.pos.x, z = player.pos.z, list = [];
+  const notes = [], x = player.pos.x, z = player.pos.z, list = [];
   for (const e of raw){  // merge repeated finds so "+2 scrap" reads as one line
     const same = list.find(o => !e.weapon && o.item === e.item && o.ammo === e.ammo);
     if (same) same.n += e.n; else list.push(Object.assign({}, e));
@@ -66,22 +67,21 @@ function grantLoot(raw){
   for (const e of list){
     if (e.ammo){
       const k = addAmmo(e.ammo, e.n);
-      msgs.push(k ? `+${k} ${WEAPONS[e.ammo].ammo}` : `${WEAPONS[e.ammo].ammo} (full)`);
+      if (k) floatText(`+${k} ${WEAPONS[e.ammo].ammo}`, 'good'); else notes.push(`${WEAPONS[e.ammo].ammo} full`);
     } else if (e.weapon){
       const r = giveWeapon(e.weapon);
       const name = WEAPONS[e.weapon].name;
-      if (r === 'new') msgs.push(`${name}! Press Q to swap`);
-      else if (r === 'ammo') msgs.push(`${name} (taken for ammo)`);
-      else { spawnDrop('weapon', e.weapon, WEAPONS[e.weapon].mag, x, z, true); msgs.push(`${name} (hands full, dropped)`); }
+      if (r === 'new'){ floatText(`+ ${name}`, 'good'); notes.push(`${name}! Press Q to swap`); }
+      else if (r === 'ammo') floatText(`+ ${name} (ammo)`, 'good');
+      else { spawnDrop('weapon', e.weapon, WEAPONS[e.weapon].mag, x, z, true); notes.push(`${name} found, hands full: dropped`); }
     } else {
       const k = addItem(e.item, e.n), I = ITEMS[e.item];
-      if (k) msgs.push(`+${k} ${I.icon} ${I.name}`);
-      if (k < e.n){ spawnDrop('item', e.item, e.n - k, x, z, true); msgs.push(`pack full, ${e.n - k} ${I.name} dropped`); }
+      if (k) floatText(`+${k} ${I.icon} ${I.name}`, 'good');
+      if (k < e.n){ spawnDrop('item', e.item, e.n - k, x, z, true); notes.push(`Pack full: ${e.n - k} ${I.name} dropped`); }
     }
   }
-  return msgs;
+  return { notes, found:list.length > 0 };
 }
-
 // ---------- Ground drops ----------
 // kind: 'item' (id = item id, n = count), 'ammo' (id = weapon id, n = rounds), 'weapon' (n = rounds in its mag).
 // held = spawned under the player; it isn't picked up again until they step away.
@@ -95,20 +95,28 @@ export function spawnDrop(kind, id, n, x, z, held){
   drops.push(d); return d;
 }
 export function dropZombieAmmo(x, z){ const a = ammoRoll(ammoType(), 0.5); spawnDrop('ammo', a.ammo, a.n, x, z); }
+// Short tag shown under a drop when you're near it.
+export function dropName(d){
+  if (d.kind === 'item') return `${ITEMS[d.id].icon} ${ITEMS[d.id].name}` + (d.n > 1 ? ` ×${d.n}` : '');
+  if (d.kind === 'ammo') return `${WEAPONS[d.id].ammo} ×${d.n}`;
+  return WEAPONS[d.id].name;
+}
 function removeDrop(d){ scene.remove(d.g); drops.splice(drops.indexOf(d), 1); }
 // Walk-over pickup. Weapons only auto-pick when there's a free slot or you already carry one.
 function tryCollect(d){
   if (d.kind === 'item'){
     const k = addItem(d.id, d.n); if (!k) return;
-    d.n -= k; toast(`+${k} ${ITEMS[d.id].icon} ${ITEMS[d.id].name}`, 'good'); sfx.pickup();
+    d.n -= k; floatText(`+${k} ${ITEMS[d.id].icon} ${ITEMS[d.id].name}`, 'good'); sfx.pickup();
     if (!d.n) removeDrop(d);
   } else if (d.kind === 'ammo'){
     const k = addAmmo(d.id, d.n); if (!k) return;
-    d.n -= k; toast(`+${k} ${WEAPONS[d.id].ammo}`, 'good'); sfx.pickup();
+    d.n -= k; floatText(`+${k} ${WEAPONS[d.id].ammo}`, 'good'); sfx.pickup();
     if (!d.n) removeDrop(d);
   } else if (carried().includes(d.id) || player.weapons.includes(null)){
     const r = giveWeapon(d.id, d.n);
-    toast(r === 'new' ? `${WEAPONS[d.id].name}! Press Q to swap` : `+${d.n} ${WEAPONS[d.id].ammo}`, 'good'); sfx.pickup();
+    if (r === 'new'){ floatText(`+ ${WEAPONS[d.id].name}`, 'good'); toast(`${WEAPONS[d.id].name}! Press Q to swap`, 'good'); }
+    else floatText(`+${d.n} ${WEAPONS[d.id].ammo}`, 'good');
+    sfx.pickup();
     removeDrop(d);
   }
 }
@@ -148,7 +156,7 @@ export function updateInteract(dt){
     if (interact.p >= 1){
       const old = replaceWeapon(best.id, best.n);
       removeDrop(best); spawnDrop('weapon', old.id, old.mag, px, pz, true);
-      sfx.swap(); toast(`Picked up the ${WEAPONS[best.id].name}`, 'good');
+      sfx.swap(); floatText(`+ ${WEAPONS[best.id].name}`, 'good');
       interact.target = null; interact.p = 0;
     }
     return;
@@ -164,9 +172,9 @@ function finishSearch(c){
   c.searched = true; c.open(); c.glint.visible = false;
   interact.target = null; interact.p = 0;
   burst(new THREE.Vector3(c.px, 0.8, c.pz), 'dust', 6, 2);
-  const msgs = grantLoot(rollLoot(c));
-  if (msgs.length){ sfx.loot(); toast((c.lm ? LANDMARKS[c.lm].name + ': ' : 'Found: ') + msgs.join(', '), 'good'); }
-  else toast(`Nothing useful in this ${c.name}`);
+  const { notes, found } = grantLoot(rollLoot(c));
+  if (found) sfx.loot(); else floatText(`Nothing useful in this ${c.name}`, 'dim');
+  if (notes.length) toast(notes.join('. '), 'info');
   if (c.kind === 'trunk' && Math.random() < 0.12){
     sfx.alarm(); makeNoise(c.px, c.pz, 32); toast('Car alarm! Everything nearby heard that', 'bad');
   }

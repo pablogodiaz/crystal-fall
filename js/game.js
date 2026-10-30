@@ -33,14 +33,14 @@ export function startCity(level, seed){
   interact.target = null; interact.p = 0; fxLight.intensity = 0;
   setupThreats(level);
   const n = 10 + 4*level;
-  for (let i=0;i<n;i++){ const s = findSpawnTile(24, 200); if (s) spawnZombieAt(s.x, s.z, false, false); }
+  for (let i=0;i<n;i++){ const s = findSpawnTile(24, 200); if (s) spawnZombieAt(s.x, s.z, false, false, false, null, 0); }
   // Police stations are guarded by a pack that stays near the door.
   for (const l of city.landmarks){
     if (l.type !== 'police') continue;
     for (let i=0, tries=0, g=3+level; i<g && tries<80; tries++){
       const tx = l.ox + Math.round(mr(-3,3)), tz = l.oz + Math.round(mr(-3,3));
       if (tx < 1 || tz < 1 || tx >= N-1 || tz >= N-1 || !walkable(city.grid[tz*N+tx])) continue;
-      spawnZombieAt((tx+0.5)*TILE + mr(-0.4,0.4), (tz+0.5)*TILE + mr(-0.4,0.4), false, false, true); i++;
+      spawnZombieAt((tx+0.5)*TILE + mr(-0.4,0.4), (tz+0.5)*TILE + mr(-0.4,0.4), false, false, true, null, 0); i++;
     }
   }
   $('cityName').textContent = `City ${level}: ${city.name}`;

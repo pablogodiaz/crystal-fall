@@ -77,7 +77,7 @@ function scream(z){
   makeNoise(z.pos.x, z.pos.z, S.alertR);
   const mat = new THREE.MeshBasicMaterial({ color:0xffd0d0, transparent:true, opacity:0.7, depthWrite:false, side:THREE.DoubleSide });
   const ring = new THREE.Mesh(SH.markGeo, mat); ring.rotation.x = -Math.PI/2; ring.position.set(z.pos.x, 1.6, z.pos.z);
-  scene.add(ring); rings.push({ mesh:ring, t:0 });
+  scene.add(ring); rings.push({ mesh:ring, t:0, T:0.6, r0:1, r1:15.4, op:0.7 });
   sfx.scream(); state.shake = Math.max(state.shake, 0.35);
   // Spawns count toward the horde while it's on, so the road still waits for them.
   const horde = state.phase === 'horde', n = mri(S.spawn[0], S.spawn[1]);
@@ -173,9 +173,10 @@ export function updateSpecials(dt){
     if (h.t <= 0){ scene.remove(h.mesh); puddles.splice(i,1); }
   }
   for (let i=rings.length-1;i>=0;i--){
-    const r = rings[i]; r.t += dt;
-    r.mesh.scale.setScalar(1 + r.t*24); r.mesh.material.opacity = 0.7*(1 - r.t/0.6);
-    if (r.t >= 0.6){ scene.remove(r.mesh); r.mesh.material.dispose(); rings.splice(i,1); }
+    // Expanding rings (screams, shockwaves): ease out from r0 to r1 over T s while fading.
+    const r = rings[i]; r.t += dt; const k = Math.min(1, r.t/r.T);
+    r.mesh.scale.setScalar(r.r0 + (r.r1 - r.r0)*(1 - (1-k)**3)); r.mesh.material.opacity = r.op*(1 - k*k);
+    if (r.t >= r.T){ scene.remove(r.mesh); r.mesh.material.dispose(); rings.splice(i,1); }
   }
   // "New threat" banner the first time each type/modifier with a tip comes near.
   spotT -= dt; if (spotT > 0) return; spotT = 0.25;

@@ -7,7 +7,7 @@ import { scene } from './renderer.js';
 import { SH, WIN_TEX, carMat } from './assets.js';
 import { state, world, zombies, dying, bullets, particles, pickups, decals, drops, throwns, hazards, spits, puddles, rings } from './state.js';
 import { LOOT, LANDMARKS } from './items.js';
-import { disposeZombie } from './zombies.js';
+import { disposeZombie, disposeCorpse } from './zombies.js';
 import { faded } from './fx.js';
 
 // Per-city geometries/materials/textures, disposed in teardownCity().
@@ -251,7 +251,7 @@ export function teardownCity(){
   for (const d of disposables) if (d && d.dispose) d.dispose();
   disposables = []; signCache = {}; world.buildingMeshes = []; faded.clear();
   for (const z of zombies) disposeZombie(z);
-  for (const d of dying) disposeZombie(d.z);
+  for (const d of dying) disposeCorpse(d);
   zombies.length = 0; dying.length = 0;
   for (const arr of [bullets, particles, pickups, drops, throwns, hazards, spits, puddles, rings]) { for (const o of arr) scene.remove(o.mesh || o.m || o.g); arr.length = 0; }
   for (const d of decals) scene.remove(d); decals.length = 0;

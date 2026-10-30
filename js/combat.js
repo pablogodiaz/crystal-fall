@@ -65,7 +65,7 @@ export function meleeStrike(){
   for (const z of zombies.slice()){
     const dx = z.pos.x - player.pos.x, dz = z.pos.z - player.pos.z, d = Math.hypot(dx,dz) || 0.001;
     if (d > 1.7 + z.r) continue;
-    if (offAim(dx, dz) < 1.0) damageZombie(z, dmg, dx/d*1.8, dz/d*1.8);
+    if (offAim(dx, dz) < 1.0) damageZombie(z, dmg, dx/d*1.8, dz/d*1.8, 'melee');
   }
   const crystal = world.crystal;
   if (crystal && crystal.alive){
@@ -92,11 +92,11 @@ export function updateBullets(dt){
       }
       if (isBlockedTile(tx, tz)){ burst(bp.clone(), 'spark', 4, 2.5); dead = true; break; }
       for (const z of zombies){
-        if (b.hit.has(z)) continue;
+        if (b.hit.has(z) || z.rise > 0) continue;  // still digging out: shots pass over
         const zx = bp.x - z.pos.x, zz = bp.z - z.pos.z, rr = z.r + 0.14;
         if (zx*zx + zz*zz < rr*rr){
           // A riot shield stops the bullet outright, piercing or not.
-          b.hit.add(z); const blocked = damageZombie(z, b.damage, b.dx, b.dz);
+          b.hit.add(z); const blocked = damageZombie(z, b.damage, b.dx, b.dz, 'bullet');
           if (b.pierce > 0 && !blocked) b.pierce--; else dead = true;
           break;
         }

@@ -5,9 +5,10 @@ import { TILE, N, T } from './config.js';
 import { mr } from './utils.js';
 import { scene, camera } from './renderer.js';
 import { SH } from './assets.js';
-import { world, particles, decals, pickups } from './state.js';
+import { world, particles, decals, pickups, rings } from './state.js';
 import { player } from './player.js';
 import { sfx } from './audio.js';
+import { floatText } from './hud.js';
 
 export function burst(pos, kind, n, spd){
   for (let i=0;i<n;i++){
@@ -28,14 +29,24 @@ export function updateParticles(dt){
     if (p.life <= 0){ scene.remove(p.m); particles.splice(i,1); }
   }
 }
-export function addDecal(x,z){
-  const m = new THREE.Mesh(SH.decalGeo, SH.decalMat);
+// Blood splat by default; s scales it, mat swaps it (SH.holeMat dirt, SH.scorchMat blast marks).
+export function addDecal(x, z, s = 1, mat = SH.decalMat){
+  const m = new THREE.Mesh(SH.decalGeo, mat);
   m.rotation.x = -Math.PI/2; m.rotation.z = Math.random()*6;
   const t = world.city.grid[Math.floor(z/TILE)*N + Math.floor(x/TILE)];
   m.position.set(x, t === T.ROAD ? 0.02 + Math.random()*0.004 : 0.09 + Math.random()*0.004, z);
-  m.scale.set(mr(0.8,1.6), mr(0.7,1.3), 1);
+  m.scale.set(s*mr(0.8,1.6), s*mr(0.7,1.3), 1);
   scene.add(m); decals.push(m);
   if (decals.length > 80) scene.remove(decals.shift());
+}
+// Flat ring (plus a fading fill disc) that sweeps out to radius r at ground level: shows exactly
+// how far a blast reached. Entries live in `rings`, animated in specials.js.
+export function shockwave(x, z, r, color){
+  for (const [geo, op] of [[SH.blastRingGeo, 0.95], [SH.blastFillGeo, 0.4]]){
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent:true, opacity:op, depthWrite:false, side:THREE.DoubleSide }));
+    m.rotation.x = -Math.PI/2; m.position.set(x, 0.14, z); m.scale.setScalar(r*0.25);
+    scene.add(m); rings.push({ mesh:m, t:0, T:0.6, r0:r*0.25, r1:r, op });
+  }
 }
 export function spawnPickup(x,z){
   const g = new THREE.Group(); g.position.set(x,0,z);
@@ -52,7 +63,8 @@ export function updatePickups(dt){
     p.g.visible = p.life > 4 || Math.floor(p.t*6)%2 === 0;
     const d = Math.hypot(p.g.position.x - player.pos.x, p.g.position.z - player.pos.z);
     if (d < 1.3 && player.hp < player.maxHp){
-      player.hp = Math.min(player.maxHp, player.hp + 20); sfx.pickup();
+      const k = Math.ceil(Math.min(20, player.maxHp - player.hp));
+      player.hp = Math.min(player.maxHp, player.hp + 20); sfx.pickup(); floatText(`+${k} health`, 'good');
       burst(new THREE.Vector3(p.g.position.x, 1, p.g.position.z), 'heal', 8, 2);
       scene.remove(p.g); pickups.splice(i,1); continue;
     }

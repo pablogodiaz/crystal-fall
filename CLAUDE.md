@@ -70,10 +70,10 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   blast (`stunBlast`) stuns zombies within 6 units for up to 2.5 s (`stunZombie`, `z.stun`: frozen,
   swaying, can't attack, wind-ups cancelled) and shoves them back. It deals **no damage** to anyone.
   Both are thrown at the cursor (max 13 units), landing short of walls. Fire hurts the player too.
-- **Throwing** (`THROWABLES` in `items.js`): hold G to aim (`player.aiming`; `updateThrowPreview` in
+- **Throwing** (`THROWABLES` in `items.js`): hold right click to aim (`player.aiming`; `updateThrowPreview` in
   `throwables.js` draws the effect radius at the landing point plus a dotted arc, sharing
   `throwPath`/`arcY` with the real throw), release to throw the selected kind from wherever it sits
-  in the pack, right-click cancels. Mouse wheel / T cycles (`cycleThrowable`). `player.throwSel` is a preference: if you carry
+  in the pack, a left click while aiming cancels (and doesn't fire). Mouse wheel / T cycles (`cycleThrowable`). `player.throwSel` is a preference: if you carry
   none of it but some of another kind, `selectedThrowable()` falls back to that. Shown under the
   weapon panel. Keys 1–8 can still throw from a specific slot.
 - **Zombies:** every number lives in `js/threats.js` (pure data). A zombie has one type from
@@ -99,18 +99,38 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     acid leaves a puddle that hurts the player (not zombies) for a few seconds.
   - **Explosive:** orange-glowing body and canisters. Explodes on death (after a short delay so
     blasts can chain) or after a blinking 0.45 s fuse once next to the player; hurts zombies and
-    the player (`explosion`/`queueBlast` in `throwables.js`).
+    the player (`explosion`/`queueBlast` in `throwables.js`). The true blast radius is shown on the
+    ground: a faint pulsing orange ring under it while it's alert and within 14 units, bright with a
+    filling disc once the fuse is lit (`makeWarnRing`/`updateWarnRing`). Every `explosion()` also
+    sweeps a `shockwave()` ring out to its radius and leaves a scorch decal; pipe-bomb stun blasts
+    get a blue shockwave.
   - **Armored:** riot helmet, visor, vest and a shield with a white stripe. Hits within `frontArc`
     of its facing deal `frontMul` damage (sparks + clank) and stop the bullet even if it would pierce
     (`damageZombie` returns `blocked`); flanks, fire and blasts from behind hit fully. Police-station guards get extra odds once it's unlocked.
+- **Spawning out of the ground:** every zombie spawned during play (`spawnZombieAt`'s `rise`,
+  1.1–1.5 s) claws its way up out of a dirt hole (`updateRise`): hunched, buried to the head, arms
+  clawing, dirt flying. While `z.rise > 0` it can't be hurt, stunned or hit by bullets (they pass
+  over) and doesn't move or attack. `startCity`'s initial population and police guards pass
+  `rise = 0` and are already standing.
+- **Death animations** (`makeCorpse`/`updateDying` in `zombies.js`, driven by the killing blow's
+  `cause` passed to `damageZombie`: `'bullet' | 'melee' | 'blast' | 'fire'`): corpses topple with
+  gravity toward the hit direction (onto their back or face, whichever needs less twist), bounce,
+  slide with the knockback and sprawl their limbs. Some lose an arm, the head or rarely a leg (~28%,
+  more from hits of 3+ damage and melee, never from fire): the piece becomes a *gib* that tumbles
+  away bleeding and settles flat on the ground. Blast deaths (explosions, exploders themselves)
+  fling every body part. Corpses lie 2.5–4 s, then sink away.
 - **Ambient spawning:** outside the horde, zombies trickle in 24–42 units away up to a cap
   (`12 + 4*level`, or `8 + 4*level` once the road is open).
 - **Zombie drops:** deliberately rare so loot matters: a health cross (+20 HP, ~2.5%, more from
   brutes (`heal` in `ZTYPES`) or when below 40% HP), otherwise ~7% a small ammo box. An
   exploder's own detonation gives no kill and no drop.
+- **Pickup feedback:** everything you collect (ground drops, search results, health crosses) floats
+  up over the player as "+1 🩹 Bandage" (`floatText` in `hud.js`; several at once rise one after
+  another). Ground drops and health crosses within 2.8 units get a small name tag below them
+  (`dropName` in `loot.js`). Toasts are kept for notes (full pack, new gun hint, alarms).
 - **Meta:** best run (`{ city, kills }`) stored in `localStorage['crystal-fall-best']`.
 - **Controls:** WASD/arrows move, mouse aims, hold left click to fire, Shift sprints, R reloads,
-  F melee, Q swaps guns, hold G to aim + release to throw (wheel/T picks molotov or pipe bomb, right-click cancels), hold E searches, 1–8 use items (right-click a slot drops it), C crafts, Esc/P pauses,
+  F melee, Q swaps guns, hold right click to aim + release to throw (wheel/T picks molotov or pipe bomb, left click cancels), hold E searches, 1–8 use items (right-click a slot drops it), C crafts, Esc/P pauses,
   M mutes.
 
 ## Folder structure
@@ -132,15 +152,17 @@ js/
   cityScene.js    Builds/tears down the city's Three.js meshes, containers, signs, Crystal, barricade, exit
   grid.js         Tile collision (isBlockedTile, resolveCircle), BFS flow field, fog-of-war reveal
   player.js       Player mesh, base stats + starting kit, movement/sprint/stamina, aim/reload, melee pose, bleeding
-  zombies.js      Zombie meshes (incl. type/modifier tells), spawning, AI (flow field, pipe-bomb lure),
-                  makeNoise, damage (armor)/death, stun, explosive fuse
+  zombies.js      Zombie meshes (incl. type/modifier tells), spawning + rising from the ground, AI
+                  (flow field, pipe-bomb lure), makeNoise, damage (armor), stun, explosive fuse and
+                  warning ring, death (ragdoll corpses, gibs)
   specials.js     Threat unlocks and rolls, screamer/spitter behaviour, acid, "New threat" banners
   combat.js       Firing per weapon, melee start/strike, bullets, hurtPlayer/drainHp, Crystal hits
   inventory.js    Item stacks, weapon slots, ammo reserves, using/dropping items, crafting
   loot.js         Hold-E searching, loot rolls, ground drops, landmark discovery
   throwables.js   Molotov fire zones, pipe bombs (lure + stun blast), exploder explosion()/queueBlast()
-  fx.js           Particles, blood decals, health pickups, building fade (camera-side occluders)
-  hud.js          HUD bars/text, weapon panel, inventory bar, interact prompt, toasts, minimap,
+  fx.js           Particles, decals (blood/dirt/scorch), shockwave rings, health pickups, building fade
+  hud.js          HUD bars/text, weapon panel, inventory bar, interact prompt, floating pickup text,
+                  drop name tags, toasts, minimap,
                   craft screen, banner, showScreen()
   upgrades.js     Upgrade definitions
   game.js         Game flow: startCity/newRun, crystal/horde/exit transitions, death, pause,
@@ -176,20 +198,25 @@ js/
 - **Resource ownership:** per-city geometries/materials are registered with `own()` in
   `cityScene.js` and disposed in `teardownCity()`. Things in `SH` (assets.js) are shared and
   never disposed. Zombie materials are per-zombie and disposed in `disposeZombie()`
-  (zombie gear/tell meshes use shared `SH` geometry and materials).
+  (zombie gear/tell meshes use shared `SH` geometry and materials), as are an exploder's warning
+  ring materials. Gibs are zombie meshes re-parented to the scene that keep those materials, so a
+  dead zombie is always removed with `disposeCorpse()` (gibs + zombie), also in `teardownCity()`.
+  `rings` entries (`{ mesh, t, T, r0, r1, op }`) own their material, disposed when they finish.
 - **Units:** grid tiles are `TILE = 2` world units; the map is `N = 46` tiles square. Tile index
   is `z*N + x`. World→tile is `Math.floor(pos/TILE)`; tile center is `(t+0.5)*TILE`.
 - **Code style:** compact, dense lines matching the existing code; section header comments
   `// ---------- Name ----------`; brief comments only where intent isn't obvious.
 - **UI text** is in `index.html`/`hud.js`. HUD writes go through `setText()` to avoid DOM churn;
-  the inventory bar re-renders only when its contents change. Short messages go through `toast()`.
+  the inventory bar re-renders only when its contents change. Short messages go through `toast()`;
+  things the player gains go through `floatText()`. World-anchored DOM (interact prompt, floaters,
+  drop tags) is projected with the camera every frame in `updateHUD`.
 - **Building fade** (`updateFade` in `fx.js`): rays from the camera to the player and to 20 points
   on a 7-unit disc around them. Buildings hiding the player always fade; buildings hiding the disc
   fade only if their center is on the camera side of the player, so buildings beyond stay solid.
   Opacity eases toward 0.2 / 1; `faded` maps mesh → current opacity.
 - **Ground heights:** roads are at y=0, block slabs (sidewalk, park, lot, plaza) top out at 0.08.
-  Anything flat drawn on the ground (decals 0.09, acid 0.11, fire 0.12, acid marker 0.13) must sit
-  above 0.08 off-road.
+  Anything flat drawn on the ground (decals 0.09, acid 0.11, fire 0.12, acid marker and exploder
+  warning ring 0.13, shockwaves 0.14) must sit above 0.08 off-road.
 - **No runtime lights.** Adding/removing lights recompiles shaders; reuse `muzzleLight`/`fxLight`.
 
 ## Testing

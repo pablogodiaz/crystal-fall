@@ -2,6 +2,7 @@
 import { $ } from './utils.js';
 import { renderer } from './renderer.js';
 import { state, keys, mouse, mouseNDC } from './state.js';
+import { player } from './player.js';
 import { tryReload, melee } from './combat.js';
 import { toggleMute } from './audio.js';
 import { newRun, togglePause, toggleCraft } from './game.js';
@@ -16,7 +17,6 @@ export function initInput(){
     if (e.code === 'KeyR') tryReload();
     if (e.code === 'KeyQ') swapWeapon();
     if (e.code === 'KeyF') melee();
-    if (e.code === 'KeyG') startAim();
     if (e.code === 'KeyT') cycleThrowable(1);
     if (e.code === 'KeyC') toggleCraft();
     const digit = /^Digit([1-8])$/.exec(e.code);
@@ -24,14 +24,15 @@ export function initInput(){
     if (e.code === 'Escape' || e.code === 'KeyP'){ if (state.mode === 'craft') toggleCraft(); else togglePause(); }
     if (e.code === 'KeyM') toggleMute();
   });
-  addEventListener('keyup', e => { keys[e.code] = false; if (e.code === 'KeyG') releaseThrow(); });
+  addEventListener('keyup', e => { keys[e.code] = false; });
   const cv = renderer.domElement;
   cv.addEventListener('mousemove', e => { mouseNDC.x = e.clientX/innerWidth*2 - 1; mouseNDC.y = -(e.clientY/innerHeight)*2 + 1; });
+  // Hold right click to aim a throwable, release to throw; a left click while aiming cancels it.
   cv.addEventListener('mousedown', e => {
-    if (e.button === 0 && state.mode === 'play') mouse.down = true;
-    if (e.button === 2) cancelAim();
+    if (e.button === 0){ if (player.aiming) cancelAim(); else if (state.mode === 'play') mouse.down = true; }
+    if (e.button === 2) startAim();
   });
-  addEventListener('mouseup', e => { if (e.button === 0) mouse.down = false; });
+  addEventListener('mouseup', e => { if (e.button === 0) mouse.down = false; if (e.button === 2) releaseThrow(); });
   cv.addEventListener('contextmenu', e => e.preventDefault());
   // Mouse wheel picks the throwable. Trackpads send bursts of small deltas, so accumulate and
   // allow at most one step per 150 ms.

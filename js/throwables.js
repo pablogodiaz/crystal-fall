@@ -12,7 +12,7 @@ import { player, aimPoint } from './player.js';
 import { damageZombie, stunZombie, makeNoise } from './zombies.js';
 import { hurtPlayer, hitCrystal, CRYSTAL_R } from './combat.js';
 import { selectedThrowable, countItem } from './inventory.js';
-import { burst } from './fx.js';
+import { burst, shockwave, addDecal } from './fx.js';
 import { sfx } from './audio.js';
 
 const FIRE_R = 2.6, FIRE_TIME = 6, FIRE_DPS = 2.4, BOMB_FUSE = 3.5, BOMB_R = 6, STUN_TIME = 2.5, LURE_R = 32;
@@ -97,12 +97,13 @@ export function explosion(x, z, R, zDmg, pDmg, noise){
   const lv = 1 + 0.3*(state.level-1);
   for (const o of zombies.slice()){
     const dx = o.pos.x - x, dz = o.pos.z - z, d = Math.hypot(dx,dz);
-    if (d < R) damageZombie(o, zDmg*lv*(1 - d/(R*1.25)), dx/(d||1)*2.5, dz/(d||1)*2.5);
+    if (d < R) damageZombie(o, zDmg*lv*(1 - d/(R*1.25)), dx/(d||1)*2.5, dz/(d||1)*2.5, 'blast');
   }
   const pd = Math.hypot(player.pos.x - x, player.pos.z - z);
   if (pd < R) hurtPlayer(pDmg*(1 - pd/(R*1.1)), null);
   const p = new THREE.Vector3(x, 0.6, z);
   burst(p, 'fire', 24, 8); burst(p, 'spark', 16, 9); burst(p, 'dust', 16, 6);
+  shockwave(x, z, R, 0xff6a1a); addDecal(x, z, R*0.75, SH.scorchMat);
   fxLight.position.set(x, 2, z); flash = 7;
   state.shake = Math.max(state.shake, 0.7);
   sfx.boom(); makeNoise(x, z, noise);
@@ -117,7 +118,7 @@ function stunBlast(x, z){
     o.vel.x += dx/(d||1)*o.kb*1.2; o.vel.z += dz/(d||1)*o.kb*1.2;
   }
   const p = new THREE.Vector3(x, 0.6, z);
-  burst(p, 'spark', 22, 9); burst(p, 'dust', 20, 7);
+  burst(p, 'spark', 22, 9); burst(p, 'dust', 20, 7); shockwave(x, z, BOMB_R, 0x8cc8ff);
   fxLight.position.set(x, 2, z); flash = 7;
   state.shake = Math.max(state.shake, 0.6);
   sfx.boom(); makeNoise(x, z, 40);
@@ -143,7 +144,7 @@ export function updateThrowables(dt){
       if (h.tick <= 0){
         h.tick = 0.25;
         const dmg = FIRE_DPS*0.25*(1 + 0.3*(state.level-1));
-        for (const z of zombies.slice()) if (Math.hypot(z.pos.x - h.x, z.pos.z - h.z) < FIRE_R + z.r*0.5) damageZombie(z, dmg, 0, 0, true);
+        for (const z of zombies.slice()) if (Math.hypot(z.pos.x - h.x, z.pos.z - h.z) < FIRE_R + z.r*0.5) damageZombie(z, dmg, 0, 0, 'fire');
         const cr = world.crystal;
         if (cr && cr.alive && Math.hypot(cr.pos.x - h.x, cr.pos.z - h.z) < FIRE_R + CRYSTAL_R) hitCrystal(dmg);
         if (Math.hypot(player.pos.x - h.x, player.pos.z - h.z) < FIRE_R) hurtPlayer(2, null);
