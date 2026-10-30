@@ -46,7 +46,7 @@ export const player = { pos:new THREE.Vector3(), vel:new THREE.Vector3(), radius
 export function resetPlayerStats(){
   Object.assign(player, { hp:100, maxHp:100, speed:6, stamina:1, staminaDelay:0, reloadT:0, fireCd:0, meleeT:0, meleeCd:0, meleeHit:false,
     dmgMul:1, fireMul:1, magMul:1, reloadMul:1, pellets:0, pierce:0, regen:0, hungerRate:1,
-    hunger:1, bleeding:false, throwSel:'molotov', bleedFx:0, starveWarn:false,
+    hunger:1, bleeding:false, throwSel:'molotov', aiming:false, bleedFx:0, starveWarn:false,
     weapons:[{ id:'pistol', mag:12 }, null], cur:0, ammo:{ pistol:36, shotgun:0, smg:0, rifle:0 },
     inv:[{ id:'bandage', n:1 }, { id:'food', n:1 }].concat(new Array(INV_SLOTS-2).fill(null)) });
 }

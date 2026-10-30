@@ -82,12 +82,19 @@ export function selectedThrowable(){
   if (countItem(player.throwSel)) return player.throwSel;
   return THROWABLES.find(id => countItem(id)) || player.throwSel;
 }
-export function throwSelected(){
+// Hold G to aim (throwables.js draws the landing preview), release to throw, right-click cancels.
+export function startAim(){
   if (state.mode !== 'play') return;
-  const id = selectedThrowable();
-  if (!countItem(id)) return toast('No throwables. Craft some with scrap (C)');
-  if (throwItem(id)) removeItem(id, 1);
+  if (!countItem(selectedThrowable())) return toast('No throwables. Craft some with scrap (C)');
+  player.aiming = true;
 }
+export function releaseThrow(){
+  if (!player.aiming) return;
+  player.aiming = false;
+  const id = selectedThrowable();
+  if (state.mode === 'play' && countItem(id) && throwItem(id)) removeItem(id, 1);
+}
+export function cancelAim(){ player.aiming = false; }
 // Picks the next throwable kind you're carrying. Carrying none just changes the preference.
 export function cycleThrowable(dir){
   if (state.mode !== 'play') return;
