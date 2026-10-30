@@ -6,7 +6,7 @@ import { camera } from './renderer.js';
 import { WEAPONS, ITEMS, RECIPES, LANDMARKS, INV_SLOTS } from './items.js';
 import { state, world, zombies } from './state.js';
 import { player } from './player.js';
-import { useSlot, dropSlot, craft, countItem, magSize } from './inventory.js';
+import { useSlot, dropSlot, craft, countItem, magSize, selectedThrowable } from './inventory.js';
 import { interact } from './loot.js';
 
 const mm = $('minimap'), mctx = mm.getContext('2d');
@@ -79,6 +79,9 @@ export function updateHUD(dt, t){
   else { setText('ammoText', String(w.mag)); setText('ammoSub', w.mag + reserve === 0 ? 'Empty: melee' : '/ ' + reserve); }
   $('ammoSub').classList.toggle('empty', w.mag + reserve === 0 && player.reloadT <= 0);
   setText('wpnAlt', alt ? `Q ⇄ ${WEAPONS[alt.id].name} (${alt.mag} / ${player.ammo[alt.id]})` : `Mag ${magSize(w)}. Second slot empty`);
+  const th = selectedThrowable(), thn = countItem(th);
+  setText('throwText', `${ITEMS[th].icon} ${ITEMS[th].name} ×${thn}`);
+  $('throwLine').classList.toggle('none', !thn);
   renderInventory();
   updateInteractPrompt();
   let obj, sub = '';
