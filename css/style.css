@@ -47,6 +47,9 @@ body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--text)
 #objText{font-weight:700;font-size:15px}
 #objSub{font-size:12.5px;color:var(--muted);margin-top:2px}
 #crystalBar{margin:8px 0 0}
+#countdown{font-size:40px;line-height:1;margin-top:6px;color:var(--crystal);font-variant-numeric:tabular-nums}
+#countdown.urgent{color:var(--danger);animation:tickPulse 1s ease-out infinite}
+@keyframes tickPulse{0%{transform:scale(1.15)}100%{transform:scale(1)}}
 #minimapWrap{position:absolute;right:12px;top:calc(env(safe-area-inset-top,0px) + 8px);width:196px;height:196px;display:grid;place-items:center}
 #minimap{width:136px;height:136px;transform:rotate(45deg);border:2px solid var(--line);border-radius:4px;image-rendering:pixelated;background:#07080a;box-shadow:0 6px 24px rgba(0,0,0,.35)}
 #ammo{position:absolute;right:16px;bottom:calc(env(safe-area-inset-bottom,0px) + 16px);padding:8px 16px;font-variant-numeric:tabular-nums;min-width:150px}
@@ -85,6 +88,9 @@ body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--text)
 #interact .prog{stroke:var(--hazard);stroke-dasharray:113.1;stroke-dashoffset:113.1;stroke-linecap:round}
 #interact .label{margin-top:-22px;font-size:13px;font-weight:700;color:var(--on-scene);text-shadow:0 1px 3px rgba(0,0,0,.9);white-space:nowrap}
 #interact kbd{font:700 11px Barlow,sans-serif;background:var(--hazard);color:var(--on-hazard);border-radius:4px;padding:1px 6px;margin-right:6px;text-shadow:none}
+/* Crystal takeover (crystal.js): --x/--y = the Crystal on screen, --r = how far the wave has spread. */
+#taint{position:fixed;inset:0;pointer-events:none;mix-blend-mode:color;opacity:0;background:radial-gradient(circle at var(--x,50%) var(--y,50%),#8b3dff calc(var(--r,0px) - 2px),transparent var(--r,0px))}
+#taintWave{position:fixed;inset:0;pointer-events:none;mix-blend-mode:screen;opacity:0;background:radial-gradient(circle at var(--x,50%) var(--y,50%),transparent calc(var(--r,0px) - 110px),rgba(186,130,255,.8) var(--r,0px),transparent calc(var(--r,0px) + 26px))}
 #vignette{position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,transparent 45%,rgba(190,0,0,.7));opacity:0}
 #banner{position:fixed;left:50%;top:30%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;opacity:0;transition:opacity .35s;width:90vw}
 #banner.show{opacity:1}
@@ -116,4 +122,4 @@ body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--text)
 .statline{display:flex;gap:20px;flex-wrap:wrap;font-size:14px;color:var(--muted);margin-top:10px}
 .statline b{color:var(--text);font-size:18px;display:block}
 .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}
-@media (prefers-reduced-motion: reduce){#banner{transition:none}.fill{transition:none}}
+@media (prefers-reduced-motion: reduce){#banner{transition:none}.fill{transition:none}#countdown.urgent{animation:none}}

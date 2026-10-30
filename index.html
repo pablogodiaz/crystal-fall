@@ -11,6 +11,8 @@
 </head>
 <body>
 <div id="game"></div>
+<div id="taint"></div>
+<div id="taintWave"></div>
 <div id="vignette"></div>
 
 <div id="hud" class="hidden">
@@ -24,6 +26,7 @@
   <div id="objective" class="panel">
     <div id="objText">Find the Crystal</div>
     <div id="objSub"></div>
+    <div id="countdown" class="display hidden">5:00</div>
     <div id="crystalBar" class="bar thin hidden"><div class="fill cr" id="crFill"></div></div>
   </div>
   <div id="minimapWrap"><canvas id="minimap" width="184" height="184"></canvas></div>
@@ -48,7 +51,7 @@
 <div class="screen" id="menuScreen">
   <div class="card">
     <h1 class="title display">Crystal Fall</h1>
-    <p class="lead">Every quarantined city hides a Crystal. Find it, shatter it, survive the horde it summons, and take the road to the next city. Scavenge for ammo and supplies on the way, and keep your breath for running. One life per run.</p>
+    <p class="lead">Every quarantined city hides a Crystal. Find it, shatter it, survive while it holds the city, and take the road to the next city. Scavenge for ammo and supplies on the way, and keep your breath for running. One life per run.</p>
     <div class="controls">
       <kbd>W A S D</kbd><span>Move</span>
       <kbd>Mouse</kbd><span>Aim, hold click to shoot</span>

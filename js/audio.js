@@ -59,5 +59,9 @@ export const sfx = {
   splash: () => { sNoise(0.35, 1500, 0.25); sTone(180, 90, 0.2, 'sine', 0.08); },
   clank: () => { sTone(1900, 1500, 0.06, 'square', 0.05); sTone(640, 520, 0.12, 'triangle', 0.1); },
   fuse: () => { for (let i=0;i<3;i++) setTimeout(() => sTone(1900, 1900, 0.05, 'square', 0.08), i*120); },
+  // The Crystal's half-HP wave: a deep thud under a glassy chord.
+  pulse: () => { sTone(70, 35, 1.2, 'sine', 0.5); sNoise(0.9, 700, 0.4); sTone(880, 1320, 0.6, 'sine', 0.1); sTone(1175, 1760, 0.7, 'triangle', 0.06); },
+  // Takeover countdown, last n seconds: higher and louder toward zero.
+  tick: n => sTone(1400 - n*50, 1400 - n*50, 0.07, 'square', 0.05 + (10 - n)*0.006),
   alarm: () => { for (let i=0;i<8;i++) setTimeout(() => sTone(i%2 ? 700 : 950, i%2 ? 700 : 950, 0.26, 'square', 0.07), i*280); }
 };

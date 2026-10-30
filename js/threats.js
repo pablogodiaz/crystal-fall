@@ -45,3 +45,13 @@ export const ZMODS = {
   armored:   { chance:[0.06,0.02,0.15], guard:0.3, frontArc:1.0, frontMul:0.3, kbMul:0.4, speedMul:0.9,
                name:'Riot zombies', tip:'Shields soak shots from the front and stop piercing rounds. Flank them, or use fire' }
 };
+
+// The Crystal. From city pulseFrom on, the first hit that takes it to pulseAt of its HP or below
+// makes it lash out once: a wave that alerts everything within pulseR and raises
+// pulseSpawn = [base, perCity, max] zombies pulseDist units from it (counted from pulseFrom).
+// Breaking it starts the takeover: `takeover` s of violet sky in which everything spawns alert.
+// First a surge of surge[0] + surge[1]*(city-1) rises 15–30 units away, then one more every
+// interval = [base, perCity, min] s (shrinking by up to `ramp` as the clock runs down) while fewer
+// than cap[0] + cap[1]*city of them are alive. ammoDrop replaces the usual ammo-box chance.
+export const CRYSTAL = { pulseFrom:3, pulseAt:0.5, pulseR:60, pulseSpawn:[8,2,18], pulseDist:[4,12],
+  takeover:300, surge:[10,3], interval:[1.8,0.15,0.8], ramp:0.4, cap:[10,4], ammoDrop:0.14 };

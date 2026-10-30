@@ -27,7 +27,7 @@ function resize(){
 }
 addEventListener('resize', resize); resize();
 
-scene.add(new THREE.HemisphereLight(0x93a8c8, 0x2a2520, 0.62));
+const hemi = new THREE.HemisphereLight(0x93a8c8, 0x2a2520, 0.62); scene.add(hemi);
 scene.add(new THREE.AmbientLight(0xffffff, 0.12));
 const sun = new THREE.DirectionalLight(0xffcf98, 0.85);
 sun.castShadow = true;
@@ -39,6 +39,15 @@ const SUN_OFFSET = new THREE.Vector3(-26,50,14);
 export const muzzleLight = new THREE.PointLight(0xffc870, 0, 9, 2); scene.add(muzzleLight);
 // Pooled light for fires/explosions (adding lights at runtime would recompile shaders).
 export const fxLight = new THREE.PointLight(0xff8a3a, 0, 16, 2); scene.add(fxLight);
+
+// Crystal takeover tint: k = 0 normal daylight, 1 the city drowned in violet. Only colors and
+// intensities change, so no shader recompiles.
+const TINT = [[hemi.color, 0x93a8c8, 0xa070ff], [hemi.groundColor, 0x2a2520, 0x2c1748], [sun.color, 0xffcf98, 0xc9a0ff], [scene.background, 0x1b2029, 0x1d1130]]
+  .map(([c, a, b]) => [c, new THREE.Color(a), new THREE.Color(b)]);
+export function setTint(k){
+  for (const [c, a, b] of TINT) c.copy(a).lerp(b, k);
+  hemi.intensity = 0.62 + 0.1*k; sun.intensity = 0.85 - 0.2*k;
+}
 
 // Orbits the city on the menu, otherwise follows `target` (the player).
 export function updateCamera(dt, target){
