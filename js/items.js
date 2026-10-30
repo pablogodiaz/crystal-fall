@@ -20,6 +20,8 @@ export const ITEMS = {
   molotov:  { name:'Molotov',     icon:'🍾', max:3,  desc:'Throw at the cursor: sets the area on fire' },
   pipebomb: { name:'Pipe bomb',   icon:'💣', max:3,  desc:'Throw at the cursor: beeps to lure the dead, then explodes' }
 };
+// Thrown with G from wherever they sit in the pack; the mouse wheel / T picks which one.
+export const THROWABLES = ['molotov','pipebomb'];
 export const RECIPES = [
   { id:'molotov', scrap:3, desc:'Burns everything in a small area for 6 s.' },
   { id:'pipebomb', scrap:4, desc:'Draws zombies to it for 3.5 s, then explodes.' }

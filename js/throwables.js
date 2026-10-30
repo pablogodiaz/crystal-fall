@@ -10,25 +10,68 @@ import { isBlockedTile } from './grid.js';
 import { player, aimPoint } from './player.js';
 import { damageZombie, makeNoise } from './zombies.js';
 import { hurtPlayer, hitCrystal, CRYSTAL_R } from './combat.js';
+import { selectedThrowable, countItem } from './inventory.js';
 import { burst } from './fx.js';
 import { sfx } from './audio.js';
 
 const FIRE_R = 2.6, FIRE_TIME = 6, FIRE_DPS = 2.4, BOMB_FUSE = 3.5, BOMB_R = 5.5, BOMB_DMG = 16, LURE_R = 32;
 let flash = 0;
 
-// Throws toward the cursor (max 13 units), landing short of the first wall in the way.
-export function throwItem(id){
+// Flight path of a throw toward the cursor: max 13 units, landing short of the first wall in the way.
+// T = flight time; arcY(k, T) = height at progress k. Shared by the throw and the aim preview.
+function throwPath(){
   const px = player.pos.x, pz = player.pos.z;
   let dx = aimPoint.x - px, dz = aimPoint.z - pz, d = Math.hypot(dx,dz);
   if (d < 0.5){ dx = Math.sin(player.angle); dz = Math.cos(player.angle); d = 1; }
   const ux = dx/d, uz = dz/d, max = Math.min(13, Math.max(2, d));
   let land = 0;
   for (let s=0.5;s<=max;s+=0.25){ if (isBlockedTile(Math.floor((px+ux*s)/TILE), Math.floor((pz+uz*s)/TILE))) break; land = s; }
+  return { sx:px, sz:pz, ex:px + ux*land, ez:pz + uz*land, T:0.3 + land/24 };
+}
+const arcY = (k, T) => 1.3*(1-k) + Math.sin(k*Math.PI)*(1 + T*3) + 0.12;
+export function throwItem(id){
+  const p = throwPath();
   const m = new THREE.Mesh(id === 'molotov' ? SH.bottleGeo : SH.pipeGeo, id === 'molotov' ? SH.bottleMat : SH.pipeMat);
-  m.position.set(px, 1.3, pz); scene.add(m);
-  throwns.push({ id, mesh:m, sx:px, sz:pz, ex:px + ux*land, ez:pz + uz*land, t:0, T:0.3 + land/24 });
+  m.position.set(p.sx, 1.3, p.sz); scene.add(m);
+  throwns.push(Object.assign({ id, mesh:m, t:0 }, p));
   sfx.throw();
   return true;
+}
+
+// ---------- Aim preview (hold G) ----------
+// Outline of the area the throwable will affect (fire / blast radius) plus a dotted flight arc.
+// Drawn without depth testing so it stays visible behind buildings. Built once, never disposed.
+const PREVIEW = { molotov:{ r:FIRE_R, color:0xff8a2a }, pipebomb:{ r:BOMB_R, color:0xff4a3a } };
+let preview = null;
+function buildPreview(){
+  const mat = new THREE.MeshBasicMaterial({ transparent:true, opacity:0.85, depthTest:false, depthWrite:false, side:THREE.DoubleSide });
+  const fillMat = new THREE.MeshBasicMaterial({ transparent:true, opacity:0.14, depthTest:false, depthWrite:false, side:THREE.DoubleSide });
+  const g = new THREE.Group(); g.visible = false; g.renderOrder = 10;
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.94, 1, 56), mat); ring.rotation.x = -Math.PI/2;
+  const fill = new THREE.Mesh(new THREE.CircleGeometry(1, 56), fillMat); fill.rotation.x = -Math.PI/2;
+  const center = new THREE.Mesh(new THREE.RingGeometry(0.12, 0.22, 20), mat); center.rotation.x = -Math.PI/2;
+  const dotGeo = new THREE.SphereGeometry(0.07, 6, 4), dots = [];
+  for (let i=0;i<16;i++){ const d = new THREE.Mesh(dotGeo, mat); dots.push(d); g.add(d); }
+  g.add(ring, fill, center);
+  g.traverse(o => { o.renderOrder = 10; });
+  scene.add(g);
+  return { g, ring, fill, center, dots, mat, fillMat };
+}
+// Called every frame in play: shows the preview while player.aiming, hides it otherwise.
+export function updateThrowPreview(){
+  const id = player.aiming && state.mode === 'play' ? selectedThrowable() : null;
+  if (player.aiming && !countItem(id)) player.aiming = false;
+  if (!player.aiming || !id){ if (preview) preview.g.visible = false; return; }
+  preview = preview || buildPreview();
+  const p = throwPath(), P = PREVIEW[id];
+  preview.mat.color.setHex(P.color); preview.fillMat.color.setHex(P.color);
+  for (const o of [preview.ring, preview.fill]){ o.position.set(p.ex, 0.13, p.ez); o.scale.setScalar(P.r); }
+  preview.center.position.set(p.ex, 0.13, p.ez);
+  preview.dots.forEach((d, i) => {
+    const k = (i+1)/(preview.dots.length+1);
+    d.position.set(p.sx + (p.ex-p.sx)*k, arcY(k, p.T), p.sz + (p.ez-p.sz)*k);
+  });
+  preview.g.visible = true;
 }
 function land(o){
   const x = o.ex, z = o.ez;
@@ -69,7 +112,7 @@ export function updateThrowables(dt){
   for (let i=throwns.length-1;i>=0;i--){
     const o = throwns[i]; o.t += dt;
     const k = Math.min(1, o.t/o.T);
-    o.mesh.position.set(o.sx + (o.ex-o.sx)*k, 1.3*(1-k) + Math.sin(k*Math.PI)*(1 + o.T*3) + 0.12, o.sz + (o.ez-o.sz)*k);
+    o.mesh.position.set(o.sx + (o.ex-o.sx)*k, arcY(k, o.T), o.sz + (o.ez-o.sz)*k);
     o.mesh.rotation.x += dt*14;
     if (k >= 1){ scene.remove(o.mesh); throwns.splice(i,1); land(o); }
   }

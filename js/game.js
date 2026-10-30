@@ -14,7 +14,7 @@ import { updateBullets } from './combat.js';
 import { burst, updateParticles, updatePickups } from './fx.js';
 import { showScreen, banner, renderCraft } from './hud.js';
 import { interact, updateInteract, updateDrops, updateLandmarks, animateContainers } from './loot.js';
-import { updateThrowables } from './throwables.js';
+import { updateThrowables, updateThrowPreview } from './throwables.js';
 import { setupThreats, shuffleThreats, updateSpecials } from './specials.js';
 import { UPGRADES } from './upgrades.js';
 import { initAudio, sfx } from './audio.js';
@@ -201,6 +201,7 @@ export function animateWorld(dt, t){
   }
   muzzleLight.intensity = Math.max(0, muzzleLight.intensity - dt*30);
   animateContainers(t);
+  updateThrowPreview();
   updateParticles(dt);
   updateDying(dt);
 }
