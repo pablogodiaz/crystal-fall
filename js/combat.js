@@ -7,7 +7,7 @@ import { scene, muzzleLight } from './renderer.js';
 import { SH } from './assets.js';
 import { WEAPONS } from './items.js';
 import { state, world, zombies, bullets } from './state.js';
-import { isBlockedTile } from './grid.js';
+import { isOpaqueTile } from './grid.js';
 import { player } from './player.js';
 import { damageZombie, makeNoise } from './zombies.js';
 import { curWeapon, magSize } from './inventory.js';
@@ -39,7 +39,7 @@ export function fire(){
   muzzleLight.position.set(player.pos.x + Math.sin(player.angle)*1.1, 1.3, player.pos.z + Math.cos(player.angle)*1.1);
   muzzleLight.intensity = 3;
   sfx.shot(W.sound);
-  // Gunfire alerts nearby zombies.
+  // Gunfire is heard far off; zombies that can't see you walk to where it came from.
   makeNoise(player.pos.x, player.pos.z, W.noise);
   if (w.mag === 0) tryReload();
 }
@@ -91,7 +91,7 @@ export function updateBullets(dt){
         const cx = bp.x - crystal.pos.x, cz = bp.z - crystal.pos.z, ct = world.city.crystalTile;
         if (cx*cx + cz*cz < CRYSTAL_R*CRYSTAL_R || (tx === ct.x && tz === ct.z)){ hitCrystal(b.damage); burst(bp.clone(), 'crystal', 5, 3); dead = true; break; }
       }
-      if (isBlockedTile(tx, tz)){ burst(bp.clone(), 'spark', 4, 2.5); dead = true; break; }
+      if (isOpaqueTile(tx, tz)){ burst(bp.clone(), 'spark', 4, 2.5); dead = true; break; }  // cell bars let shots through
       for (const z of zombies){
         if (b.hit.has(z) || z.rise > 0) continue;  // still digging out: shots pass over
         const zx = bp.x - z.pos.x, zz = bp.z - z.pos.z, rr = z.r + 0.14;

@@ -15,7 +15,9 @@ export const state = { mode:'menu', level:1, phase:'explore', crystalFound:false
 export const world = {
   city:null, cityGroup:null, buildingMeshes:[], crystal:null, barricade:null, exitMarker:null,
   explored:new Uint8Array(N*N), mmDirty:true, lastTile:-1,
-  lure:null  // active pipe bomb that alerted zombies walk toward
+  lure:null,  // active pipe bomb that alerted zombies walk toward
+  // Walk-in landmarks: { shell, roof, key, k } per building (k = cutaway 0..1), and tile -> index+1 inside one.
+  interiors:[], interiorAt:null
 };
 
 // Live entity lists (mutated in place, never reassigned).

@@ -38,20 +38,23 @@ function rollEntry(k){
   if (k === 'weapon') return { weapon:mpick(FOUND_WEAPONS) };
   return { item:k, n:k === 'scrap' ? mri(1,3) : 1 };
 }
+// Door-searched landmarks give fixed loot; walk-in ones are looted from their shelves and lockers.
 function landmarkLoot(type){
-  if (type === 'police'){
-    const own = carried(), fresh = FOUND_WEAPONS.filter(w => !own.includes(w));
-    const w = mpick(fresh.length ? fresh : FOUND_WEAPONS);
-    return [{ weapon:w }, ammoRoll(w, 1.5), ammoRoll(ammoType()), ammoRoll(ammoType()), { item:'bandage', n:1 }];
-  }
   if (type === 'pharmacy') return [{ item:'bandage', n:mri(2,4) }, { item:'medkit', n:mri(1,2) }];
-  if (type === 'supermarket') return [{ item:'drink', n:mri(2,3) }].concat(Math.random() < 0.5 ? [{ item:'bandage', n:1 }] : []);
+  if (type === 'gas') return [{ item:'molotov', n:mri(1,2) }, { item:'scrap', n:mri(2,4) }].concat(Math.random() < 0.5 ? [{ item:'drink', n:1 }] : []);
   const out = [{ item:'scrap', n:mri(5,8) }];
   if (Math.random() < 0.5) out.push({ item:'pipebomb', n:1 });
   return out;
 }
+// The police armory: a gun you don't carry yet (if there is one) with plenty of its ammo.
+function armoryLoot(){
+  const own = carried(), fresh = FOUND_WEAPONS.filter(w => !own.includes(w));
+  const w = mpick(fresh.length ? fresh : FOUND_WEAPONS);
+  return [{ weapon:w }, ammoRoll(w, 1.5), ammoRoll(ammoType()), { item:'bandage', n:1 }];
+}
 export function rollLoot(c){
-  if (c.lm) return landmarkLoot(c.lm);
+  if (c.kind === 'door' && c.lm) return landmarkLoot(c.lm);
+  if (c.kind === 'armory') return armoryLoot();
   const L = LOOT[c.kind];
   if (Math.random() < L.empty) return [];
   const out = [], n = mri(L.rolls[0], L.rolls[1]);
@@ -183,13 +186,13 @@ function finishSearch(c){
 }
 
 // ---------- Landmarks ----------
-// A landmark is discovered once the tile in front of its door has been revealed.
+// A landmark is discovered once the tile in front of its door (or entrance) has been revealed.
 export function updateLandmarks(){
   for (const l of world.city.landmarks){
     if (l.found || !world.explored[l.oz*N + l.ox]) continue;
     l.found = true; world.mmDirty = true;
     const L = LANDMARKS[l.type];
-    toast(`Discovered: ${L.icon} ${L.name}` + (l.type === 'police' ? ' (guarded)' : ''), 'info');
+    toast(`Discovered: ${L.icon} ${L.name}` + (l.type === 'police' ? ' (guarded)' : '') + (L.enter ? '. Walk in to search it' : ''), 'info');
   }
 }
 export function animateContainers(t){

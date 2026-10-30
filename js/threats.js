@@ -53,5 +53,22 @@ export const ZMODS = {
 // First a surge of surge[0] + surge[1]*(city-1) rises 15–30 units away, then one more every
 // interval = [base, perCity, min] s (shrinking by up to `ramp` as the clock runs down) while fewer
 // than cap[0] + cap[1]*city of them are alive. ammoDrop replaces the usual ammo-box chance.
+// breakR = zombies this close when it breaks join the takeover (hunt you until it ends).
 export const CRYSTAL = { pulseFrom:3, pulseAt:0.5, pulseR:60, pulseSpawn:[8,2,18], pulseDist:[4,12],
-  takeover:180, surge:[10,3], interval:[1.8,0.15,0.8], ramp:0.4, cap:[10,4], ammoDrop:0.14 };
+  takeover:180, surge:[10,3], interval:[1.8,0.15,0.8], ramp:0.4, cap:[10,4], ammoDrop:0.14, breakR:60 };
+
+// ---------- Senses ----------
+// Zombies live in their district: each has a home (where it spawned) and is in one of four modes:
+// idle (wanders within `wander` of home), search (walks to a noise or to where it lost you, looks
+// around for `search` s, gives up after `giveUp` s), hunt (knows where you are) and return (walks home).
+// Sight: idle/searching ones notice you within `sight` inside a `cone` (rad either side of where
+// they face), or within `feel` from any side; hunting ones keep sight of you to `sightHunt`. All
+// sight needs a clear line. A hunter that can't see you heads for your last known spot and forgets
+// you after `memory` s (3x faster beyond `leash` of home, unless you're within `closeR`), then searches.
+// Hearing: makeNoise(x, z, r) reaches zombies within r (beyond muffle*r only with a clear line,
+// walls soak the rest). Noises further than leash*`noiseLeash` from a zombie's home are ignored,
+// unless forced (pipe bombs, the Crystal). Guards (police, shop, cells) use guardLeash.
+// sprintNoise = radius of your footsteps while sprinting, every stepT s.
+export const AI = { sight:13, sightHunt:26, feel:3.5, cone:1.9, memory:6, leash:30, guardLeash:9, closeR:9,
+  search:4, giveUp:25, wander:7, muffle:0.6, noiseLeash:1.25, sprintNoise:8, stepT:0.3,
+  speed:{ idle:0.3, search:0.75, return:0.55 } };

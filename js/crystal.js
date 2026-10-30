@@ -5,11 +5,11 @@ import * as THREE from 'three';
 import { $, mr, fmtTime } from './utils.js';
 import { scene, camera, setTint } from './renderer.js';
 import { SH } from './assets.js';
-import { CRYSTAL } from './threats.js';
+import { CRYSTAL, AI } from './threats.js';
 import { state, world, zombies, rings } from './state.js';
 import { reveal } from './grid.js';
 import { player } from './player.js';
-import { spawnZombieAt, findSpawnNear, makeNoise } from './zombies.js';
+import { spawnZombieAt, findSpawnNear, alertZombie, alertNear } from './zombies.js';
 import { burst } from './fx.js';
 import { banner } from './hud.js';
 import { sfx } from './audio.js';
@@ -31,7 +31,7 @@ export function checkPulse(){
   if (cr.pulsed || state.level < C.pulseFrom || cr.hp > cr.maxHp*C.pulseAt) return;
   const { x, z } = cr.pos;
   cr.pulsed = true; cr.flash = 0.5;
-  makeNoise(x, z, C.pulseR);
+  alertNear(x, z, C.pulseR);
   ring(x, 1.8, z, 26, 0.9, 0.8); ring(x, 0.14, z, C.pulseR*0.5, 1.4, 0.6, SH.blastRingGeo);
   burst(new THREE.Vector3(x, 2.1, z), 'crystal', 30, 8);
   screenWave(0.9, false);
@@ -57,7 +57,8 @@ export function breakCrystal(){
   screenWave(1.6, true);
   // Its beam stays up, throbbing, until the takeover ends.
   Object.assign(state, { phase:'takeover', takeover:C.takeover, surge:C.surge[0] + C.surge[1]*(state.level-1), spawnTimer:2.2, tick:10 });
-  for (const z of zombies) z.alert = true;
+  // Everything nearby joins the takeover and hunts you until it ends.
+  for (const o of zombies) if (Math.hypot(o.pos.x - x, o.pos.z - z) < C.breakR) alertZombie(o, true);
   banner('The Crystal takes the city', `Survive ${fmtTime(C.takeover)} until its hold breaks`);
 }
 // Clock ran out: the light drains away and the takeover's dead become ordinary ones.
@@ -66,7 +67,11 @@ export function endTakeover(){
   cr.beam.visible = false; cr.glow.visible = false;
   burst(new THREE.Vector3(cr.pos.x, 1.5, cr.pos.z), 'crystal', 30, 6);
   ring(player.pos.x, 0.14, player.pos.z, 30, 1.4, 0.5, SH.blastRingGeo);
-  for (const z of zombies) z.horde = false;
+  // The takeover's dead stay where they are and become ordinary residents there.
+  for (const z of zombies){
+    if (z.tracked && !z.guard){ z.hx = z.pos.x; z.hz = z.pos.z; z.leash = AI.leash; }
+    z.horde = false; z.tracked = false;
+  }
   state.hordeAlive = 0;
   tint.target = 0;
 }

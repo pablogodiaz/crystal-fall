@@ -16,6 +16,32 @@ function makeWindowTexture(litChance){
   return t;
 }
 export const WIN_TEX = [makeWindowTexture(0.12), makeWindowTexture(0.25), makeWindowTexture(0.04)];
+// Corrugated metal siding for warehouses (one rib per 0.25 of a tile).
+export const CORR_TEX = (() => {
+  const c = document.createElement('canvas'); c.width = 64; c.height = 8;
+  const g = c.getContext('2d');
+  for (let x=0;x<8;x++){ g.fillStyle = x % 2 ? '#d4d4d4' : '#ffffff'; g.fillRect(x*8, 0, 8, 8); }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+})();
+// Checkered shop floor (2×2 squares per tile).
+export const CHECKER_TEX = (() => {
+  const c = document.createElement('canvas'); c.width = 32; c.height = 32;
+  const g = c.getContext('2d');
+  g.fillStyle = '#ffffff'; g.fillRect(0,0,32,32); g.fillStyle = '#b9b9b9'; g.fillRect(0,0,16,16); g.fillRect(16,16,16,16);
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(2,2);
+  return t;
+})();
+// Awareness marks over a zombie's head: '?' heard something, '!' spotted you.
+function markTexture(ch, color){
+  const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+  const g = c.getContext('2d');
+  g.fillStyle = 'rgba(12,12,14,0.75)'; g.beginPath(); g.arc(32,32,26,0,Math.PI*2); g.fill();
+  g.strokeStyle = color; g.lineWidth = 4; g.stroke();
+  g.fillStyle = color; g.font = 'bold 40px Barlow, Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(ch, 32, 35);
+  return new THREE.CanvasTexture(c);
+}
 
 export const SH = {};
 (function initShared(){
@@ -116,5 +142,48 @@ export const SH = {};
   SH.markMat = new THREE.MeshBasicMaterial({ color:0xa6ff3a, transparent:true, opacity:0.75, depthWrite:false });
   SH.markFillMat = new THREE.MeshBasicMaterial({ color:0xa6ff3a, transparent:true, opacity:0.2, depthWrite:false });
   SH.acidPoolMat = new THREE.MeshBasicMaterial({ color:0x8fe02a, transparent:true, opacity:0.55, depthWrite:false });
+  SH.markMats = { heard:new THREE.SpriteMaterial({ map:markTexture('?', '#ffd24a'), depthWrite:false }), spotted:new THREE.SpriteMaterial({ map:markTexture('!', '#ff4d4d'), depthWrite:false }) };
+  // Ground overlays (parking, forecourts) and landmark props. Box geometries sit on y = 0.
+  const base = (w, h, d) => { const g = new THREE.BoxGeometry(w, h, d); g.translate(0, h/2, 0); return g; };
+  SH.tilePlane = new THREE.PlaneGeometry(1,1); SH.tilePlane.rotateX(-Math.PI/2);
+  SH.lotMat = new THREE.MeshStandardMaterial({ color:0x2a2c30, roughness:1 });
+  SH.padMat = new THREE.MeshStandardMaterial({ color:0x8f8c86, roughness:1 });
+  SH.lineMat = new THREE.MeshBasicMaterial({ color:0xc9c6bb });
+  SH.metalMat = new THREE.MeshStandardMaterial({ color:0x8d9196, roughness:0.5, metalness:0.4 });
+  SH.darkMetalMat = new THREE.MeshStandardMaterial({ color:0x34383e, roughness:0.5, metalness:0.5 });
+  SH.whiteMat = new THREE.MeshStandardMaterial({ color:0xe6e3dc, roughness:0.7 });
+  SH.redMat = new THREE.MeshStandardMaterial({ color:0xd33b2c, roughness:0.6 });
+  SH.navyMat = new THREE.MeshStandardMaterial({ color:0x1d3f7a, roughness:0.6 });
+  SH.woodMat = new THREE.MeshStandardMaterial({ color:0x7a5a3a, roughness:0.9 });
+  SH.lumberMat = new THREE.MeshStandardMaterial({ color:0xc9a56a, roughness:1 });
+  SH.screenMat = new THREE.MeshStandardMaterial({ color:0x1a2a3a, emissive:0x2a6a9a, emissiveIntensity:0.6, roughness:0.3 });
+  SH.shelfGeo = base(1.75, 1.45, 0.9);
+  SH.goodsGeo = new THREE.BoxGeometry(0.34, 0.3, 0.2);
+  SH.goodsMats = [0xd9483b,0xe8c34a,0x3b7dd9,0x4fb35a,0xe8e2d0,0xd9822b].map(c => new THREE.MeshStandardMaterial({ color:c, roughness:0.7 }));
+  SH.counterGeo = base(1.7, 0.95, 0.85);
+  SH.registerGeo = base(0.42, 0.3, 0.36);
+  SH.lockerGeo = base(1.5, 2.0, 0.6);
+  SH.lockerDoorGeo = base(0.46, 1.8, 0.04); SH.lockerDoorGeo.translate(0.23, 0, 0);
+  SH.lockerMat = new THREE.MeshStandardMaterial({ color:0x5d6b78, roughness:0.5, metalness:0.4 });
+  SH.armoryGeo = base(1.7, 1.9, 0.6);
+  SH.armoryMat = new THREE.MeshStandardMaterial({ color:0x3d4a3e, roughness:0.6, metalness:0.3 });
+  SH.rifleGeo = base(0.08, 1.15, 0.14);
+  SH.deskGeo = base(1.5, 0.78, 0.9);
+  SH.monitorGeo = base(0.55, 0.38, 0.06);
+  SH.drawerGeo = base(0.5, 0.18, 0.5);
+  SH.barGeo = base(0.09, 2.3, 0.09);
+  SH.railGeo = new THREE.BoxGeometry(2, 0.1, 0.12);
+  SH.pumpGeo = base(0.6, 1.4, 0.45);
+  SH.pumpTopGeo = base(0.68, 0.22, 0.52);
+  SH.lumberGeo = base(1.6, 0.22, 0.95);
+  SH.cartGeo = base(0.5, 0.42, 0.8);
+  SH.poleGeo = new THREE.CylinderGeometry(0.06, 0.06, 1, 6); SH.poleGeo.translate(0, 0.5, 0);
+  SH.flagGeo = new THREE.BoxGeometry(0.9, 0.55, 0.03);
+  SH.flagMat = new THREE.MeshStandardMaterial({ color:0x2f4f9a, roughness:0.8, side:THREE.DoubleSide });
+  SH.lightbarGeo = new THREE.BoxGeometry(0.22, 0.12, 0.4);
+  SH.policeDoorGeo = new THREE.BoxGeometry(0.9, 0.24, 1.08);
+  // Abandoned police cars still flash; animated in game.js animateWorld().
+  SH.sirenR = new THREE.MeshStandardMaterial({ color:0xd02020, emissive:0xff2020, emissiveIntensity:1.5 });
+  SH.sirenB = new THREE.MeshStandardMaterial({ color:0x2040d0, emissive:0x3060ff, emissiveIntensity:0.2 });
 })();
 export const carMat = c => SH.carMats[c] || (SH.carMats[c] = new THREE.MeshStandardMaterial({ color:c, roughness:0.7, metalness:0.25 }));

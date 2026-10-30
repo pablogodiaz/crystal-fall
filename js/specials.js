@@ -10,7 +10,7 @@ import { ZTYPES, ZMODS, THREAT_BASE, THREAT_POOL, SHUFFLE_INTRO, INTRO_FORCED, S
 import { state, zombies, spits, puddles, rings } from './state.js';
 import { isBlockedTile, lineOfSight } from './grid.js';
 import { player } from './player.js';
-import { spawnZombieAt, findSpawnNear, makeNoise } from './zombies.js';
+import { spawnZombieAt, findSpawnNear, alertZombie, alertNear } from './zombies.js';
 import { hurtPlayer } from './combat.js';
 import { burst } from './fx.js';
 import { queueBanner, toast } from './hud.js';
@@ -68,13 +68,13 @@ export function updateScreamer(z, dt, dist){
     if (z.windup <= 0) scream(z);
     return z.windup > 0;
   }
-  if (!z.screamed && sees(z, dt, dist, S.sight)){ z.windup = S.windup; z.alert = true; z.windSnd = sfx.windup(); return true; }
+  if (!z.screamed && sees(z, dt, dist, S.sight)){ z.windup = S.windup; alertZombie(z); z.windSnd = sfx.windup(); return true; }
   return false;
 }
 function scream(z){
   const S = ZTYPES.screamer;
   z.screamed = true; z.windup = 0; z.windSnd = null; resetPose(z);
-  makeNoise(z.pos.x, z.pos.z, S.alertR);
+  alertNear(z.pos.x, z.pos.z, S.alertR);  // they all learn where you are
   const mat = new THREE.MeshBasicMaterial({ color:0xffd0d0, transparent:true, opacity:0.7, depthWrite:false, side:THREE.DoubleSide });
   const ring = new THREE.Mesh(SH.markGeo, mat); ring.rotation.x = -Math.PI/2; ring.position.set(z.pos.x, 1.6, z.pos.z);
   scene.add(ring); rings.push({ mesh:ring, t:0, T:0.6, r0:1, r1:15.4, op:0.7 });

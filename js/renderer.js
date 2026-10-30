@@ -54,7 +54,7 @@ export function updateCamera(dt, target){
   if (state.mode === 'menu'){
     state.menuT += dt;
     const c = N*TILE/2;
-    camFocus.set(c + Math.sin(state.menuT*0.08)*22, 0, c + Math.cos(state.menuT*0.08)*22);
+    camFocus.set(c + Math.sin(state.menuT*0.06)*34, 0, c + Math.cos(state.menuT*0.06)*34);
   } else {
     camFocus.lerp(target, Math.min(1, dt*9));
   }

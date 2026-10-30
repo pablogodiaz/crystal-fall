@@ -1,68 +1,82 @@
 // ---------- HUD, minimap, banner, toasts, inventory bar, overlay screens ----------
 import * as THREE from 'three';
-import { TILE, N, T } from './config.js';
+import { TILE, N, B, T, DISTRICTS } from './config.js';
 import { $, fmtTime } from './utils.js';
 import { camera } from './renderer.js';
 import { WEAPONS, ITEMS, RECIPES, LANDMARKS, INV_SLOTS } from './items.js';
 import { CRYSTAL } from './threats.js';
-import { state, world, zombies, drops, pickups } from './state.js';
+import { state, world, zombies, drops, pickups, keys } from './state.js';
 import { player } from './player.js';
 import { useSlot, dropSlot, craft, countItem, magSize, selectedThrowable } from './inventory.js';
 import { interact, dropName } from './loot.js';
 
-const mm = $('minimap'), mctx = mm.getContext('2d');
-// Explored tiles are cached on an offscreen layer, redrawn only when world.mmDirty.
-const tileLayer = document.createElement('canvas'); tileLayer.width = N*4; tileLayer.height = N*4;
+const mm = $('minimap'), mctx = mm.getContext('2d'), bm = $('bigmap'), bctx = bm.getContext('2d');
+// Explored tiles are cached on an offscreen layer (MS px per tile), redrawn only when world.mmDirty.
+const MS = 4, tileLayer = document.createElement('canvas'); tileLayer.width = N*MS; tileLayer.height = N*MS;
 const tctx = tileLayer.getContext('2d');
-const MM_COLORS = { 0:'#3c3f46', 1:'#15171b', 2:'#0b0c0f', 3:'#d64545', 4:'#4ade80', 5:'#6a6862', 6:'#3f5a33', 7:'#8a8273', 8:'#24262b', 9:'#a070ff' };
+const MM_COLORS = { 0:'#3c3f46', 1:'#15171b', 2:'#0b0c0f', 3:'#d64545', 4:'#4ade80', 5:'#6a6862', 6:'#3f5a33', 7:'#8a8273', 8:'#24262b', 9:'#a070ff', 10:'#57534b', 11:'#30333a' };
 let mmTimer = 0, hudCache = {};
 function setText(id, v){ if (hudCache[id] !== v){ hudCache[id] = v; $(id).textContent = v; } }
-function drawMinimap(t){
-  const s = 4, city = world.city, crystal = world.crystal, explored = world.explored;
-  if (world.mmDirty){
-    world.mmDirty = false;
-    tctx.fillStyle = '#07080a'; tctx.fillRect(0,0,N*s,N*s);
-    for (let z=0;z<N;z++) for (let x=0;x<N;x++){
-      if (!explored[z*N+x]) continue;
-      let ty = city.grid[z*N+x];
-      if (ty === T.CRYSTAL && !(crystal && crystal.alive && state.crystalFound)) ty = T.PLAZA;
-      tctx.fillStyle = MM_COLORS[ty]; tctx.fillRect(x*s, z*s, s, s);
+function paintTiles(){
+  const city = world.city, crystal = world.crystal, explored = world.explored;
+  world.mmDirty = false;
+  tctx.fillStyle = '#07080a'; tctx.fillRect(0,0,N*MS,N*MS);
+  for (let z=0;z<N;z++) for (let x=0;x<N;x++){
+    if (!explored[z*N+x]) continue;
+    let ty = city.grid[z*N+x];
+    if (ty === T.CRYSTAL && !(crystal && crystal.alive && state.crystalFound)) ty = T.PLAZA;
+    tctx.fillStyle = MM_COLORS[ty]; tctx.fillRect(x*MS, z*MS, MS, MS);
+  }
+}
+// Draws the explored map into a size×size canvas at s px per tile, centered on tile (cx,cz).
+// The minimap follows the player; the full map (big) shows the whole city. Both canvases are
+// rotated 45° in CSS to match the camera, so icons are counter-rotated. The Crystal and the exit
+// stick to the minimap's edge when they're off it.
+function drawMap(ctx, size, s, cx, cz, t, big){
+  const city = world.city, crystal = world.crystal, explored = world.explored;
+  const X = x => size/2 + (x - cx)*s, Z = z => size/2 + (z - cz)*s, edge = v => Math.max(7, Math.min(size - 7, v));
+  ctx.fillStyle = '#07080a'; ctx.fillRect(0, 0, size, size);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(tileLayer, X(0), Z(0), N*s, N*s);
+  if (!big){
+    ctx.fillStyle = '#ff4d4d';
+    for (const z of zombies){
+      const tx = Math.floor(z.pos.x/TILE), tz = Math.floor(z.pos.z/TILE);
+      if (tx < 0 || tz < 0 || tx >= N || tz >= N || !explored[tz*N+tx]) continue;
+      if (Math.hypot(z.pos.x - player.pos.x, z.pos.z - player.pos.z) > 26) continue;
+      ctx.fillRect(X(z.pos.x/TILE) - 1.5, Z(z.pos.z/TILE) - 1.5, 3, 3);
     }
   }
-  mctx.drawImage(tileLayer, 0, 0);
-  mctx.fillStyle = '#ff4d4d';
-  for (const z of zombies){
-    const tx = Math.floor(z.pos.x/TILE), tz = Math.floor(z.pos.z/TILE);
-    if (tx < 0 || tz < 0 || tx >= N || tz >= N || !explored[tz*N+tx]) continue;
-    if (Math.hypot(z.pos.x - player.pos.x, z.pos.z - player.pos.z) > 26) continue;
-    mctx.fillRect(z.pos.x/TILE*s - 1.5, z.pos.z/TILE*s - 1.5, 3, 3);
-  }
-  if (crystal && crystal.alive && state.crystalFound){
-    const r = 4 + Math.sin(t*5)*1.5;
-    mctx.strokeStyle = '#c4a1ff'; mctx.lineWidth = 1.5;
-    mctx.beginPath(); mctx.arc(crystal.pos.x/TILE*s, crystal.pos.z/TILE*s, r, 0, Math.PI*2); mctx.stroke();
-  }
-  // Discovered landmarks; icons are counter-rotated against the minimap's 45° CSS rotation.
-  mctx.font = '10px sans-serif'; mctx.textAlign = 'center'; mctx.textBaseline = 'middle';
+  const ring = (x, z, color) => {
+    const r = (big ? 6 : 4) + Math.sin(t*5)*1.5, px = X(x), pz = Z(z), off = px !== edge(px) || pz !== edge(pz);
+    ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(edge(px), edge(pz), off ? r*0.6 : r, 0, Math.PI*2); ctx.stroke();
+    if (off){ ctx.fillStyle = color; ctx.beginPath(); ctx.arc(edge(px), edge(pz), 2, 0, Math.PI*2); ctx.fill(); }
+  };
+  if (crystal && crystal.alive && state.crystalFound) ring(crystal.pos.x/TILE, crystal.pos.z/TILE, '#c4a1ff');
+  // Discovered landmarks, dimmed once everything in them has been searched.
+  const R = big ? 10 : 7;
+  ctx.font = (big ? 14 : 10) + 'px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   for (const l of city.landmarks){
     if (!l.found) continue;
-    const L = LANDMARKS[l.type];
-    mctx.save(); mctx.translate(l.cx*s, l.cz*s); mctx.rotate(-Math.PI/4);
-    mctx.globalAlpha = city.containers[l.door].searched ? 0.45 : 1;
-    mctx.fillStyle = L.css; mctx.beginPath(); mctx.arc(0, 0, 7, 0, Math.PI*2); mctx.fill();
-    mctx.strokeStyle = '#ffffff'; mctx.lineWidth = 1; mctx.stroke();
-    mctx.fillText(L.icon, 0, 0.5);
-    mctx.restore();
+    const L = LANDMARKS[l.type], px = X(l.cx), pz = Z(l.cz);
+    if (px < -R || pz < -R || px > size + R || pz > size + R) continue;
+    ctx.save(); ctx.translate(px, pz); ctx.rotate(-Math.PI/4);
+    ctx.globalAlpha = l.cts.every(i => city.containers[i].searched) ? 0.45 : 1;
+    ctx.fillStyle = L.css; ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillText(L.icon, 0, 0.5);
+    ctx.restore();
   }
-  if (state.phase === 'open'){
-    const r = 4 + Math.sin(t*5)*1.5;
-    mctx.strokeStyle = '#4ade80'; mctx.lineWidth = 1.5;
-    mctx.beginPath(); mctx.arc((N-0.5)*s, (city.exitZ+1)*s, r, 0, Math.PI*2); mctx.stroke();
-  }
-  const px = player.pos.x/TILE*s, pz = player.pos.z/TILE*s;
-  mctx.strokeStyle = '#ffffff'; mctx.lineWidth = 1.5;
-  mctx.beginPath(); mctx.moveTo(px, pz); mctx.lineTo(px + Math.sin(player.angle)*7, pz + Math.cos(player.angle)*7); mctx.stroke();
-  mctx.fillStyle = '#ffffff'; mctx.beginPath(); mctx.arc(px, pz, 2.6, 0, Math.PI*2); mctx.fill();
+  if (state.phase === 'open') ring(N-0.5, city.exitZ+1, '#4ade80');
+  const px = X(player.pos.x/TILE), pz = Z(player.pos.z/TILE), a = big ? 10 : 7;
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(px, pz); ctx.lineTo(px + Math.sin(player.angle)*a, pz + Math.cos(player.angle)*a); ctx.stroke();
+  ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(px, pz, big ? 3.5 : 2.6, 0, Math.PI*2); ctx.fill();
+}
+function drawMinimap(t){
+  if (world.mmDirty) paintTiles();
+  drawMap(mctx, mm.width, MS, player.pos.x/TILE, player.pos.z/TILE, t, false);
 }
 export function updateHUD(dt, t){
   const crystal = world.crystal;
@@ -104,6 +118,14 @@ export function updateHUD(dt, t){
   v.style.opacity = Math.max(low, vo - dt*1.5);
   mmTimer -= dt;
   if (mmTimer <= 0){ mmTimer = 0.1; drawMinimap(t); }
+  // Full map while Tab is held.
+  const big = !!keys.Tab && state.mode === 'play';
+  $('bigmapWrap').classList.toggle('hidden', !big);
+  if (big){ if (world.mmDirty) paintTiles(); drawMap(bctx, bm.width, bm.width/N, N/2, N/2, t, true); }
+  // Which district you're in (roads count toward the block south-east of them).
+  const bx = Math.min(B-1, Math.max(0, Math.floor((player.pos.x/TILE - 1)/7))), bz = Math.min(B-1, Math.max(0, Math.floor((player.pos.z/TILE - 1)/7)));
+  const D = DISTRICTS[world.city.blocks[bz*B + bx].district];
+  setText('district', D.name + (D.note ? ` · ${D.note}` : ''));
 }
 
 // ---------- Inventory bar ----------

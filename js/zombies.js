@@ -1,20 +1,20 @@
 // ---------- Zombies ----------
-// Spawning, steering, damage and death. Type/modifier numbers live in threats.js; screamer and
-// spitter behaviour in specials.js.
+// Spawning, senses (sight, hearing, memory, home leash), steering, damage and death.
+// Type/modifier/AI numbers live in threats.js; screamer and spitter behaviour in specials.js.
 import * as THREE from 'three';
 import { TILE, N, DIRS8, walkable } from './config.js';
 import { mr, lerpAngle } from './utils.js';
 import { scene } from './renderer.js';
 import { SH } from './assets.js';
 import { state, world, zombies, dying } from './state.js';
-import { distField, isBlockedTile, resolveCircle } from './grid.js';
+import { distField, isBlockedTile, resolveCircle, lineOfSight, flowTo } from './grid.js';
 import { player } from './player.js';
 import { hurtPlayer } from './combat.js';
 import { burst, addDecal, spawnPickup } from './fx.js';
 import { dropZombieAmmo } from './loot.js';
 import { queueBlast } from './throwables.js';
 import { rollThreat, updateScreamer, cancelScream, updateSpitter, poseSpecial } from './specials.js';
-import { ZTYPES, ZMODS, SCALE, CRYSTAL } from './threats.js';
+import { ZTYPES, ZMODS, SCALE, CRYSTAL, AI } from './threats.js';
 import { sfx } from './audio.js';
 
 const SHIRTS = [0x6b4a3a,0x4a5a6b,0x5a5a4a,0x7a3a3a,0x3a4a3a,0x6a6a72,0x8a7a5a];
@@ -59,14 +59,18 @@ function createZombieMesh(type, mods){
     b.add(plate, shield);
   }
   b.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  // '?' / '!' over the head when it hears something or spots you.
+  const mark = new THREE.Sprite(SH.markMats.heard); mark.position.y = 2.6; mark.visible = false; g.add(mark);
   g.scale.setScalar(S.scale);
-  return { g, b, mats, em, parts, head, legs:[l1,l2], arms:[a1,a2] };
+  return { g, b, mats, em, parts, head, legs:[l1,l2], arms:[a1,a2], mark };
 }
-// guard = stays near its spawn point (police station) and never despawns.
+// horde = part of the takeover (always knows where you are). alert = starts out hunting you.
+// guard = 'police' | 'shop' | 'cell': stays close to its spawn point (short leash; police guards
+// roll riot gear more often). Everyone else lives in its district: home = its spawn point.
 // exclude = a type this spawn may not roll (screams don't spawn more screamers).
 // rise = seconds spent clawing out of the ground (invulnerable meanwhile); 0 = already standing.
 export function spawnZombieAt(x,z,horde,alert,guard,exclude,rise = mr(RISE[0], RISE[1])){
-  const lv = state.level, { type, mods } = rollThreat(!!guard, exclude);
+  const lv = state.level, { type, mods } = rollThreat(guard === 'police', exclude);
   const S = ZTYPES[type], A = ZMODS.armored, m = createZombieMesh(type, mods);
   m.g.position.set(x,0,z); m.g.rotation.y = Math.random()*Math.PI*2;
   scene.add(m.g);
@@ -74,8 +78,12 @@ export function spawnZombieAt(x,z,horde,alert,guard,exclude,rise = mr(RISE[0], R
   const zz = { type, mods, g:m.g, b:m.b, mats:m.mats, em:m.em, parts:m.parts, head:m.head, legs:m.legs, arms:m.arms, pos:m.g.position, vel:new THREE.Vector3(),
     hp, speed:mr(S.speed[0],S.speed[1])*(1+SCALE.speed*(lv-1))*(mods.armored ? A.speedMul : 1), r:S.r, dmg:S.dmg, bleed:S.bleed,
     kb:S.kb*(mods.armored ? A.kbMul : 1), atkCd:0, flash:0,
-    horde, guard:!!guard, hx:x, hz:z, alert:!!alert || horde, wanderT:0, wx:0, wz:0, phase:Math.random()*6, groan:mr(3,10),
+    horde, guard:!!guard, hx:x, hz:z, leash:guard ? AI.guardLeash : AI.leash, wanderT:0, wx:0, wz:0, phase:Math.random()*6, groan:mr(3,10),
+    // Senses (see the Senses section): mode, last known target lx/lz, memory left, sight, path.
+    mode:'idle', alert:false, tracked:false, lx:x, lz:z, mem:0, sees:false, direct:false, percT:Math.random()*0.25, searchT:0, giveUp:0, fk:-1, ff:null,
+    mark:m.mark, markT:0,
     dead:false, fuse:0, los:false, losT:Math.random()*0.2, windup:0, screamed:false, spitT:0, spitCd:mr(1,2.5), stun:0, side:Math.random() < 0.5 ? -1 : 1, rise, riseT:rise };
+  if (alert || horde) Object.assign(zz, { mode:'hunt', alert:true, mem:AI.memory, lx:player.pos.x, lz:player.pos.z, tracked:!!horde });
   if (mods.explosive) zz.warn = makeWarnRing();
   if (rise > 0){
     // Facing the player (if it's coming for them), buried up to the top of its head.
@@ -135,13 +143,25 @@ function updateWarnRing(z, nd, t){
 // Random reachable tile whose distance from the player is within [minD, maxD].
 export function findSpawnTile(minD, maxD){
   const g = world.city.grid;
-  for (let i=0;i<70;i++){
-    const tx = 1 + Math.floor(Math.random()*(N-3)), tz = 1 + Math.floor(Math.random()*(N-2));
+  for (let i=0;i<80;i++){
+    const a = Math.random()*Math.PI*2, d = mr(minD, maxD);
+    const tx = Math.floor((player.pos.x + Math.sin(a)*d)/TILE), tz = Math.floor((player.pos.z + Math.cos(a)*d)/TILE);
+    if (tx < 1 || tz < 1 || tx >= N-2 || tz >= N-1) continue;
     const id = tz*N+tx;
     if (!walkable(g[id]) || distField[id] < 0) continue;
-    const wx = (tx+0.5)*TILE, wz = (tz+0.5)*TILE;
-    const d = Math.hypot(wx-player.pos.x, wz-player.pos.z);
-    if (d >= minD && d <= maxD) return { x:wx + mr(-0.4,0.4), z:wz + mr(-0.4,0.4) };
+    return { x:(tx+0.5)*TILE + mr(-0.4,0.4), z:(tz+0.5)*TILE + mr(-0.4,0.4) };
+  }
+  return null;
+}
+// Random reachable tile at least minD from the player, picked with probability = its district's
+// density, so busy districts fill up and the outskirts stay thin.
+export function findDistrictTile(minD){
+  const g = world.city.grid, dens = world.city.density;
+  for (let i=0;i<150;i++){
+    const tx = 1 + Math.floor(Math.random()*(N-3)), tz = 1 + Math.floor(Math.random()*(N-2)), id = tz*N+tx;
+    if (!walkable(g[id]) || distField[id] < 0 || Math.random() > dens[id]) continue;
+    const wx = (tx+0.5)*TILE + mr(-0.4,0.4), wz = (tz+0.5)*TILE + mr(-0.4,0.4);
+    if (Math.hypot(wx - player.pos.x, wz - player.pos.z) >= minD) return { x:wx, z:wz };
   }
   return null;
 }
@@ -164,9 +184,119 @@ export function disposeZombie(z){
   scene.remove(z.g); for (const m of z.mats) m.dispose();
   if (z.warn){ scene.remove(z.warn); z.warn.ring.material.dispose(); z.warn.fill.material.dispose(); }
 }
-// Alerts every unalerted zombie within r of (x,z).
-export function makeNoise(x, z, r){
-  for (const o of zombies) if (!o.alert && Math.hypot(o.pos.x-x, o.pos.z-z) < r) o.alert = true;
+// ---------- Senses ----------
+// mode: 'idle' -> 'search' (heard something) -> 'hunt' (saw you / got hit) -> 'search' (lost you)
+// -> 'return' (walks home) -> 'idle'. Numbers and the full rules are with AI in threats.js.
+const MARK_T = 1.3;
+function setMode(z, m){ z.mode = m; z.alert = m === 'hunt'; }
+function mark(z, kind){ z.mark.material = SH.markMats[kind]; z.markT = MARK_T; z.mark.visible = true; }
+function updateMark(z, dt){
+  if (z.markT <= 0) return;
+  z.markT -= dt;
+  const k = MARK_T - z.markT;
+  z.mark.scale.setScalar(0.8*Math.min(1, k*8)*(1 + Math.max(0, 0.2 - k)*2));
+  if (z.markT <= 0) z.mark.visible = false;
+}
+// It knows exactly where you are (it saw you, got hit, heard a scream). tracked = keeps knowing
+// without needing sight (the takeover).
+export function alertZombie(z, tracked){
+  if (z.dead) return;
+  if (z.mode !== 'hunt') mark(z, 'spotted');
+  setMode(z, 'hunt'); z.mem = AI.memory; z.lx = player.pos.x; z.lz = player.pos.z;
+  if (tracked) z.tracked = true;
+}
+// Everything within r of (x,z) learns where you are (screams, the Crystal's pulse).
+export function alertNear(x, z, r){ for (const o of zombies) if (Math.hypot(o.pos.x-x, o.pos.z-z) < r) alertZombie(o); }
+// A sound at (x,z) heard within r (only within muffle*r through walls). Hunters that lost sight of
+// you take it as your new position; everyone else walks over to look. Noises far from a zombie's
+// home are ignored unless forced (pipe-bomb beeps).
+export function makeNoise(x, z, r, force){
+  for (const o of zombies){
+    if (o.dead || o.tracked || (o.mode === 'hunt' && o.sees)) continue;
+    const d = Math.hypot(o.pos.x-x, o.pos.z-z);
+    if (d >= r || (d > r*AI.muffle && !lineOfSight(o.pos.x, o.pos.z, x, z))) continue;
+    if (o.mode === 'hunt'){ o.lx = x; o.lz = z; o.mem = Math.max(o.mem, AI.memory*0.6); o.percT = 0; continue; }
+    if (!force && Math.hypot(x - o.hx, z - o.hz) > o.leash*AI.noiseLeash) continue;
+    if (o.mode !== 'search' || Math.hypot(x - o.lx, z - o.lz) > 4) mark(o, 'heard');
+    setMode(o, 'search'); o.lx = x; o.lz = z; o.searchT = AI.search; o.giveUp = AI.giveUp; o.percT = 0;
+  }
+}
+// Sight, a few times a second: idle and searching zombies only notice you in front of them (or
+// right next to them); hunters keep track of you further out. Out past its leash, a hunter's
+// memory only refreshes while you're within closeR, and one walking home ignores you unless you
+// come that close (so it doesn't turn round at the edge of its turf). Also decides whether the
+// current target can be walked to in a straight line or needs a flow field.
+function perceive(z, dist, dx, dz){
+  const hunt = z.mode === 'hunt', away = Math.hypot(z.pos.x - z.hx, z.pos.z - z.hz) > z.leash;
+  const range = hunt ? AI.sightHunt : z.mode === 'return' && away ? AI.closeR : AI.sight;
+  let see = false;
+  if (dist < range){
+    const off = Math.abs(((Math.atan2(dx, dz) - z.g.rotation.y) % (Math.PI*2) + Math.PI*3) % (Math.PI*2) - Math.PI);
+    see = (hunt || dist < AI.feel || off < AI.cone) && lineOfSight(z.pos.x, z.pos.z, player.pos.x, player.pos.z);
+  }
+  z.sees = see;
+  if (see && !hunt) alertZombie(z);
+  else if (see){ z.lx = player.pos.x; z.lz = player.pos.z; if (!away || dist < AI.closeR) z.mem = AI.memory; }
+  if (z.mode !== 'idle' && !see){
+    const ret = z.mode === 'return', tx = ret ? z.hx : z.lx, tz = ret ? z.hz : z.lz;
+    z.direct = Math.hypot(tx - z.pos.x, tz - z.pos.z) < 30 && lineOfSight(z.pos.x, z.pos.z, tx, tz);
+  }
+}
+// Memory and patience: hunters forget you (fast once far from home), searchers give up, and
+// everyone ends up walking back to their own district.
+function think(z, dt, dist){
+  const home = Math.hypot(z.pos.x - z.hx, z.pos.z - z.hz);
+  const goHome = () => { setMode(z, 'return'); z.giveUp = AI.giveUp*2; z.percT = 0; };
+  if (z.mode === 'hunt'){
+    const away = home > z.leash;
+    if (!z.sees || (away && dist > AI.closeR)) z.mem -= dt*(away ? 3 : 1);
+    if (z.mem > 0) return;
+    if (away) goHome();
+    else { setMode(z, 'search'); z.searchT = AI.search; z.giveUp = AI.giveUp; mark(z, 'heard'); }
+  } else if (z.mode === 'search'){
+    z.giveUp -= dt;
+    if (Math.hypot(z.lx - z.pos.x, z.lz - z.pos.z) < 2.2) z.searchT -= dt;
+    if (z.searchT <= 0 || z.giveUp <= 0) goHome();
+  } else if (z.mode === 'return'){
+    z.giveUp -= dt;
+    if (home < 3) setMode(z, 'idle');
+    else if (z.giveUp <= 0){ z.hx = z.pos.x; z.hz = z.pos.z; setMode(z, 'idle'); }  // can't get home: settle here
+  }
+}
+// Step toward the neighbouring tile with the lowest value in a flow field (null if none is lower).
+function descend(z, f){
+  const tx = Math.floor(z.pos.x/TILE), tz = Math.floor(z.pos.z/TILE);
+  let best = (tx>=0&&tz>=0&&tx<N&&tz<N) ? f[tz*N+tx] : -1, bx = -1, bz = -1;
+  for (const [ox,oz] of DIRS8){
+    const nx = tx+ox, nz = tz+oz;
+    if (nx < 0 || nz < 0 || nx >= N || nz >= N) continue;
+    const d = f[nz*N+nx]; if (d < 0) continue;
+    if (ox !== 0 && oz !== 0 && (isBlockedTile(tx+ox,tz) || isBlockedTile(tx,tz+oz))) continue;
+    if (best < 0 || d < best){ best = d; bx = nx; bz = nz; }
+  }
+  if (bx < 0) return null;
+  const ax = (bx+0.5)*TILE - z.pos.x, az = (bz+0.5)*TILE - z.pos.z, l = Math.hypot(ax,az) || 1;
+  return [ax/l, az/l];
+}
+// Direction toward (x,tz): straight there when it's in plain view, otherwise down a flow field.
+function steerTo(z, x, tz){
+  const ax = x - z.pos.x, az = tz - z.pos.z, l = Math.hypot(ax, az) || 1;
+  if (z.direct || l < 2.5) return [ax/l, az/l];
+  const fx = Math.floor(x/TILE), fz = Math.floor(tz/TILE);
+  if (z.fk !== fz*N + fx){ z.fk = fz*N + fx; z.ff = flowTo(fx, fz); }
+  return descend(z, z.ff) || [ax/l, az/l];
+}
+// Ambling around (cx,cz): a new random heading (or a pause) every few seconds, back toward the
+// center once further than R from it.
+function wander(z, dt, cx, cz, R){
+  z.wanderT -= dt;
+  if (z.wanderT <= 0){
+    const hx = cx - z.pos.x, hz = cz - z.pos.z, hd = Math.hypot(hx,hz), a = Math.random()*Math.PI*2;
+    if (hd > R){ z.wx = hx/hd; z.wz = hz/hd; }
+    else if (Math.random() < 0.35){ z.wx = 0; z.wz = 0; } else { z.wx = Math.sin(a); z.wz = Math.cos(a); }
+    z.wanderT = mr(2,4);
+  }
+  return [z.wx, z.wz];
 }
 // cause = 'bullet' | 'melee' | 'blast' | 'fire' (fire is damage over time: no blood burst or hit
 // sound); it also picks the death animation. (dx,dz) = hit direction and knockback.
@@ -179,7 +309,8 @@ export function damageZombie(z, dmg, dx, dz, cause){
   const A = ZMODS.armored, l = Math.hypot(dx,dz);
   const blocked = z.mods.armored && l > 0 && -(Math.sin(z.g.rotation.y)*dx + Math.cos(z.g.rotation.y)*dz)/l > Math.cos(A.frontArc);
   if (blocked) dmg *= A.frontMul;
-  z.hp -= dmg; z.alert = true; z.flash = 0.08;
+  z.hp -= dmg; z.flash = 0.08;
+  if (cause === 'bullet' || cause === 'melee') alertZombie(z);
   for (const m of z.mats) m.emissive.setHex(quiet ? 0x804010 : blocked ? 0x2a3a55 : 0x663333);
   z.vel.x += dx*z.kb; z.vel.z += dz*z.kb;
   if (!quiet){
@@ -192,13 +323,13 @@ export function damageZombie(z, dmg, dx, dz, cause){
 // Pipe-bomb concussion: frozen and swaying for t seconds; wind-ups (scream, spit) are interrupted.
 export function stunZombie(z, t){
   if (z.dead || z.rise > 0) return;
-  z.stun = Math.max(z.stun, t); z.alert = true; z.spitT = 0;
+  z.stun = Math.max(z.stun, t); z.spitT = 0;
   if (z.windup > 0) cancelScream(z);
 }
 // credit = false for an exploder's own detonation: no kill counted, no drops.
 // cause/dx/dz/dmg describe the killing blow (see damageZombie) and shape the corpse.
 function killZombie(z, credit = true, cause, dx = 0, dz = 0, dmg = 0){
-  z.dead = true;
+  z.dead = true; z.mark.visible = false;
   if (z.warn) z.warn.visible = false;
   const i = zombies.indexOf(z); if (i >= 0) zombies.splice(i,1);
   if (z.horde) state.hordeAlive--;
@@ -226,10 +357,17 @@ export function updateZombies(dt){
   for (let i=zombies.length-1;i>=0;i--){
     const z = zombies[i];
     const dx = p.x - z.pos.x, dz = p.z - z.pos.z, dist = Math.hypot(dx,dz) || 0.0001;
+    updateMark(z, dt);
     if (z.rise > 0){ updateRise(z, dt); continue; }
-    if (!z.alert && dist < 15) z.alert = true;
-    if (!z.alert && !z.horde && !z.guard && dist > 62){ disposeZombie(z); zombies.splice(i,1); continue; }
-    let desX = 0, desZ = 0, spd = z.speed, hold = false, mv = null;
+    if (z.tracked){ z.sees = true; z.lx = p.x; z.lz = p.z; }
+    else {
+      z.percT -= dt;
+      if (z.percT <= 0){ z.percT = mr(0.2, 0.3); perceive(z, dist, dx, dz); }
+      think(z, dt, dist);
+    }
+    // Idle zombies far off-screen skip crowd separation and animation.
+    const far = dist > 48 && z.mode === 'idle';
+    let desX = 0, desZ = 0, spd = z.speed, hold = false, mv = null, dir = null;
     if (z.stun > 0) z.stun -= dt;
     const stunned = z.stun > 0;
     // Specials: a winding-up screamer roots in place; an alerted spitter picks its own spacing.
@@ -239,44 +377,34 @@ export function updateZombies(dt){
     const lx = lure ? lure.x - z.pos.x : 0, lz = lure ? lure.z - z.pos.z : 0, ld = lure ? Math.hypot(lx,lz) : 1e9;
     if (hold || stunned){}
     else if (mv){ desX = mv[0]; desZ = mv[1]; spd *= mv[2]; }
-    else if (z.alert && ld < 32 && dist > 3.5){
-      // A beeping pipe bomb pulls alerted zombies off the player.
+    else if ((z.mode === 'hunt' || z.mode === 'search') && ld < 32 && dist > 3.5){
+      // A beeping pipe bomb pulls hunting and searching zombies off the player.
       if (ld > 0.9){ desX = lx/ld; desZ = lz/ld; }
-    } else if (z.alert){
-      if (dist < 4.5){ desX = dx/dist; desZ = dz/dist; }
-      else {
-        // Step toward the neighbouring tile with the lowest flow-field distance.
-        const tx = Math.floor(z.pos.x/TILE), tz = Math.floor(z.pos.z/TILE);
-        let best = (tx>=0&&tz>=0&&tx<N&&tz<N) ? distField[tz*N+tx] : -1, bx = -1, bz = -1;
-        for (const [ox,oz] of DIRS8){
-          const nx = tx+ox, nz = tz+oz;
-          if (nx < 0 || nz < 0 || nx >= N || nz >= N) continue;
-          const d = distField[nz*N+nx]; if (d < 0) continue;
-          if (ox !== 0 && oz !== 0 && (isBlockedTile(tx+ox,tz) || isBlockedTile(tx,tz+oz))) continue;
-          if (best < 0 || d < best){ best = d; bx = nx; bz = nz; }
-        }
-        if (bx >= 0){ const ax = (bx+0.5)*TILE - z.pos.x, az = (bz+0.5)*TILE - z.pos.z, l = Math.hypot(ax,az) || 1; desX = ax/l; desZ = az/l; }
-        else { desX = dx/dist; desZ = dz/dist; }
+    } else if (z.mode === 'hunt'){
+      if (z.sees){
+        // Down the player's flow field, or straight at them up close (or when cut off, e.g. in a cell).
+        dir = dist < 4.5 ? null : descend(z, distField);
+        if (!dir){ desX = dx/dist; desZ = dz/dist; }
       }
-    } else {
-      z.wanderT -= dt;
-      if (z.wanderT <= 0){
-        const a = Math.random()*Math.PI*2;
-        const hx = z.hx - z.pos.x, hz = z.hz - z.pos.z, hd = Math.hypot(hx,hz);
-        if (z.guard && hd > 6){ z.wx = hx/hd; z.wz = hz/hd; }
-        else if (Math.random() < 0.35){ z.wx = 0; z.wz = 0; } else { z.wx = Math.sin(a); z.wz = Math.cos(a); }
-        z.wanderT = mr(2,4);
-      }
-      desX = z.wx; desZ = z.wz; spd *= 0.3;
-    }
+      // Lost sight: go to where it last saw (or heard) you, and look around there.
+      else if (Math.hypot(z.lx - z.pos.x, z.lz - z.pos.z) > 1.2) dir = steerTo(z, z.lx, z.lz);
+      else { dir = wander(z, dt, z.lx, z.lz, 2); spd *= AI.speed.search; }
+    } else if (z.mode === 'search'){
+      spd *= AI.speed.search;
+      dir = Math.hypot(z.lx - z.pos.x, z.lz - z.pos.z) > 2.2 ? steerTo(z, z.lx, z.lz) : wander(z, dt, z.lx, z.lz, 3);
+    } else if (z.mode === 'return'){ spd *= AI.speed.return; dir = steerTo(z, z.hx, z.hz); }
+    else { dir = wander(z, dt, z.hx, z.hz, z.guard ? 4 : AI.wander); spd *= AI.speed.idle; }
+    if (dir){ desX = dir[0]; desZ = dir[1]; }
     // Separation from other zombies
-    let sx = 0, sz = 0;
-    for (const o of zombies){
-      if (o === z) continue;
-      const ox = z.pos.x - o.pos.x, oz = z.pos.z - o.pos.z, rr = z.r + o.r, d2 = ox*ox + oz*oz;
-      if (d2 < rr*rr && d2 > 1e-6){ const d = Math.sqrt(d2), f = (rr-d)/rr; sx += ox/d*f; sz += oz/d*f; }
+    if (!far){
+      let sx = 0, sz = 0;
+      for (const o of zombies){
+        if (o === z) continue;
+        const ox = z.pos.x - o.pos.x, oz = z.pos.z - o.pos.z, rr = z.r + o.r, d2 = ox*ox + oz*oz;
+        if (d2 < rr*rr && d2 > 1e-6){ const d = Math.sqrt(d2), f = (rr-d)/rr; sx += ox/d*f; sz += oz/d*f; }
+      }
+      desX += sx*1.6; desZ += sz*1.6;
     }
-    desX += sx*1.6; desZ += sz*1.6;
     const k = Math.min(1, dt*6);
     z.vel.x += (desX*spd - z.vel.x)*k; z.vel.z += (desZ*spd - z.vel.z)*k;
     z.pos.x += z.vel.x*dt; z.pos.z += z.vel.z*dt;
@@ -288,6 +416,7 @@ export function updateZombies(dt){
     if (stunned){}
     else if (hold || mv) z.g.rotation.y = lerpAngle(z.g.rotation.y, Math.atan2(dx, dz), Math.min(1, dt*8));
     else if (vl > 0.2) z.g.rotation.y = lerpAngle(z.g.rotation.y, Math.atan2(z.vel.x, z.vel.z), Math.min(1, dt*8));
+    if (far) continue;
     z.phase += dt*(vl*2.4 + 0.5);
     const sw = Math.sin(z.phase)*0.6*Math.min(1, vl/1.5);
     z.legs[0].rotation.x = sw; z.legs[1].rotation.x = -sw;

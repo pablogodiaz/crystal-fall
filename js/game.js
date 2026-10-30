@@ -1,16 +1,17 @@
 // ---------- Game flow ----------
 // Run/city lifecycle (explore -> takeover -> open -> upgrade), spawning, per-frame update.
 import * as THREE from 'three';
-import { TILE, N, T, walkable } from './config.js';
+import { TILE, N, T, POP } from './config.js';
 import { $, mr, fmtTime } from './utils.js';
 import { camFocus, muzzleLight, fxLight } from './renderer.js';
+import { SH } from './assets.js';
 import { CRYSTAL } from './threats.js';
 import { state, world, zombies, mouse } from './state.js';
 import { generateCity } from './cityGen.js';
 import { buildCityScene, buildExitMarker, teardownCity } from './cityScene.js';
-import { updateFlow } from './grid.js';
+import { updateFlow, clearFlowCache } from './grid.js';
 import { player, resetPlayerStats, refreshGun, updatePlayer } from './player.js';
-import { spawnZombieAt, findSpawnTile, updateZombies, updateDying } from './zombies.js';
+import { spawnZombieAt, findSpawnTile, findDistrictTile, updateZombies, updateDying } from './zombies.js';
 import { updateBullets } from './combat.js';
 import { burst, updateParticles, updatePickups } from './fx.js';
 import { foundCrystal, endTakeover, resetTakeover, animateCrystal } from './crystal.js';
@@ -26,6 +27,7 @@ export function startCity(level, seed){
   teardownCity();
   state.level = level;
   const city = world.city = generateCity(level, seed);
+  clearFlowCache();
   buildCityScene(city);
   world.explored = new Uint8Array(N*N); world.mmDirty = true; world.lastTile = -1;
   player.pos.set((city.start.x+0.5)*TILE, 0, (city.start.z+0.5)*TILE); player.vel.set(0,0,0);
@@ -34,19 +36,25 @@ export function startCity(level, seed){
   updateFlow();
   interact.target = null; interact.p = 0; fxLight.intensity = 0; resetTakeover();
   setupThreats(level);
-  const n = 10 + 4*level;
-  for (let i=0;i<n;i++){ const s = findSpawnTile(24, 200); if (s) spawnZombieAt(s.x, s.z, false, false, false, null, 0); }
-  // Police stations are guarded by a pack that stays near the door.
-  for (const l of city.landmarks){
-    if (l.type !== 'police') continue;
-    for (let i=0, tries=0, g=3+level; i<g && tries<80; tries++){
-      const tx = l.ox + Math.round(mr(-3,3)), tz = l.oz + Math.round(mr(-3,3));
-      if (tx < 1 || tz < 1 || tx >= N-1 || tz >= N-1 || !walkable(city.grid[tz*N+tx])) continue;
-      spawnZombieAt((tx+0.5)*TILE + mr(-0.4,0.4), (tz+0.5)*TILE + mr(-0.4,0.4), false, false, true, null, 0); i++;
-    }
-  }
+  populate(city, level);
   $('cityName').textContent = `City ${level}: ${city.name}`;
   if (state.mode === 'play') banner(`City ${level}`, city.name);
+}
+// Residents spread by district density, plus each walk-in landmark's own: police guards (half
+// inside, half out front), a prisoner in some cells, shoppers wandering the supermarket aisles.
+function populate(city, level){
+  for (let i=0, n=POP.base + POP.perLevel*level;i<n;i++){ const s = findDistrictTile(POP.startGap); if (s) spawnZombieAt(s.x, s.z, false, false, false, null, 0); }
+  const some = (list, n, guard) => {
+    const l = list.slice();
+    for (let i=0;i<n && l.length;i++){ const [x, z] = l.splice(Math.floor(Math.random()*l.length), 1)[0]; spawnZombieAt((x+0.5)*TILE + mr(-0.4,0.4), (z+0.5)*TILE + mr(-0.4,0.4), false, false, guard, null, 0); }
+  };
+  for (const l of city.landmarks){
+    if (l.type === 'police'){
+      const g = 3 + level;
+      some(l.floor, Math.ceil(g/2), 'police'); some(l.yard.filter(([x, z]) => Math.hypot(x - l.ox, z - l.oz) < 5), Math.floor(g/2), 'police');
+      for (let k=0;k<l.cells.length;k+=2) if (Math.random() < 0.6) some(l.cells.slice(k, k+2), 1, 'cell');  // two tiles per cell
+    } else if (l.type === 'supermarket') some(l.floor, 2 + Math.ceil(level/2), 'shop');
+  }
 }
 export function newRun(){
   initAudio();
@@ -63,7 +71,7 @@ function openRoad(){
   endTakeover();
   state.phase = 'open';
   for (const z of [city.exitZ, city.exitZ+1]){ city.grid[z*N + N-1] = T.EXIT; world.explored[z*N + N-1] = 1; }
-  world.mmDirty = true;
+  world.mmDirty = true; clearFlowCache();
   if (world.barricade){
     world.barricade.children.forEach(c => burst(c.getWorldPosition(new THREE.Vector3()), 'dust', 4, 3));
     world.cityGroup.remove(world.barricade); world.barricade = null;
@@ -132,7 +140,7 @@ function updateSpawning(dt){
     state.takeover -= dt;
     if (state.takeover <= state.tick && state.tick > 0){ sfx.tick(state.tick); state.tick--; }
     if (state.takeover <= 0){ openRoad(); return; }
-    if (state.spawnTimer > 0 || zombies.length >= 40 + 5*lv) return;
+    if (state.spawnTimer > 0 || zombies.length >= 110 + 5*lv) return;
     if (state.surge > 0){
       const s = findSpawnTile(15, 30);
       if (s){ spawnZombieAt(s.x, s.z, true, true); state.surge--; }
@@ -144,11 +152,12 @@ function updateSpawning(dt){
     }
     return;
   }
+  // Killed residents are slowly replaced, out of sight and by district density (fewer once the road is open).
   if (state.spawnTimer <= 0){
-    let ambient = 0; for (const z of zombies) if (!z.horde) ambient++;
-    const cap = (state.phase === 'open' ? 8 : 12) + 4*lv;
-    if (ambient < cap){ const s = findSpawnTile(24, 42); if (s) spawnZombieAt(s.x, s.z, false, Math.random() < 0.45); }
-    state.spawnTimer = Math.max(0.7, 2.6 - 0.3*(lv-1)) * mr(0.7,1.3);
+    let ambient = 0; for (const z of zombies) if (!z.horde && !z.guard) ambient++;
+    const cap = (POP.base + POP.perLevel*lv)*(state.phase === 'open' ? 0.7 : 1);
+    if (ambient < cap){ const s = findDistrictTile(32); if (s) spawnZombieAt(s.x, s.z, false, false); }
+    state.spawnTimer = Math.max(1.5, 4 - 0.3*(lv-1)) * mr(0.7,1.3);
   }
 }
 // Simulation step; only called while state.mode === 'play'.
@@ -183,6 +192,8 @@ export function animateWorld(dt, t){
     exitMarker.chev.forEach((c,i) => { c.position.y = 0.35 + Math.max(0, Math.sin(t*5 - i*0.8))*0.25; });
   }
   muzzleLight.intensity = Math.max(0, muzzleLight.intensity - dt*30);
+  const flip = Math.floor(t*3) % 2;  // police lightbars
+  SH.sirenR.emissiveIntensity = flip ? 1.6 : 0.15; SH.sirenB.emissiveIntensity = flip ? 0.15 : 1.6;
   animateContainers(t);
   updateThrowPreview();
   updateParticles(dt);
