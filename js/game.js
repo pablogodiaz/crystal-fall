@@ -9,9 +9,9 @@ import { CRYSTAL } from './threats.js';
 import { state, world, zombies, mouse } from './state.js';
 import { generateCity } from './cityGen.js';
 import { buildCityScene, buildExitMarker, teardownCity } from './cityScene.js';
-import { updateFlow, clearFlowCache } from './grid.js';
+import { updateFlow, clearFlowCache, blockIndex } from './grid.js';
 import { player, resetPlayerStats, refreshGun, updatePlayer } from './player.js';
-import { spawnZombieAt, findSpawnTile, findDistrictTile, updateZombies, updateDying } from './zombies.js';
+import { spawnZombieAt, findSpawnTile, findBlockTile, updateZombies, updateDying } from './zombies.js';
 import { updateBullets } from './combat.js';
 import { burst, updateParticles, updatePickups } from './fx.js';
 import { foundCrystal, endTakeover, resetTakeover, animateCrystal } from './crystal.js';
@@ -40,10 +40,12 @@ export function startCity(level, seed){
   $('cityName').textContent = `City ${level}: ${city.name}`;
   if (state.mode === 'play') banner(`City ${level}`, city.name);
 }
-// Residents spread by district density, plus each walk-in landmark's own: police guards (half
-// inside, half out front), a prisoner in some cells, shoppers wandering the supermarket aisles.
+// Residents (block.density per block, on average), plus each walk-in landmark's own: police guards
+// (half inside, half out front), a prisoner in some cells, shoppers wandering the supermarket aisles.
 function populate(city, level){
-  for (let i=0, n=POP.base + POP.perLevel*level;i<n;i++){ const s = findDistrictTile(POP.startGap); if (s) spawnZombieAt(s.x, s.z, false, false, false, null, 0); }
+  for (const b of city.blocks) for (let n=Math.floor(b.density + Math.random());n>0;n--){
+    const s = findBlockTile(b, POP.startGap); if (s) spawnZombieAt(s.x, s.z, false, false, false, null, 0);
+  }
   const some = (list, n, guard) => {
     const l = list.slice();
     for (let i=0;i<n && l.length;i++){ const [x, z] = l.splice(Math.floor(Math.random()*l.length), 1)[0]; spawnZombieAt((x+0.5)*TILE + mr(-0.4,0.4), (z+0.5)*TILE + mr(-0.4,0.4), false, false, guard, null, 0); }
@@ -140,7 +142,7 @@ function updateSpawning(dt){
     state.takeover -= dt;
     if (state.takeover <= state.tick && state.tick > 0){ sfx.tick(state.tick); state.tick--; }
     if (state.takeover <= 0){ openRoad(); return; }
-    if (state.spawnTimer > 0 || zombies.length >= 110 + 5*lv) return;
+    if (state.spawnTimer > 0 || zombies.length >= 260) return;  // the takeover's own cap is below; this one guards frame time
     if (state.surge > 0){
       const s = findSpawnTile(15, 30);
       if (s){ spawnZombieAt(s.x, s.z, true, true); state.surge--; }
@@ -152,11 +154,18 @@ function updateSpawning(dt){
     }
     return;
   }
-  // Killed residents are slowly replaced, out of sight and by district density (fewer once the road is open).
+  // Killed residents are slowly replaced, out of sight, in the blocks furthest below their share
+  // (counted by home; 70% of it once the road is open).
   if (state.spawnTimer <= 0){
-    let ambient = 0; for (const z of zombies) if (!z.horde && !z.guard) ambient++;
-    const cap = (POP.base + POP.perLevel*lv)*(state.phase === 'open' ? 0.7 : 1);
-    if (ambient < cap){ const s = findDistrictTile(32); if (s) spawnZombieAt(s.x, s.z, false, false); }
+    const blocks = world.city.blocks, have = new Float32Array(blocks.length), f = state.phase === 'open' ? 0.7 : 1;
+    let n = 0, want = 0, sum = 0;
+    for (const z of zombies) if (!z.horde && !z.guard){ have[blockIndex(z.hx, z.hz)]++; n++; }
+    const need = blocks.map((b, i) => { want += b.density*f; const d = Math.max(0, b.density*f - have[i]); sum += d; return d; });
+    if (n < want && sum > 0){
+      let r = Math.random()*sum, i = 0;
+      while (i < need.length - 1 && (r -= need[i]) > 0) i++;
+      const s = findBlockTile(blocks[i], POP.respawnGap); if (s) spawnZombieAt(s.x, s.z, false, false);
+    }
     state.spawnTimer = Math.max(1.5, 4 - 0.3*(lv-1)) * mr(0.7,1.3);
   }
 }

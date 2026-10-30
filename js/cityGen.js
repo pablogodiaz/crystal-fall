@@ -1,11 +1,11 @@
 // ---------- City generation ----------
 // Pure data: builds the tile grid and prop lists from a seed. No Three.js here.
 // The map is B×B blocks of 5×5 tiles between 2-tile roads. Each block belongs to a district
-// (DISTRICTS in config.js) that decides what gets built on it and how many zombies and how much
-// loot it holds (city.density, per tile). Landmarks are stamped from the ASCII TEMPLATES below;
+// (DISTRICTS in config.js, laid out by LAYOUT) that decides what gets built on it and how many
+// zombies (block.density, residents per block) and how much loot it holds. Landmarks are stamped from the ASCII TEMPLATES below;
 // the police station and supermarket take a 2×2 group of blocks (the roads between them become
 // part of the lot) and can be walked into.
-import { N, B, T, CITY_NAMES, PALETTE, HOUSE_PALETTE, ROOF_PALETTE, WAREHOUSE_PALETTE, DISTRICTS, walkable } from './config.js';
+import { N, B, T, CITY_NAMES, PALETTE, HOUSE_PALETTE, ROOF_PALETTE, WAREHOUSE_PALETTE, DISTRICTS, LAYOUT, walkable } from './config.js';
 import { rng, seedRng, rand, randi, pick } from './utils.js';
 
 const I = (x,z) => z*N + x;
@@ -35,15 +35,33 @@ function splitLots(x,z,w,d,out,depth){
 }
 
 // ---------- Districts ----------
-// Downtown sits around a core near the middle, an industrial pocket on the east or south edge,
-// houses ring downtown, and the quiet outskirts fill the rest (the start corner always among them).
-function assignDistricts(blocks){
-  const core = { x:rand(B*0.4, B*0.62), z:rand(B*0.4, B*0.62) };
-  const ind = rng() < 0.5 ? { x:B - 1.5, z:rand(1, B*0.55) } : { x:rand(1, B*0.55), z:B - 1.5 };
+// Random each city: 1-3 downtown cores anywhere but near the start, each ringed by suburbs, plus
+// 1-2 industrial pockets; whatever's left is outskirts. Later cities get more and bigger cores,
+// and every district holds more zombies per block.
+function assignDistricts(blocks, level){
+  const L = LAYOUT, k = level - 1, spot = (gap, others, apart) => {
+    for (let i=0;i<60;i++){
+      const x = rand(0.5, B-0.5), z = rand(0.5, B-0.5);
+      if (Math.hypot(x, z) >= gap && others.every(o => Math.hypot(o.x - x, o.z - z) >= apart)) return { x, z };
+    }
+    return null;
+  };
+  const cores = [], pockets = [];
+  for (let n=Math.min(L.cores[2], Math.floor(L.cores[0] + L.cores[1]*k + rng()));n>0;n--){
+    const p = spot(L.startGap, cores, L.coreGap);
+    if (p) cores.push(Object.assign(p, { r:rand(L.core[0], L.core[1]) + L.coreGrow*k, ring:rand(L.ring[0], L.ring[1]) + L.ringGrow*k }));
+  }
+  for (let n=randi(L.pockets[0], L.pockets[1]);n>0;n--){
+    const p = spot(L.pocketGap, cores.concat(pockets), 2.5);
+    if (p) pockets.push(Object.assign(p, { r:rand(L.pocket[0], L.pocket[1]) }));
+  }
   for (const b of blocks){
-    const n = rand(-0.6, 0.6), dc = Math.hypot(b.bx - core.x, b.bz - core.z) + n, di = Math.hypot(b.bx - ind.x, b.bz - ind.z) + n;
-    b.district = dc < 2.2 ? 'downtown' : di < 1.9 ? 'industrial' : dc < 4 && b.bx + b.bz > 3 ? 'residential' : 'outskirts';
-    b.density = DISTRICTS[b.district].density * rand(0.75, 1.25);
+    // Distance past the edge of the nearest core / pocket (negative = inside), with ragged edges.
+    const n = rand(-0.6, 0.6), edge = (list, f) => Math.min(1e9, ...list.map(o => Math.hypot(b.bx - o.x, b.bz - o.z) - f(o))) + n;
+    const dc = edge(cores, o => o.r), ds = edge(cores, o => o.r + o.ring), di = edge(pockets, o => o.r);
+    b.district = b.bx + b.bz <= 1 ? 'outskirts' : dc < 0 ? 'downtown' : di < 0 ? 'industrial' : ds < 0 ? 'residential' : 'outskirts';
+    const D = DISTRICTS[b.district];
+    b.density = (D.density + D.perLevel*k) * rand(0.75, 1.25);
   }
 }
 
@@ -53,7 +71,7 @@ export function generateCity(level, seed){
   for (let i=0;i<N;i++){ grid[I(i,0)] = grid[I(i,N-1)] = grid[I(0,i)] = grid[I(N-1,i)] = T.WALL; }
   const blocks = [];
   for (let bz=0;bz<B;bz++) for (let bx=0;bx<B;bx++) blocks.push({ bx, bz, x0:3+7*bx, z0:3+7*bz, type:null });
-  assignDistricts(blocks);
+  assignDistricts(blocks, level);
   const exitZ = 1 + 7*randi(1, B-1);
   grid[I(N-1,exitZ)] = T.BARRICADE; grid[I(N-1,exitZ+1)] = T.BARRICADE;
   // overlays: tiles drawn with their own ground (parking asphalt, forecourt concrete, shop floors).
@@ -69,13 +87,7 @@ export function generateCity(level, seed){
   for (let i=0;i<N*N;i++) road[i] = grid[i] === T.ROAD ? 1 : 0;
   addWrecks(c, exitZ);
   placeLoot(c);
-  // Per-tile district density (roads count toward the block south-east of them).
-  const density = new Float32Array(N*N);
-  for (let z=0;z<N;z++) for (let x=0;x<N;x++){
-    const bx = Math.min(B-1, Math.max(0, Math.floor((x-1)/7))), bz = Math.min(B-1, Math.max(0, Math.floor((z-1)/7)));
-    density[I(x,z)] = blocks[bz*B + bx].density;
-  }
-  return Object.assign(c, { road, density, crystalTile:{ x:cb.x0+2, z:cb.z0+2 }, exitZ, start:{ x:2, z:2 }, name:pick(CITY_NAMES) });
+  return Object.assign(c, { road, crystalTile:{ x:cb.x0+2, z:cb.z0+2 }, exitZ, start:{ x:2, z:2 }, name:pick(CITY_NAMES) });
 }
 
 // ---------- Ordinary blocks ----------

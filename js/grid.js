@@ -1,5 +1,5 @@
 // ---------- Grid queries: collision, flow field, fog of war ----------
-import { TILE, N, walkable, seeThrough, DIRS8 } from './config.js';
+import { TILE, N, B, walkable, seeThrough, DIRS8 } from './config.js';
 import { clamp } from './utils.js';
 import { world } from './state.js';
 import { player } from './player.js';
@@ -71,6 +71,12 @@ export function flowTo(tx, tz){
   return f;
 }
 export function clearFlowCache(){ flowCache.clear(); }
+// Index into city.blocks of the block a world point belongs to (roads count toward the block
+// south-east of them).
+export function blockIndex(x, z){
+  const f = v => Math.min(B-1, Math.max(0, Math.floor((v/TILE - 1)/7)));
+  return f(z)*B + f(x);
+}
 // Marks tiles within radius R as explored (minimap fog of war).
 export function reveal(tx,tz,R){
   for (let dz=-R;dz<=R;dz++) for (let dx=-R;dx<=R;dx++){

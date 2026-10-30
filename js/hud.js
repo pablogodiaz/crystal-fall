@@ -1,6 +1,6 @@
 // ---------- HUD, minimap, banner, toasts, inventory bar, overlay screens ----------
 import * as THREE from 'three';
-import { TILE, N, B, T, DISTRICTS } from './config.js';
+import { TILE, N, T, DISTRICTS } from './config.js';
 import { $, fmtTime } from './utils.js';
 import { camera } from './renderer.js';
 import { WEAPONS, ITEMS, RECIPES, LANDMARKS, INV_SLOTS } from './items.js';
@@ -9,6 +9,7 @@ import { state, world, zombies, drops, pickups, keys } from './state.js';
 import { player } from './player.js';
 import { useSlot, dropSlot, craft, countItem, magSize, selectedThrowable } from './inventory.js';
 import { interact, dropName } from './loot.js';
+import { blockIndex } from './grid.js';
 
 const mm = $('minimap'), mctx = mm.getContext('2d'), bm = $('bigmap'), bctx = bm.getContext('2d');
 // Explored tiles are cached on an offscreen layer (MS px per tile), redrawn only when world.mmDirty.
@@ -123,8 +124,7 @@ export function updateHUD(dt, t){
   $('bigmapWrap').classList.toggle('hidden', !big);
   if (big){ if (world.mmDirty) paintTiles(); drawMap(bctx, bm.width, bm.width/N, N/2, N/2, t, true); }
   // Which district you're in (roads count toward the block south-east of them).
-  const bx = Math.min(B-1, Math.max(0, Math.floor((player.pos.x/TILE - 1)/7))), bz = Math.min(B-1, Math.max(0, Math.floor((player.pos.z/TILE - 1)/7)));
-  const D = DISTRICTS[world.city.blocks[bz*B + bx].district];
+  const D = DISTRICTS[world.city.blocks[blockIndex(player.pos.x, player.pos.z)].district];
   setText('district', D.name + (D.note ? ` · ${D.note}` : ''));
 }
 

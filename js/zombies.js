@@ -153,13 +153,13 @@ export function findSpawnTile(minD, maxD){
   }
   return null;
 }
-// Random reachable tile at least minD from the player, picked with probability = its district's
-// density, so busy districts fill up and the outskirts stay thin.
-export function findDistrictTile(minD){
-  const g = world.city.grid, dens = world.city.density;
-  for (let i=0;i<150;i++){
-    const tx = 1 + Math.floor(Math.random()*(N-3)), tz = 1 + Math.floor(Math.random()*(N-2)), id = tz*N+tx;
-    if (!walkable(g[id]) || distField[id] < 0 || Math.random() > dens[id]) continue;
+// Random reachable tile in block b's patch (the block plus the roads north and west of it), at
+// least minD from the player, or null.
+export function findBlockTile(b, minD){
+  const g = world.city.grid;
+  for (let i=0;i<25;i++){
+    const tx = b.x0 - 2 + Math.floor(Math.random()*7), tz = b.z0 - 2 + Math.floor(Math.random()*7), id = tz*N+tx;
+    if (tx < 1 || tz < 1 || tx >= N-2 || tz >= N-1 || !walkable(g[id]) || distField[id] < 0) continue;
     const wx = (tx+0.5)*TILE + mr(-0.4,0.4), wz = (tz+0.5)*TILE + mr(-0.4,0.4);
     if (Math.hypot(wx - player.pos.x, wz - player.pos.z) >= minD) return { x:wx, z:wz };
   }

@@ -23,14 +23,19 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
 - **Map:** `B = 10` × 10 blocks of 5×5 tiles between 2-tile roads (`N = 74` tiles, 148 units
   across). You start in the north-west corner (tile 2,2); the Crystal's plaza is a block with
   `bx + bz >= B` (far side of the map); the exit is on the east wall.
-- **Districts** (`DISTRICTS` in `config.js`, `assignDistricts` in `cityGen.js`): every block is
-  downtown (a core near the middle: towers, dumpsters, crowded), industrial (a pocket on the east
-  or south edge: warehouses, crate yards, ruins), residential/suburbs (ring around downtown: gabled
-  houses on lawns, parks) or outskirts (everything else, always including the start: fields, ruins,
-  sparse farmhouses, quiet). `density` (×0.75–1.25 per block, stored per tile in `city.density`)
-  weights resident zombie spawns; the district also sets the block types and how many dumpsters,
-  crates, cars and searchable doors get built, so dense areas are dangerous and loot-rich and the
-  outskirts are quiet and bare. The HUD shows the district you're in under the city name.
+- **Districts** (`DISTRICTS` + `LAYOUT` in `config.js`, `assignDistricts` in `cityGen.js`): every
+  block is downtown (towers, dumpsters, crowded), industrial (warehouses, crate yards, ruins),
+  residential/suburbs (gabled houses on lawns, parks) or outskirts (fields, ruins, sparse
+  farmhouses, quiet). Placement is random per city: 1–3 downtown cores anywhere at least
+  `startGap` blocks from the start (and `coreGap` apart), each ringed by suburbs, plus 1–2
+  industrial pockets; the rest, and always the start's own blocks (`bx + bz <= 1`), is outskirts.
+  Later cities sprawl: more cores (`cores[1]` per city), bigger cores and rings (`coreGrow`,
+  `ringGrow`). `block.density` = resident zombies per block (`density + perLevel*(city-1)`,
+  ×0.75–1.25), so every district gets busier each city (about 40 residents in City 1, 63 in
+  City 3, 94 in City 5, 150 in City 8). The district also sets the block types and how many
+  dumpsters, crates, cars and searchable doors get built, so dense areas are dangerous and
+  loot-rich and the outskirts are quiet and bare. The HUD shows the district you're in under the
+  city name.
 - **City loop** (`state.phase`):
   1. `explore` — find the Crystal (violet beam) in the plaza block. It counts as "found" when
      you get within 19 units or shoot it.
@@ -177,11 +182,14 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   more from hits of 3+ damage and melee, never from fire): the piece becomes a *gib* that tumbles
   away bleeding and settles flat on the ground. Blast deaths (explosions, exploders themselves)
   fling every body part. Corpses lie 2.5–4 s, then sink away.
-- **Population:** `startCity` spawns `POP.base + POP.perLevel*level` residents (standing, at least
-  26 units from the start) on tiles picked with probability = district density (`findDistrictTile`),
-  plus the walk-in landmarks' guards, prisoners and shoppers. Nobody despawns. Killed residents are
-  slowly replaced (every 1.5–4 s, out of sight ≥32 units away, idle, by density) up to the same
-  count (70% once the road is open).
+- **Population:** `populate` (in `game.js`) gives each block `floor(density + random)` standing
+  residents on random reachable tiles of its patch (the block plus the roads north and west of
+  it, `findBlockTile`), at least `POP.startGap` units from the start, plus the walk-in landmarks'
+  guards, prisoners and shoppers. Nobody despawns. Killed residents are slowly replaced (every
+  1.5–4 s, idle, at least `POP.respawnGap` units from you) while the city has fewer than the sum of
+  its blocks' densities (70% once the road is open), into the block furthest below its share
+  (counted by each zombie's home block, `blockIndex` in `grid.js`). The takeover's spawns are
+  capped by `CRYSTAL.cap`; a 260-zombie ceiling guards frame time.
 - **Zombie drops:** deliberately rare so loot matters: a health cross (+20 HP, ~2.5%, more from
   brutes (`heal` in `ZTYPES`) or when below 40% HP), otherwise ~7% a small ammo box (14% during
   the takeover, `CRYSTAL.ammoDrop`, so the takeover's nonstop fighting stays possible). An
@@ -205,7 +213,7 @@ css/style.css     All styles; light/dark theme tokens on :root
 js/
   main.js         Boot (input, best score, menu city) and the requestAnimationFrame loop
   config.js       Grid constants: TILE, B, N, tile types T, walkable()/seeThrough(), DIRS8, names, palettes,
-                  DISTRICTS, POP
+                  DISTRICTS, LAYOUT, POP
   items.js        Pure data: WEAPONS, ITEMS, RECIPES, LOOT tables, LANDMARKS (no imports)
   threats.js      Pure data: zombie types (ZTYPES), modifiers (ZMODS), unlock pool/order, banner tips,
                   Crystal pulse and takeover tuning (CRYSTAL), zombie senses (AI)
@@ -221,7 +229,7 @@ js/
   cityScene.js    Builds/tears down the city's Three.js meshes: buildings by style, walk-in landmark
                   shells/roofs, props, containers, signs, Crystal, barricade, exit
   grid.js         Tile collision (isBlockedTile, isOpaqueTile, resolveCircle), BFS flow fields (player,
-                  cached flowTo), line of sight, fog-of-war reveal
+                  cached flowTo), line of sight, blockIndex, fog-of-war reveal
   player.js       Player mesh, base stats + starting kit, movement/sprint/stamina, aim/reload, melee pose, bleeding
   zombies.js      Zombie meshes (incl. type/modifier tells, ?/! mark), spawning + rising from the ground,
                   senses (sight, hearing via makeNoise/alertNear, memory, leash), steering (flow fields,
@@ -273,7 +281,7 @@ js/
   everything else (AI, FX, spawns, loot rolls, upgrade choice) uses `Math.random`/`mr`/`mri`/`mpick`.
   Don't mix them up — calling seeded helpers outside `cityGen.js` changes generated cities.
   Generation order: districts → plaza → landmarks → district blocks → wrecks → `placeLoot`
-  (dumpsters, crates, trunks, doors) → density.
+  (dumpsters, crates, trunks, doors).
 - **City data gets runtime fields.** `buildCityScene` adds `px/pz/range/time/noise/searched/glint/open`
   to each `city.containers` entry, and `loot.js` sets `found` on landmarks. Per-city, so no reset needed.
   Landmark records: `{ type, cts (container indices), ox/oz (tile in front of the door/entrance),
