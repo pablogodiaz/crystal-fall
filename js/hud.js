@@ -4,6 +4,7 @@ import { TILE, N, T } from './config.js';
 import { $, fmtTime } from './utils.js';
 import { camera } from './renderer.js';
 import { WEAPONS, ITEMS, RECIPES, LANDMARKS, INV_SLOTS } from './items.js';
+import { CRYSTAL } from './threats.js';
 import { state, world, zombies, drops, pickups } from './state.js';
 import { player } from './player.js';
 import { useSlot, dropSlot, craft, countItem, magSize, selectedThrowable } from './inventory.js';
@@ -88,13 +89,16 @@ export function updateHUD(dt, t){
   let obj, sub = '';
   if (state.phase === 'explore'){
     if (!state.crystalFound){ obj = 'Find the Crystal'; sub = 'Follow the violet light. Gunfire draws the dead.'; }
-    else { obj = 'Shatter the Crystal'; sub = 'Breaking it will summon a horde.'; }
-  } else if (state.phase === 'horde'){ obj = `Survive the horde: ${state.hordeToSpawn + state.hordeAlive} left`; sub = 'Keep moving and watch your ammo.'; }
+    else { obj = 'Shatter the Crystal'; sub = 'Breaking it lets it take the city.'; }
+  } else if (state.phase === 'takeover'){ obj = 'Survive the takeover'; sub = 'The dead keep rising until the Crystal’s hold breaks.'; }
   else { obj = 'Reach the exit'; sub = 'The road east is open. Follow the green light.'; }
   setText('objText', obj); setText('objSub', sub);
-  const showCr = !!(crystal && crystal.alive && state.crystalFound);
+  // The Crystal's HP while it stands, then the takeover's remaining time.
+  const tk = state.phase === 'takeover', showCr = tk || !!(crystal && crystal.alive && state.crystalFound);
   $('crystalBar').classList.toggle('hidden', !showCr);
-  if (showCr) $('crFill').style.width = (crystal.hp/crystal.maxHp*100) + '%';
+  if (showCr) $('crFill').style.width = (tk ? state.takeover/CRYSTAL.takeover : crystal.hp/crystal.maxHp)*100 + '%';
+  $('countdown').classList.toggle('hidden', !tk);
+  if (tk){ setText('countdown', fmtTime(Math.ceil(state.takeover))); $('countdown').classList.toggle('urgent', state.takeover <= 10); }
   const v = $('vignette'); const vo = parseFloat(v.style.opacity || 0);
   const low = player.hp < player.maxHp*0.3 ? 0.25 + Math.sin(t*5)*0.08 : 0;
   v.style.opacity = Math.max(low, vo - dt*1.5);

@@ -14,7 +14,8 @@ import { curWeapon, magSize } from './inventory.js';
 import { toast } from './hud.js';
 import { burst } from './fx.js';
 import { sfx } from './audio.js';
-import { die, foundCrystal, breakCrystal } from './game.js';
+import { die } from './game.js';
+import { foundCrystal, checkPulse, breakCrystal } from './crystal.js';
 
 export function tryReload(){
   const w = curWeapon();
@@ -126,5 +127,5 @@ export function hitCrystal(dmg){
   const crystal = world.crystal;
   crystal.hp -= dmg; crystal.flash = 0.1; sfx.crystal();
   if (!state.crystalFound) foundCrystal();
-  if (crystal.hp <= 0) breakCrystal();
+  if (crystal.hp <= 0) breakCrystal(); else checkPulse();
 }

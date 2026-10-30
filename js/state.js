@@ -4,7 +4,9 @@
 import * as THREE from 'three';
 import { N } from './config.js';
 
-export const state = { mode:'menu', level:1, phase:'explore', crystalFound:false, hordeToSpawn:0, hordeAlive:0, spawnTimer:0, flowTimer:0,
+export const state = { mode:'menu', level:1, phase:'explore', crystalFound:false, spawnTimer:0, flowTimer:0,
+  // Takeover (after the Crystal breaks): seconds left, surge spawns still to come, alive takeover zombies, next countdown beep.
+  takeover:0, surge:0, hordeAlive:0, tick:0,
   kills:0, cityKills:0, runTime:0, cityTime:0, shake:0, menuT:0,
   // Threat unlocks (specials.js): run's intro order, id -> city it appeared in, banners already shown.
   threatOrder:[], threatIntro:{}, seenThreats:new Set(), forceThreat:null };

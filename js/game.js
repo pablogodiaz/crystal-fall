@@ -1,17 +1,19 @@
 // ---------- Game flow ----------
-// Run/city lifecycle (explore -> horde -> open -> upgrade), spawning, per-frame update.
+// Run/city lifecycle (explore -> takeover -> open -> upgrade), spawning, per-frame update.
 import * as THREE from 'three';
 import { TILE, N, T, walkable } from './config.js';
 import { $, mr, fmtTime } from './utils.js';
 import { camFocus, muzzleLight, fxLight } from './renderer.js';
+import { CRYSTAL } from './threats.js';
 import { state, world, zombies, mouse } from './state.js';
 import { generateCity } from './cityGen.js';
 import { buildCityScene, buildExitMarker, teardownCity } from './cityScene.js';
-import { updateFlow, reveal } from './grid.js';
+import { updateFlow } from './grid.js';
 import { player, resetPlayerStats, refreshGun, updatePlayer } from './player.js';
 import { spawnZombieAt, findSpawnTile, updateZombies, updateDying } from './zombies.js';
 import { updateBullets } from './combat.js';
 import { burst, updateParticles, updatePickups } from './fx.js';
+import { foundCrystal, endTakeover, resetTakeover, animateCrystal } from './crystal.js';
 import { showScreen, banner, renderCraft } from './hud.js';
 import { interact, updateInteract, updateDrops, updateLandmarks, animateContainers } from './loot.js';
 import { updateThrowables, updateThrowPreview } from './throwables.js';
@@ -28,9 +30,9 @@ export function startCity(level, seed){
   world.explored = new Uint8Array(N*N); world.mmDirty = true; world.lastTile = -1;
   player.pos.set((city.start.x+0.5)*TILE, 0, (city.start.z+0.5)*TILE); player.vel.set(0,0,0);
   camFocus.copy(player.pos);
-  Object.assign(state, { phase:'explore', crystalFound:false, hordeToSpawn:0, hordeAlive:0, cityKills:0, cityTime:0, spawnTimer:3, flowTimer:0 });
+  Object.assign(state, { phase:'explore', crystalFound:false, takeover:0, surge:0, hordeAlive:0, cityKills:0, cityTime:0, spawnTimer:3, flowTimer:0 });
   updateFlow();
-  interact.target = null; interact.p = 0; fxLight.intensity = 0;
+  interact.target = null; interact.p = 0; fxLight.intensity = 0; resetTakeover();
   setupThreats(level);
   const n = 10 + 4*level;
   for (let i=0;i<n;i++){ const s = findSpawnTile(24, 200); if (s) spawnZombieAt(s.x, s.z, false, false, false, null, 0); }
@@ -56,29 +58,9 @@ export function newRun(){
   $('hud').classList.remove('hidden');
   startCity(1, newSeed());
 }
-export function foundCrystal(){
-  state.crystalFound = true;
-  reveal(world.city.crystalTile.x, world.city.crystalTile.z, 3);
-  banner('The Crystal', 'Shoot it to shatter it, then survive what comes');
-}
-export function breakCrystal(){
-  const crystal = world.crystal;
-  crystal.alive = false;
-  crystal.mesh.visible = false; crystal.beam.visible = false; crystal.glow.visible = false;
-  for (const s of crystal.shards) s.visible = false;
-  crystal.light.intensity = 0;
-  world.mmDirty = true;
-  burst(crystal.pos.clone(), 'crystal', 40, 7);
-  sfx.shatter(); setTimeout(sfx.roar, 500);
-  state.shake = 0.8;
-  state.phase = 'horde';
-  state.hordeToSpawn = 28 + 12*(state.level-1);
-  state.spawnTimer = 2.2;
-  for (const z of zombies) z.alert = true;
-  banner('The horde is coming', 'Hold out until the last of them falls');
-}
 function openRoad(){
   const city = world.city;
+  endTakeover();
   state.phase = 'open';
   for (const z of [city.exitZ, city.exitZ+1]){ city.grid[z*N + N-1] = T.EXIT; world.explored[z*N + N-1] = 1; }
   world.mmDirty = true;
@@ -143,13 +125,23 @@ export function togglePause(){
 function updateSpawning(dt){
   state.spawnTimer -= dt;
   const lv = state.level;
-  if (state.phase === 'horde'){
-    if (state.hordeToSpawn > 0 && state.spawnTimer <= 0 && zombies.length < 40 + 5*lv){
+  if (state.phase === 'takeover'){
+    // Everything spawned now is alert and counts as the takeover's (state.hordeAlive): a quick
+    // surge first, then a steady stream that speeds up as the clock runs down.
+    const C = CRYSTAL;
+    state.takeover -= dt;
+    if (state.takeover <= state.tick && state.tick > 0){ sfx.tick(state.tick); state.tick--; }
+    if (state.takeover <= 0){ openRoad(); return; }
+    if (state.spawnTimer > 0 || zombies.length >= 40 + 5*lv) return;
+    if (state.surge > 0){
       const s = findSpawnTile(15, 30);
-      if (s){ spawnZombieAt(s.x, s.z, true, true); state.hordeToSpawn--; }
+      if (s){ spawnZombieAt(s.x, s.z, true, true); state.surge--; }
       state.spawnTimer = Math.max(0.12, 0.32 - 0.03*lv);
+    } else {
+      if (state.hordeAlive < C.cap[0] + C.cap[1]*lv){ const s = findSpawnTile(16, 32); if (s) spawnZombieAt(s.x, s.z, true, true); }
+      const k = 1 - state.takeover/C.takeover, [b, per, min] = C.interval;
+      state.spawnTimer = Math.max(min, b - per*(lv-1)) * (1 - C.ramp*k) * mr(0.7,1.3);
     }
-    if (state.hordeToSpawn <= 0 && state.hordeAlive <= 0) openRoad();
     return;
   }
   if (state.spawnTimer <= 0){
@@ -184,17 +176,8 @@ export function update(dt){
 }
 // Cosmetic animation; runs every frame in every mode.
 export function animateWorld(dt, t){
-  const crystal = world.crystal, exitMarker = world.exitMarker;
-  if (crystal && crystal.alive){
-    crystal.mesh.rotation.y += dt*0.8;
-    crystal.mesh.position.y = 2.1 + Math.sin(t*1.6)*0.15;
-    crystal.beam.material.opacity = 0.16 + Math.sin(t*2.2)*0.05;
-    crystal.light.intensity = 2.2 + Math.sin(t*3)*0.4 + (crystal.flash > 0 ? 3 : 0);
-    crystal.mat.emissiveIntensity = crystal.flash > 0 ? 2.2 : 0.9;
-    if (crystal.flash > 0) crystal.flash -= dt;
-    const shakeAmt = state.crystalFound ? (1 - crystal.hp/crystal.maxHp)*0.08 : 0;
-    crystal.mesh.position.x = mr(-shakeAmt, shakeAmt);
-  }
+  const exitMarker = world.exitMarker;
+  animateCrystal(dt, t);
   if (exitMarker){
     exitMarker.gm.opacity = 0.25 + Math.sin(t*4)*0.12;
     exitMarker.chev.forEach((c,i) => { c.position.y = 0.35 + Math.max(0, Math.sin(t*5 - i*0.8))*0.25; });

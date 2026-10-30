@@ -14,7 +14,7 @@ import { burst, addDecal, spawnPickup } from './fx.js';
 import { dropZombieAmmo } from './loot.js';
 import { queueBlast } from './throwables.js';
 import { rollThreat, updateScreamer, cancelScream, updateSpitter, poseSpecial } from './specials.js';
-import { ZTYPES, ZMODS, SCALE } from './threats.js';
+import { ZTYPES, ZMODS, SCALE, CRYSTAL } from './threats.js';
 import { sfx } from './audio.js';
 
 const SHIRTS = [0x6b4a3a,0x4a5a6b,0x5a5a4a,0x7a3a3a,0x3a4a3a,0x6a6a72,0x8a7a5a];
@@ -218,7 +218,7 @@ function killZombie(z, credit = true, cause, dx = 0, dz = 0, dmg = 0){
   // Health drops are rare on purpose: most healing comes from searching the city.
   const chance = 0.025 + (player.hp < player.maxHp*0.4 ? 0.03 : 0) + ZTYPES[z.type].heal;
   if (Math.random() < chance) spawnPickup(z.pos.x, z.pos.z);
-  else if (Math.random() < 0.07) dropZombieAmmo(z.pos.x, z.pos.z);
+  else if (Math.random() < (state.phase === 'takeover' ? CRYSTAL.ammoDrop : 0.07)) dropZombieAmmo(z.pos.x, z.pos.z);
 }
 export function updateZombies(dt){
   const p = player.pos, lure = world.lure, E = ZMODS.explosive, t = state.cityTime;

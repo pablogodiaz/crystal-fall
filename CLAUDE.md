@@ -24,11 +24,20 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   1. `explore` — find the Crystal (violet beam) in the plaza block. It counts as "found" when
      you get within 19 units or shoot it.
   2. Shoot the Crystal (HP `30 + 15*(level-1)`; melee and molotov fire also damage it; any bullet
-     entering its tile counts as a hit) → `horde` — `28 + 12*(level-1)` horde zombies
-     spawn 15–30 units away; all zombies become alert.
-  3. When the horde is dead → `open` — the barricade on the east wall disappears and a green exit
-     marker appears.
-  4. Walk into the exit tile column → upgrade screen (pick 1 of 3 random upgrades, heal 40% of max HP)
+     entering its tile counts as a hit). From City 3 on (`CRYSTAL.pulseFrom`), the first hit that
+     leaves it at ≤50% HP makes it **pulse** once (`checkPulse` in `crystal.js`): a violet ring/screen
+     wave, everything within 60 units is alerted, and `8 + 2*(level-3)` (max 18) zombies rise
+     4–12 units around it with staggered rise times. Afterwards it spins faster and burns brighter.
+  3. Broken → `takeover` (all cities): the screen sweeps violet from the Crystal (`screenWave`) and
+     the city stays tinted (`setTint` in `renderer.js` lerps light/background colors; `#taint` is a
+     `mix-blend-mode: color` overlay, `#taintWave` the sweeping rim). A 5-minute countdown
+     (`state.takeover`, shown big in the objective panel; the crystal bar drains with it; beeps in
+     the last 10 s) runs while everything spawns alert: a surge of `10 + 3*(level-1)` 15–30 units
+     away, then a steady stream (interval and cap in `CRYSTAL`, ramping up as the clock runs
+     down). Takeover zombies have `z.horde` set and are counted in `state.hordeAlive`.
+  4. Timer hits 0 → `endTakeover()` + `open` — the tint fades, leftover takeover zombies become
+     ordinary ones, the barricade on the east wall disappears and a green exit marker appears.
+  5. Walk into the exit tile column → upgrade screen (pick 1 of 3 random upgrades, heal 40% of max HP)
      → next city with a new seed.
 - **Game modes** (`state.mode`): `menu` (camera orbits a city behind the title card), `play`,
   `paused`, `craft` (workbench overlay, C), `upgrade`, `dead`. Simulation (`update`) only runs in
@@ -92,7 +101,7 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   other banners via `queueBanner`).
   - **Screamer:** pale, gaunt, open mouth. On line of sight within `sight` it roots for 1.5 s while
     its head swells and glows and its arms rise, then screams once: alerts everything within
-    `alertR` and spawns 6–10 zombies (never screamers) nearby (horde members during the horde).
+    `alertR` and spawns 6–10 zombies (never screamers) nearby (takeover members during the takeover).
     Killing it during the wind-up cancels the scream.
   - **Spitter:** green and bloated with a glowing acid sac. Keeps 7–13 units away (backs off,
     sidesteps) and lobs acid on an arc; a green ring + filling disc marks the landing spot. The
@@ -119,10 +128,11 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   more from hits of 3+ damage and melee, never from fire): the piece becomes a *gib* that tumbles
   away bleeding and settles flat on the ground. Blast deaths (explosions, exploders themselves)
   fling every body part. Corpses lie 2.5–4 s, then sink away.
-- **Ambient spawning:** outside the horde, zombies trickle in 24–42 units away up to a cap
+- **Ambient spawning:** outside the takeover, zombies trickle in 24–42 units away up to a cap
   (`12 + 4*level`, or `8 + 4*level` once the road is open).
 - **Zombie drops:** deliberately rare so loot matters: a health cross (+20 HP, ~2.5%, more from
-  brutes (`heal` in `ZTYPES`) or when below 40% HP), otherwise ~7% a small ammo box. An
+  brutes (`heal` in `ZTYPES`) or when below 40% HP), otherwise ~7% a small ammo box (14% during
+  the takeover, `CRYSTAL.ammoDrop`, so five minutes of fighting stays possible). An
   exploder's own detonation gives no kill and no drop.
 - **Pickup feedback:** everything you collect (ground drops, search results, health crosses) floats
   up over the player as "+1 🩹 Bandage" (`floatText` in `hud.js`; several at once rise one after
@@ -142,10 +152,12 @@ js/
   main.js         Boot (input, best score, menu city) and the requestAnimationFrame loop
   config.js       Grid constants: TILE, N, tile types T, walkable(), DIRS8, names, palette
   items.js        Pure data: WEAPONS, ITEMS, RECIPES, LOOT tables, LANDMARKS (no imports)
-  threats.js      Pure data: zombie types (ZTYPES), modifiers (ZMODS), unlock pool/order, banner tips
+  threats.js      Pure data: zombie types (ZTYPES), modifiers (ZMODS), unlock pool/order, banner tips,
+                  Crystal pulse and takeover tuning (CRYSTAL)
   utils.js        Seeded RNG (rng/rand/randi/pick), mr/mri/mpick (Math.random), clamp, lerpAngle, fmtTime, $
   state.js        Shared mutable state: `state`, `world`, entity arrays, input state
-  renderer.js     WebGLRenderer, scene, orthographic camera, lights (incl. pooled muzzle/fx lights), updateCamera()
+  renderer.js     WebGLRenderer, scene, orthographic camera, lights (incl. pooled muzzle/fx lights), updateCamera(),
+                  setTint() (takeover violet)
   assets.js       Shared geometries/materials (SH), window textures, carMat()
   audio.js        Procedural WebAudio SFX (sfx.*), initAudio(), toggleMute()
   cityGen.js      Pure procedural city generation from a seed (grid, props, containers, landmarks)
@@ -157,6 +169,7 @@ js/
                   warning ring, death (ragdoll corpses, gibs)
   specials.js     Threat unlocks and rolls, screamer/spitter behaviour, acid, "New threat" banners
   combat.js       Firing per weapon, melee start/strike, bullets, hurtPlayer/drainHp, Crystal hits
+  crystal.js      Crystal found/pulse/break, its animation, takeover end, violet tint + screen wave
   inventory.js    Item stacks, weapon slots, ammo reserves, using/dropping items, crafting
   loot.js         Hold-E searching, loot rolls, ground drops, landmark discovery
   throwables.js   Molotov fire zones, pipe bombs (lure + stun blast), exploder explosion()/queueBlast()
@@ -165,7 +178,7 @@ js/
                   drop name tags, toasts, minimap,
                   craft screen, banner, showScreen()
   upgrades.js     Upgrade definitions
-  game.js         Game flow: startCity/newRun, crystal/horde/exit transitions, death, pause,
+  game.js         Game flow: startCity/newRun, takeover countdown + spawning, exit, death, pause,
                   spawning, update() and animateWorld()
   input.js        Keyboard/mouse/focus listeners
 ```
@@ -222,7 +235,8 @@ js/
 ## Testing
 
 No automated test suite. To verify changes, serve locally and play a city through:
-explore → search containers/landmarks → shoot Crystal → kill horde → exit → pick upgrade → next
+explore → search containers/landmarks → shoot Crystal (pulse from City 3) → survive the takeover
+(set `state.takeover` low to skip ahead) → exit → pick upgrade → next
 city (inventory and guns should carry over); also craft, throw, swap guns, pause and death.
 Watch the browser console for errors. A headless check with Playwright works if you serve the
 folder and (when the CDN is unreachable) route `**/three.module.js` to a local copy of r128.

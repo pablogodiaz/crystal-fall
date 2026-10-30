@@ -79,8 +79,8 @@ function scream(z){
   const ring = new THREE.Mesh(SH.markGeo, mat); ring.rotation.x = -Math.PI/2; ring.position.set(z.pos.x, 1.6, z.pos.z);
   scene.add(ring); rings.push({ mesh:ring, t:0, T:0.6, r0:1, r1:15.4, op:0.7 });
   sfx.scream(); state.shake = Math.max(state.shake, 0.35);
-  // Spawns count toward the horde while it's on, so the road still waits for them.
-  const horde = state.phase === 'horde', n = mri(S.spawn[0], S.spawn[1]);
+  // During the takeover its spawns count as the takeover's (always alert, never despawn).
+  const horde = state.phase === 'takeover', n = mri(S.spawn[0], S.spawn[1]);
   for (let i=0;i<n;i++){
     const s = findSpawnNear(z.pos.x, z.pos.z, S.spawnR[0], S.spawnR[1]); if (!s) continue;
     spawnZombieAt(s.x, s.z, horde, true, false, 'screamer');
