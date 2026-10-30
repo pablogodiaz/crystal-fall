@@ -10,6 +10,10 @@ export const WEAPONS = {
   rifle:   { name:'Hunting rifle', ammo:'rifle rounds', dmg:4,   rate:0.9,   mag:5,  reload:2.0, pellets:1, spread:0,    jitter:0.004, speed:70, life:1.0,  pierce:2, noise:40, gun:2.0,  maxAmmo:30,  find:[3,6],   sound:'rifle' }
 };
 export const FOUND_WEAPONS = ['shotgun','smg','rifle'];
+// Which gun an ammo find (search or zombie drop) is for: `held` = the gun in your hands, `carried`
+// = your other gun (both skip a full reserve; with one gun it gets both shares), the rest any gun.
+// Fixed shares, so adding weapons doesn't dilute the ammo you actually need.
+export const AMMO_ODDS = { held:0.55, carried:0.25 };
 
 export const INV_SLOTS = 8;
 export const ITEMS = {
