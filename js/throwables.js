@@ -48,20 +48,23 @@ function land(o){
     makeNoise(x, z, LURE_R);
   }
 }
-function explode(h){
+// Blast at (x,z): zombies take zDmg (scaled by city) and the player pDmg, both falling off with distance.
+export function explosion(x, z, R, zDmg, pDmg, noise){
   const lv = 1 + 0.3*(state.level-1);
-  for (const z of zombies.slice()){
-    const dx = z.pos.x - h.x, dz = z.pos.z - h.z, d = Math.hypot(dx,dz);
-    if (d < BOMB_R) damageZombie(z, BOMB_DMG*lv*(1 - d/(BOMB_R*1.25)), dx/(d||1)*2.5, dz/(d||1)*2.5);
+  for (const o of zombies.slice()){
+    const dx = o.pos.x - x, dz = o.pos.z - z, d = Math.hypot(dx,dz);
+    if (d < R) damageZombie(o, zDmg*lv*(1 - d/(R*1.25)), dx/(d||1)*2.5, dz/(d||1)*2.5);
   }
-  const pd = Math.hypot(player.pos.x - h.x, player.pos.z - h.z);
-  if (pd < BOMB_R) hurtPlayer(45*(1 - pd/(BOMB_R*1.1)), null);
-  const p = new THREE.Vector3(h.x, 0.6, h.z);
+  const pd = Math.hypot(player.pos.x - x, player.pos.z - z);
+  if (pd < R) hurtPlayer(pDmg*(1 - pd/(R*1.1)), null);
+  const p = new THREE.Vector3(x, 0.6, z);
   burst(p, 'fire', 24, 8); burst(p, 'spark', 16, 9); burst(p, 'dust', 16, 6);
-  fxLight.position.set(h.x, 2, h.z); flash = 7;
+  fxLight.position.set(x, 2, z); flash = 7;
   state.shake = Math.max(state.shake, 0.7);
-  sfx.boom(); makeNoise(h.x, h.z, 40);
+  sfx.boom(); makeNoise(x, z, noise);
 }
+// Delayed blast (exploding zombies), so chain reactions ripple instead of going off in one frame.
+export function queueBlast(x, z, delay, R, zDmg, pDmg){ hazards.push({ kind:'blast', x, z, t:delay, R, zDmg, pDmg }); }
 export function updateThrowables(dt){
   for (let i=throwns.length-1;i>=0;i--){
     const o = throwns[i]; o.t += dt;
@@ -88,6 +91,12 @@ export function updateThrowables(dt){
         if (state.mode !== 'play') return;
       }
       if (h.t <= 0){ scene.remove(h.mesh); hazards.splice(i,1); }
+    } else if (h.kind === 'blast'){
+      if (h.t <= 0){
+        hazards.splice(i,1);
+        explosion(h.x, h.z, h.R, h.zDmg, h.pDmg, 30);
+        if (state.mode !== 'play') return;
+      }
     } else {
       h.beep -= dt;
       if (h.beep <= 0){ h.beep = 0.12 + h.t*0.12; sfx.beep(); h.led.visible = true; makeNoise(h.x, h.z, LURE_R*0.6); }
@@ -95,7 +104,7 @@ export function updateThrowables(dt){
       if (h.t <= 0){
         scene.remove(h.mesh); hazards.splice(i,1);
         if (world.lure === h) world.lure = null;
-        explode(h);
+        explosion(h.x, h.z, BOMB_R, BOMB_DMG, 45, 40);
         if (state.mode !== 'play') return;
       }
     }

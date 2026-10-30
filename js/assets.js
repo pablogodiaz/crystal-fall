@@ -28,7 +28,8 @@ export const SH = {};
     crystal: new THREE.MeshBasicMaterial({ color:0xc4a1ff }),
     dust: new THREE.MeshBasicMaterial({ color:0x8a8780 }),
     heal: new THREE.MeshBasicMaterial({ color:0x7dffa8 }),
-    fire: new THREE.MeshBasicMaterial({ color:0xff8a2a })
+    fire: new THREE.MeshBasicMaterial({ color:0xff8a2a }),
+    acid: new THREE.MeshBasicMaterial({ color:0xa6ff3a })
   };
   SH.decalGeo = new THREE.CircleGeometry(0.55, 10);
   SH.decalMat = new THREE.MeshBasicMaterial({ color:0x3d0707, transparent:true, opacity:0.75, depthWrite:false });
@@ -86,5 +87,28 @@ export const SH = {};
   SH.beepMat = new THREE.MeshBasicMaterial({ color:0xff3030 });
   SH.fireGeo = new THREE.CircleGeometry(1,24);
   SH.fireMat = new THREE.MeshBasicMaterial({ color:0xff6a1a, transparent:true, opacity:0.45, blending:THREE.AdditiveBlending, depthWrite:false });
+  // Special zombies: screamer mouth, spitter acid sac, explosive canisters, riot gear
+  SH.mouthGeo = new THREE.BoxGeometry(0.24,0.12,0.04);
+  SH.mouthMat = new THREE.MeshBasicMaterial({ color:0x2a0505 });
+  SH.sacGeo = new THREE.SphereGeometry(0.3,10,8);
+  SH.sacMat = new THREE.MeshStandardMaterial({ color:0x9ccf2a, emissive:0x4f8a00, roughness:0.4 });
+  SH.canGeo = new THREE.CylinderGeometry(0.11,0.11,0.5,8);
+  SH.canMat = new THREE.MeshStandardMaterial({ color:0xd2541a, emissive:0xff5a00, emissiveIntensity:0.8, roughness:0.5, metalness:0.3 });
+  SH.helmGeo = new THREE.BoxGeometry(0.52,0.2,0.52);
+  SH.visorGeo = new THREE.BoxGeometry(0.48,0.26,0.04);
+  SH.plateGeo = new THREE.BoxGeometry(0.62,0.5,0.1);
+  SH.shieldGeo = new THREE.BoxGeometry(0.8,1.05,0.07);
+  SH.stripeGeo = new THREE.BoxGeometry(0.64,0.09,0.08);
+  SH.armorMat = new THREE.MeshStandardMaterial({ color:0x1e2633, roughness:0.5, metalness:0.5 });
+  SH.visorMat = new THREE.MeshStandardMaterial({ color:0x3a5a7a, roughness:0.15, metalness:0.6, emissive:0x10202e });
+  SH.shieldMat = new THREE.MeshStandardMaterial({ color:0x4a5a6e, roughness:0.35, metalness:0.4 });
+  SH.stripeMat = new THREE.MeshBasicMaterial({ color:0xe8eef5 });
+  // Spitter acid: projectile, landing marker (ring + filling disc), puddle
+  SH.acidGeo = new THREE.SphereGeometry(0.2,8,6);
+  SH.acidMat = new THREE.MeshBasicMaterial({ color:0xa6ff3a });
+  SH.markGeo = new THREE.RingGeometry(0.86,1,32);
+  SH.markMat = new THREE.MeshBasicMaterial({ color:0xa6ff3a, transparent:true, opacity:0.75, depthWrite:false });
+  SH.markFillMat = new THREE.MeshBasicMaterial({ color:0xa6ff3a, transparent:true, opacity:0.2, depthWrite:false });
+  SH.acidPoolMat = new THREE.MeshBasicMaterial({ color:0x8fe02a, transparent:true, opacity:0.55, depthWrite:false });
 })();
 export const carMat = c => SH.carMats[c] || (SH.carMats[c] = new THREE.MeshStandardMaterial({ color:c, roughness:0.7, metalness:0.25 }));

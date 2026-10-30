@@ -169,8 +169,13 @@ export function showScreen(id){
   for (const s of ['menuScreen','pauseScreen','craftScreen','upgradeScreen','deathScreen']) $(s).classList.toggle('hidden', s !== id);
 }
 let bannerTimer = null;
+const bannerQueue = [];
 export function banner(t, s, dur){
   $('bannerTitle').textContent = t; $('bannerSub').textContent = s || '';
   $('banner').classList.add('show');
-  clearTimeout(bannerTimer); bannerTimer = setTimeout(() => $('banner').classList.remove('show'), dur || 2800);
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(() => { $('banner').classList.remove('show'); bannerTimer = null; setTimeout(nextBanner, 450); }, dur || 2800);
 }
+// Waits for the current banner (e.g. "City 2") to finish instead of cutting it off.
+export function queueBanner(t, s, dur){ bannerQueue.push([t, s, dur]); if (!bannerTimer) nextBanner(); }
+function nextBanner(){ if (!bannerTimer && bannerQueue.length) banner(...bannerQueue.shift()); }

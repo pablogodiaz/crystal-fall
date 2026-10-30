@@ -15,6 +15,7 @@ import { burst, updateParticles, updatePickups } from './fx.js';
 import { showScreen, banner, renderCraft } from './hud.js';
 import { interact, updateInteract, updateDrops, updateLandmarks, animateContainers } from './loot.js';
 import { updateThrowables } from './throwables.js';
+import { setupThreats, shuffleThreats, updateSpecials } from './specials.js';
 import { UPGRADES } from './upgrades.js';
 import { initAudio, sfx } from './audio.js';
 
@@ -30,6 +31,7 @@ export function startCity(level, seed){
   Object.assign(state, { phase:'explore', crystalFound:false, hordeToSpawn:0, hordeAlive:0, cityKills:0, cityTime:0, spawnTimer:3, flowTimer:0 });
   updateFlow();
   interact.target = null; interact.p = 0; fxLight.intensity = 0;
+  setupThreats(level);
   const n = 10 + 4*level;
   for (let i=0;i<n;i++){ const s = findSpawnTile(24, 200); if (s) spawnZombieAt(s.x, s.z, false, false); }
   // Police stations are guarded by a pack that stays near the door.
@@ -48,6 +50,7 @@ export function newRun(){
   initAudio();
   resetPlayerStats(); refreshGun();
   state.kills = 0; state.runTime = 0;
+  shuffleThreats();
   state.mode = 'play';
   showScreen(null);
   $('hud').classList.remove('hidden');
@@ -170,6 +173,8 @@ export function update(dt){
   if (state.mode !== 'play') return;
   updateBullets(dt);
   updateThrowables(dt);
+  if (state.mode !== 'play') return;
+  updateSpecials(dt);
   if (state.mode !== 'play') return;
   updatePickups(dt);
   updateDrops(dt);

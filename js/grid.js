@@ -54,3 +54,9 @@ export function reveal(tx,tz,R){
     if (!world.explored[z*N+x]){ world.explored[z*N+x] = 1; world.mmDirty = true; }
   }
 }
+// True if no blocked tile lies on the segment between two world points (sampled every ~0.6 units).
+export function lineOfSight(x0, z0, x1, z1){
+  const n = Math.ceil(Math.hypot(x1-x0, z1-z0)/0.6);
+  for (let i=1;i<n;i++){ const k = i/n; if (isBlockedTile(Math.floor((x0 + (x1-x0)*k)/TILE), Math.floor((z0 + (z1-z0)*k)/TILE))) return false; }
+  return true;
+}
