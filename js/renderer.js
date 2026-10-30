@@ -37,6 +37,8 @@ sun.shadow.bias = -0.0006;
 scene.add(sun); scene.add(sun.target);
 const SUN_OFFSET = new THREE.Vector3(-26,50,14);
 export const muzzleLight = new THREE.PointLight(0xffc870, 0, 9, 2); scene.add(muzzleLight);
+// Pooled light for fires/explosions (adding lights at runtime would recompile shaders).
+export const fxLight = new THREE.PointLight(0xff8a3a, 0, 16, 2); scene.add(fxLight);
 
 // Orbits the city on the menu, otherwise follows `target` (the player).
 export function updateCamera(dt, target){

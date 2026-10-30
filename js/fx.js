@@ -1,5 +1,5 @@
 // ---------- FX ----------
-// Particles, blood decals, health pickups, and building fade.
+// Particles, blood decals, health pickups (zombie drops), and building fade.
 import * as THREE from 'three';
 import { TILE, N, T } from './config.js';
 import { mr } from './utils.js';
@@ -52,7 +52,7 @@ export function updatePickups(dt){
     p.g.visible = p.life > 4 || Math.floor(p.t*6)%2 === 0;
     const d = Math.hypot(p.g.position.x - player.pos.x, p.g.position.z - player.pos.z);
     if (d < 1.3 && player.hp < player.maxHp){
-      player.hp = Math.min(player.maxHp, player.hp + 25); sfx.pickup();
+      player.hp = Math.min(player.maxHp, player.hp + 20); sfx.pickup();
       burst(new THREE.Vector3(p.g.position.x, 1, p.g.position.z), 'heal', 8, 2);
       scene.remove(p.g); pickups.splice(i,1); continue;
     }

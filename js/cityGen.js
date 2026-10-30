@@ -1,6 +1,6 @@
 // ---------- City generation ----------
 // Pure data: builds the tile grid and prop lists from a seed. No Three.js here.
-import { N, T, CITY_NAMES, PALETTE } from './config.js';
+import { N, T, CITY_NAMES, PALETTE, walkable } from './config.js';
 import { rng, seedRng, rand, randi, pick } from './utils.js';
 
 function splitLots(x,z,w,d,out,depth){
@@ -94,5 +94,66 @@ export function generateCity(level, seed){
       grid[I(x,z)] = T.OBSTACLE; cars.push({ x, z, rot:Math.PI/2 + (rng()<0.5?0:Math.PI) + rand(-0.5,0.5), color:pick([0x4a3a33,0x3a3f45,0x5b4636,0x444038]), wreck:true });
     }
   }
-  return { grid, blocks, buildings, trees, cars, rubble, pillars, crystalTile:{ x:cb.x0+2, z:cb.z0+2 }, exitZ, start:{ x:2, z:2 }, name:pick(CITY_NAMES) };
+  const name = pick(CITY_NAMES);
+  const { containers, landmarks } = placeLoot(grid, blocks, buildings, cars);
+  return { grid, blocks, buildings, trees, cars, rubble, pillars, containers, landmarks, crystalTile:{ x:cb.x0+2, z:cb.z0+2 }, exitZ, start:{ x:2, z:2 }, name };
+}
+
+// ---------- Containers & landmarks ----------
+// Runs after the base layout so adding loot doesn't change the rest of a seed's city.
+const D4 = [[1,0],[-1,0],[0,1],[0,-1]];
+const LM_TYPES = ['police','pharmacy','supermarket','hardware'];
+function placeLoot(grid, blocks, buildings, cars){
+  const I = (x,z) => z*N + x, containers = [], landmarks = [];
+  // Dumpsters on the street edge of building blocks; crates in parking lots and ruins.
+  for (const b of blocks){
+    const free = [];
+    for (let z=b.z0;z<b.z0+5;z++) for (let x=b.x0;x<b.x0+5;x++){
+      const edge = x === b.x0 || x === b.x0+4 || z === b.z0 || z === b.z0+4;
+      if (grid[I(x,z)] === T.SIDEWALK && edge) free.push([x,z]);
+    }
+    let n = 0, kind = 'crate';
+    if (b.type === 'buildings'){ n = rng() < 0.55 ? 1 : 0; kind = 'dumpster'; }
+    else if (b.type === 'lot') n = randi(1,2);
+    else if (b.type === 'ruins') n = rng() < 0.7 ? 1 : 0;
+    for (let i=0;i<n && free.length;i++){
+      const [x,z] = free.splice(Math.floor(rng()*free.length),1)[0];
+      grid[I(x,z)] = T.OBSTACLE;
+      containers.push({ kind, x, z, rot:(x === b.x0 || x === b.x0+4) ? Math.PI/2 : 0 });
+    }
+  }
+  for (const c of cars) if (rng() < 0.55) containers.push({ kind:'trunk', x:c.x, z:c.z });
+  // Tiles reachable on foot from the start, so doors always face somewhere you can stand.
+  const reach = new Uint8Array(N*N), q = [I(2,2)]; reach[q[0]] = 1;
+  for (let h=0;h<q.length;h++){
+    const cx = q[h] % N, cz = (q[h]-cx)/N;
+    for (const [dx,dz] of D4){ const ni = I(cx+dx,cz+dz); if (!reach[ni] && walkable(grid[ni])){ reach[ni] = 1; q.push(ni); } }
+  }
+  const doorSpots = b => {
+    const out = [];
+    for (let z=b.z;z<b.z+b.d;z++) for (let x=b.x;x<b.x+b.w;x++) for (const [dx,dz] of D4) if (reach[I(x+dx,z+dz)]) out.push({ x, z, dx, dz });
+    return out;
+  };
+  const addDoor = (bi, lm) => {
+    const s = pick(doorSpots(buildings[bi]));
+    containers.push({ kind:'door', x:s.x, z:s.z, dx:s.dx, dz:s.dz, lm });
+    return s;
+  };
+  // Landmarks: 3-5 roomy intact buildings, spread out and away from the start.
+  const cands = [];
+  buildings.forEach((b,i) => { if (!b.ruined && b.w*b.d >= 2 && b.x + b.z > 12 && doorSpots(b).length) cands.push(i); });
+  const types = LM_TYPES.slice();
+  for (let i=types.length-1;i>0;i--){ const j = Math.floor(rng()*(i+1)); [types[i],types[j]] = [types[j],types[i]]; }
+  const want = randi(3,5);
+  while (landmarks.length < want && cands.length){
+    const bi = cands.splice(Math.floor(rng()*cands.length),1)[0], b = buildings[bi];
+    if (landmarks.some(l => Math.abs(l.cx - (b.x + b.w/2)) + Math.abs(l.cz - (b.z + b.d/2)) < 10)) continue;
+    const type = landmarks.length < types.length ? types[landmarks.length] : pick(LM_TYPES);
+    b.lm = type;
+    const s = addDoor(bi, type);
+    landmarks.push({ type, b:bi, door:containers.length-1, ox:s.x+s.dx, oz:s.z+s.dz, cx:b.x + b.w/2, cz:b.z + b.d/2 });
+  }
+  // Ordinary doors on some other buildings.
+  buildings.forEach((b,i) => { if (!b.ruined && !b.lm && doorSpots(b).length && rng() < 0.3) addDoor(i, null); });
+  return { containers, landmarks };
 }

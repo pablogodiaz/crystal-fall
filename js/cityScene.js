@@ -5,7 +5,8 @@ import { TILE, N } from './config.js';
 import { mr } from './utils.js';
 import { scene } from './renderer.js';
 import { SH, WIN_TEX, carMat } from './assets.js';
-import { state, world, zombies, dying, bullets, particles, pickups, decals } from './state.js';
+import { state, world, zombies, dying, bullets, particles, pickups, decals, drops, throwns, hazards } from './state.js';
+import { LOOT, LANDMARKS } from './items.js';
 import { disposeZombie } from './zombies.js';
 import { faded } from './fx.js';
 
@@ -89,6 +90,11 @@ export function buildCityScene(c){
       const ac = new THREE.Mesh(own(new THREE.BoxGeometry(Math.min(1.2,w*0.4),0.5,Math.min(0.9,d*0.4))), uniq[2]);
       ac.position.set(w*0.15, b.h/2 + 0.25, -d*0.1); ac.castShadow = true; mesh.add(ac);
     }
+    if (b.lm){
+      // Roof sign angled toward the camera.
+      const sign = new THREE.Mesh(own(new THREE.BoxGeometry(Math.max(2.4, Math.min(w, d)*0.9), 0.75, 0.2)), signMats(b.lm));
+      sign.position.set(0, b.h/2 + 0.5, 0); sign.rotation.y = Math.PI/4; sign.castShadow = true; mesh.add(sign);
+    }
     mesh.userData.mats = uniq;
     buildingMeshes.push(mesh); cityGroup.add(mesh);
   }
@@ -116,8 +122,66 @@ export function buildCityScene(c){
     const m = new THREE.Mesh(own(new THREE.CylinderGeometry(0.42,0.5,p.h,8)), SH.pillarMat);
     m.position.set((p.x+0.5)*TILE, p.h/2, (p.z+0.5)*TILE); m.castShadow = m.receiveShadow = true; cityGroup.add(m);
   }
+  buildContainers(c);
   world.crystal = buildCrystal(c.crystalTile, state.level);
   world.barricade = buildBarricade(c.exitZ);
+}
+
+// Landmark sign materials: name painted on the front face (+z), plain colour elsewhere.
+let signCache = {};
+function signMats(type){
+  if (signCache[type]) return signCache[type];
+  const L = LANDMARKS[type], cv = document.createElement('canvas'); cv.width = 256; cv.height = 64;
+  const g = cv.getContext('2d');
+  g.fillStyle = L.css; g.fillRect(0,0,256,64);
+  g.fillStyle = '#ffffff'; g.font = 'bold 30px Barlow, Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(L.name.toUpperCase(), 128, 34, 240);
+  const tex = own(new THREE.CanvasTexture(cv));
+  const side = own(new THREE.MeshStandardMaterial({ color:L.color, roughness:0.6 }));
+  const front = own(new THREE.MeshStandardMaterial({ map:tex, emissive:0xffffff, emissiveMap:tex, emissiveIntensity:0.35, roughness:0.6 }));
+  return signCache[type] = [side, side, side, side, front, side];
+}
+
+// Searchable containers. Adds runtime fields to each: px/pz/range (interaction point), time, noise,
+// name, searched, glint (floating marker), open() (visual once searched).
+function buildContainers(c){
+  const cityGroup = world.cityGroup;
+  for (const ct of c.containers){
+    const L = ct.lm ? LANDMARKS[ct.lm] : LOOT[ct.kind];
+    Object.assign(ct, { time:L.time, noise:L.noise, name:L.name, searched:false, open:() => {} });
+    const cx = (ct.x+0.5)*TILE, cz = (ct.z+0.5)*TILE;
+    let gx = cx, gz = cz, gy = 1.9;
+    if (ct.kind === 'door'){
+      const fx = cx + ct.dx*(TILE/2 - 0.12), fz = cz + ct.dz*(TILE/2 - 0.12);
+      ct.px = fx + ct.dx*0.8; ct.pz = fz + ct.dz*0.8; ct.range = 1.5;
+      const g = new THREE.Group(); g.position.set(fx,0,fz); g.rotation.y = Math.atan2(ct.dx, ct.dz);
+      const frame = new THREE.Mesh(SH.doorFrame, SH.frameMat); frame.position.y = 0.97;
+      const hinge = new THREE.Group(); hinge.position.set(-0.45,0,0.06);
+      const door = new THREE.Mesh(SH.doorGeo, SH.doorMat); door.position.set(0.45,0.88,0); door.castShadow = true; hinge.add(door);
+      g.add(frame, hinge);
+      if (ct.lm){ const sign = new THREE.Mesh(own(new THREE.BoxGeometry(1.9,0.45,0.1)), signMats(ct.lm)); sign.position.set(0,2.25,0.06); g.add(sign); }
+      cityGroup.add(g);
+      ct.open = () => { hinge.rotation.y = -1.35; };
+      gx = fx + ct.dx*0.35; gz = fz + ct.dz*0.35; gy = ct.lm ? 2.85 : 2.3;
+    } else {
+      ct.px = cx; ct.pz = cz; ct.range = 2.1;
+      if (ct.kind === 'dumpster'){
+        const g = new THREE.Group(); g.position.set(cx,0,cz); g.rotation.y = ct.rot;
+        const body = new THREE.Mesh(SH.dumpBody, SH.dumpMat); body.castShadow = body.receiveShadow = true;
+        const lid = new THREE.Mesh(SH.dumpLid, SH.dumpLidMat); lid.position.set(0,1.09,-0.53); lid.castShadow = true;
+        g.add(body, lid); cityGroup.add(g);
+        ct.open = () => { lid.rotation.x = -1.2; };
+      } else if (ct.kind === 'crate'){
+        const g = new THREE.Group(); g.position.set(cx,0,cz); g.rotation.y = mr(-0.3,0.3);
+        const body = new THREE.Mesh(SH.crateBody, SH.crateMat); body.castShadow = body.receiveShadow = true;
+        const lid = new THREE.Mesh(SH.crateLid, SH.crateLidMat); lid.position.y = 1.0; lid.castShadow = true;
+        g.add(body, lid); cityGroup.add(g);
+        ct.open = () => { lid.position.set(0.55,0.06,0.75); lid.rotation.set(0,0.6,0.1); };
+      }
+    }
+    const gl = new THREE.Mesh(SH.glintGeo, SH.glintMat); gl.position.set(gx, gy, gz); cityGroup.add(gl);
+    ct.glint = gl; ct.gy = gy;
+  }
 }
 
 function buildCrystal(tile, level){
@@ -182,11 +246,11 @@ export function buildExitMarker(){
 export function teardownCity(){
   if (world.cityGroup){ scene.remove(world.cityGroup); world.cityGroup = null; }
   for (const d of disposables) if (d && d.dispose) d.dispose();
-  disposables = []; world.buildingMeshes = []; faded.clear();
+  disposables = []; signCache = {}; world.buildingMeshes = []; faded.clear();
   for (const z of zombies) disposeZombie(z);
   for (const d of dying) disposeZombie(d.z);
   zombies.length = 0; dying.length = 0;
-  for (const arr of [bullets, particles, pickups]) { for (const o of arr) scene.remove(o.mesh || o.m || o.g); arr.length = 0; }
+  for (const arr of [bullets, particles, pickups, drops, throwns, hazards]) { for (const o of arr) scene.remove(o.mesh || o.m || o.g); arr.length = 0; }
   for (const d of decals) scene.remove(d); decals.length = 0;
-  world.crystal = null; world.barricade = null; world.exitMarker = null;
+  world.crystal = null; world.barricade = null; world.exitMarker = null; world.lure = null;
 }
