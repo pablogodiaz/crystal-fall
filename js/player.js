@@ -9,7 +9,6 @@ import { resolveCircle, reveal } from './grid.js';
 import { fire, drainHp, meleeStrike, MELEE_TIME, MELEE_HIT } from './combat.js';
 import { curWeapon, magSize } from './inventory.js';
 import { burst } from './fx.js';
-import { toast } from './hud.js';
 
 export const player = { pos:new THREE.Vector3(), vel:new THREE.Vector3(), radius:0.45, angle:0, walk:0 };
 (function buildPlayer(){
@@ -44,11 +43,12 @@ export const player = { pos:new THREE.Vector3(), vel:new THREE.Vector3(), radius
 // Base stats for a fresh run; upgrades modify these in place. Weapon stats live in WEAPONS;
 // dmgMul/fireMul/magMul/reloadMul/pellets/pierce are upgrade modifiers applied on top.
 export function resetPlayerStats(){
-  Object.assign(player, { hp:100, maxHp:100, speed:6, stamina:1, staminaDelay:0, reloadT:0, fireCd:0, meleeT:0, meleeCd:0, meleeHit:false,
-    dmgMul:1, fireMul:1, magMul:1, reloadMul:1, pellets:0, pierce:0, regen:0, hungerRate:1,
-    hunger:1, bleeding:false, throwSel:'molotov', aiming:false, bleedFx:0, starveWarn:false,
+  Object.assign(player, { hp:100, maxHp:100, speed:4.6, stamina:1, staminaDelay:0, staminaRate:1, winded:false, boost:0,
+    reloadT:0, fireCd:0, meleeT:0, meleeCd:0, meleeHit:false,
+    dmgMul:1, fireMul:1, magMul:1, reloadMul:1, pellets:0, pierce:0, regen:0,
+    bleeding:false, throwSel:'molotov', aiming:false, bleedFx:0,
     weapons:[{ id:'pistol', mag:12 }, null], cur:0, ammo:{ pistol:36, shotgun:0, smg:0, rifle:0 },
-    inv:[{ id:'bandage', n:1 }, { id:'food', n:1 }].concat(new Array(INV_SLOTS-2).fill(null)) });
+    inv:[{ id:'bandage', n:1 }, { id:'drink', n:1 }].concat(new Array(INV_SLOTS-2).fill(null)) });
 }
 // Barrel length follows the held weapon.
 export function refreshGun(){
@@ -79,7 +79,11 @@ resetPlayerStats();
 const raycaster = new THREE.Raycaster();
 const aimPlane = new THREE.Plane(new THREE.Vector3(0,1,0), -1.1);
 export const aimPoint = new THREE.Vector3();
-const HUNGER_DRAIN = 1/420;  // full to empty in about 7 minutes
+// Stamina: walking is slower than a runner, so sprinting is how you get away. Sprint drains
+// stamina (staminaRate upgrade, energy-drink boost cut it); it refills after a short pause,
+// faster standing still. Running dry leaves you winded: no sprint and a slower walk until
+// stamina is back to WINDED_OK.
+const SPRINT_MUL = 1.75, SPRINT_DRAIN = 0.28, REGEN = 0.24, REGEN_STILL = 1.7, REGEN_DELAY = 1, WINDED_OK = 0.4, WINDED_MUL = 0.8, BOOST_DRAIN = 0.4;
 
 export function updatePlayer(dt){
   // Screen-relative WASD mapped onto the isometric grid.
@@ -91,10 +95,18 @@ export function updatePlayer(dt){
   const l = Math.hypot(ix,iz), moving = l > 0;
   if (moving){ ix /= l; iz /= l; }
   let spd = player.speed;
-  const sprint = (keys.ShiftLeft || keys.ShiftRight) && moving && player.stamina > 0.02;
-  const starving = player.hunger <= 0;
-  if (sprint){ spd *= 1.55; player.stamina = Math.max(0, player.stamina - dt*0.4); player.staminaDelay = 0.8; }
-  else { player.staminaDelay -= dt; if (player.staminaDelay <= 0 && !starving) player.stamina = Math.min(1, player.stamina + dt*0.28); }
+  const sprint = (keys.ShiftLeft || keys.ShiftRight) && moving && !player.winded;
+  if (player.boost > 0) player.boost = Math.max(0, player.boost - dt);
+  if (sprint){
+    spd *= SPRINT_MUL; player.staminaDelay = REGEN_DELAY;
+    player.stamina = Math.max(0, player.stamina - dt*SPRINT_DRAIN*player.staminaRate*(player.boost > 0 ? BOOST_DRAIN : 1));
+    if (player.stamina <= 0) player.winded = true;
+  } else {
+    player.staminaDelay -= dt;
+    if (player.staminaDelay <= 0) player.stamina = Math.min(1, player.stamina + dt*REGEN*(moving ? 1 : REGEN_STILL));
+    if (player.winded && player.stamina >= WINDED_OK) player.winded = false;
+  }
+  if (player.winded) spd *= WINDED_MUL;
   const k = Math.min(1, dt*14);
   player.vel.x += (ix*spd - player.vel.x)*k; player.vel.z += (iz*spd - player.vel.z)*k;
   player.pos.x += player.vel.x*dt; player.pos.z += player.vel.z*dt;
@@ -126,17 +138,12 @@ export function updatePlayer(dt){
     poseMelee(player.meleeT > 0 ? k : 0);
   }
   if (mouse.down) fire();
-  // Survival: hunger drains (faster while sprinting); empty = no stamina regen and slow health loss.
-  player.hunger = Math.max(0, player.hunger - dt*HUNGER_DRAIN*player.hungerRate*(sprint ? 1.6 : 1));
-  if (player.hunger < 0.2 && !player.starveWarn){ player.starveWarn = true; toast('You’re getting hungry. Eat something', 'bad'); }
-  if (player.hunger >= 0.2) player.starveWarn = false;
-  if (player.regen > 0 && player.hp < player.maxHp && !starving) player.hp = Math.min(player.maxHp, player.hp + player.regen*1.2*dt);
+  if (player.regen > 0 && player.hp < player.maxHp) player.hp = Math.min(player.maxHp, player.hp + player.regen*1.2*dt);
   if (player.bleeding){
     player.bleedFx -= dt;
     if (player.bleedFx <= 0){ player.bleedFx = 0.35; burst(new THREE.Vector3(player.pos.x, 0.9, player.pos.z), 'blood', 1, 1); }
   }
-  const loss = (player.bleeding ? 1.1 : 0) + (starving ? 0.5 : 0);
-  if (loss > 0 && drainHp(loss*dt)) return;
+  if (player.bleeding && drainHp(1.1*dt)) return;
   const tx = Math.floor(player.pos.x/TILE), tz = Math.floor(player.pos.z/TILE), ti = tz*N+tx;
   if (ti !== world.lastTile){ world.lastTile = ti; reveal(tx, tz, 8); }
 }

@@ -40,8 +40,8 @@ export const ZMODS = {
   // getting within `trigger` of the player. dmgZombie scales with the city like pipe bombs.
   explosive: { chance:[0.06,0.02,0.15], radius:4, dmgZombie:10, dmgPlayer:30, trigger:0.8, fuse:0.45, chain:0.12,
                name:'Exploders', tip:'The orange ones blow up when they die or reach you. Shoot them in a crowd' },
-  // Riot gear: hits within frontArc rad of where it faces deal frontMul damage. guard = extra
-  // chance on police-station guards.
+  // Riot gear: hits within frontArc rad of where it faces deal frontMul damage and stop piercing
+  // bullets. guard = extra chance on police-station guards.
   armored:   { chance:[0.06,0.02,0.15], guard:0.3, frontArc:1.0, frontMul:0.3, kbMul:0.4, speedMul:0.9,
-               name:'Riot zombies', tip:'Shields soak shots from the front. Flank them, or use fire and bombs' }
+               name:'Riot zombies', tip:'Shields soak shots from the front and stop piercing rounds. Flank them, or use fire' }
 };

@@ -15,25 +15,25 @@ export const INV_SLOTS = 8;
 export const ITEMS = {
   bandage:  { name:'Bandage',     icon:'🩹', max:5,  desc:'Stops bleeding, +10 health' },
   medkit:   { name:'Medkit',      icon:'💉', max:3,  desc:'+50 health, stops bleeding' },
-  food:     { name:'Canned food', icon:'🥫', max:5,  desc:'Restores 35 food' },
+  drink:    { name:'Energy drink', icon:'🥤', max:4, desc:'Refills stamina; sprinting costs 60% less for 20 s' },
   scrap:    { name:'Scrap',       icon:'🔩', max:12, desc:'Crafting material (C)' },
   molotov:  { name:'Molotov',     icon:'🍾', max:3,  desc:'Throw at the cursor: sets the area on fire' },
-  pipebomb: { name:'Pipe bomb',   icon:'💣', max:3,  desc:'Throw at the cursor: beeps to lure the dead, then explodes' }
+  pipebomb: { name:'Pipe bomb',   icon:'💣', max:3,  desc:'Throw at the cursor: beeps to lure the dead, then a blast stuns them' }
 };
 // Thrown with G from wherever they sit in the pack; the mouse wheel / T picks which one.
 export const THROWABLES = ['molotov','pipebomb'];
 export const RECIPES = [
   { id:'molotov', scrap:3, desc:'Burns everything in a small area for 6 s.' },
-  { id:'pipebomb', scrap:4, desc:'Draws zombies to it for 3.5 s, then explodes.' }
+  { id:'pipebomb', scrap:4, desc:'Draws zombies to it for 3.5 s, then stuns everything nearby. No damage.' }
 ];
 
 // Searchable containers. time = seconds holding E; noise = alert radius while searching.
 // rolls = [min,max] draws from the weighted table; empty = chance of finding nothing.
 export const LOOT = {
-  trunk:    { name:'car trunk', time:1.5, noise:10, rolls:[1,2], empty:0.2,  table:[['ammo',4],['scrap',3],['food',1.5],['bandage',1.5],['molotov',0.3]] },
-  dumpster: { name:'dumpster',  time:1.5, noise:9,  rolls:[1,2], empty:0.25, table:[['food',4],['scrap',4],['ammo',1.5],['bandage',1]] },
+  trunk:    { name:'car trunk', time:1.5, noise:10, rolls:[1,2], empty:0.2,  table:[['ammo',4],['scrap',3],['drink',1],['bandage',1.5],['molotov',0.3]] },
+  dumpster: { name:'dumpster',  time:1.5, noise:9,  rolls:[1,2], empty:0.25, table:[['scrap',4],['drink',2],['ammo',1.5],['bandage',1]] },
   crate:    { name:'crate',     time:1.5, noise:8,  rolls:[2,3], empty:0,    table:[['ammo',5],['scrap',4],['weapon',0.5],['molotov',0.4],['pipebomb',0.4]] },
-  door:     { name:'house',     time:1.5, noise:8,  rolls:[1,2], empty:0.2,  table:[['food',3],['bandage',2],['ammo',3],['scrap',1.5],['medkit',0.4]] }
+  door:     { name:'house',     time:1.5, noise:8,  rolls:[1,2], empty:0.2,  table:[['drink',1.5],['bandage',2],['ammo',3],['scrap',1.5],['medkit',0.4]] }
 };
 // Landmark buildings (3-5 per city), searched through their front door. Loot is in loot.js.
 export const LANDMARKS = {

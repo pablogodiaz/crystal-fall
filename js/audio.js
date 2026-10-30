@@ -50,6 +50,7 @@ export const sfx = {
   throw: () => sNoise(0.2, 1200, 0.15),
   ignite: () => { sNoise(0.9, 900, 0.45); sTone(200, 80, 0.5, 'sawtooth', 0.06); },
   beep: () => sTone(1500, 1500, 0.06, 'square', 0.07),
+  dig: () => { sNoise(0.6, 260, 0.3); sTone(70, 45, 0.5, 'sine', 0.12); },
   boom: () => { sNoise(1.4, 600, 0.9); sTone(110, 30, 1.0, 'sine', 0.5); },
   // Returns a function that cuts the rising whine short (screamer killed mid wind-up).
   windup: () => { const o = sTone(260, 1500, 1.5, 'sawtooth', 0.07); return () => { try { if (o) o.stop(); } catch(e){} }; },

@@ -29,10 +29,16 @@ export const SH = {};
     dust: new THREE.MeshBasicMaterial({ color:0x8a8780 }),
     heal: new THREE.MeshBasicMaterial({ color:0x7dffa8 }),
     fire: new THREE.MeshBasicMaterial({ color:0xff8a2a }),
-    acid: new THREE.MeshBasicMaterial({ color:0xa6ff3a })
+    acid: new THREE.MeshBasicMaterial({ color:0xa6ff3a }),
+    dirt: new THREE.MeshBasicMaterial({ color:0x5a4630 })
   };
   SH.decalGeo = new THREE.CircleGeometry(0.55, 10);
   SH.decalMat = new THREE.MeshBasicMaterial({ color:0x3d0707, transparent:true, opacity:0.75, depthWrite:false });
+  SH.holeMat = new THREE.MeshBasicMaterial({ color:0x241b12, transparent:true, opacity:0.85, depthWrite:false });   // dug-up dirt where a zombie rose
+  SH.scorchMat = new THREE.MeshBasicMaterial({ color:0x121110, transparent:true, opacity:0.6, depthWrite:false });  // blast mark
+  // Blast-radius rings (explosive zombie warning, shockwaves): unit radius, scaled to the blast.
+  SH.blastRingGeo = new THREE.RingGeometry(0.93,1,48);
+  SH.blastFillGeo = new THREE.CircleGeometry(1,48);
   SH.zBody = new THREE.BoxGeometry(0.7,0.85,0.4);
   SH.zHead = new THREE.BoxGeometry(0.44,0.44,0.44);
   SH.zArm = new THREE.BoxGeometry(0.16,0.16,0.72);
