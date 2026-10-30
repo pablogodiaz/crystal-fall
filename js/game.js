@@ -1,18 +1,20 @@
 // ---------- Game flow ----------
 // Run/city lifecycle (explore -> horde -> open -> upgrade), spawning, per-frame update.
 import * as THREE from 'three';
-import { TILE, N, T } from './config.js';
+import { TILE, N, T, walkable } from './config.js';
 import { $, mr, fmtTime } from './utils.js';
-import { camFocus, muzzleLight } from './renderer.js';
+import { camFocus, muzzleLight, fxLight } from './renderer.js';
 import { state, world, zombies, mouse } from './state.js';
 import { generateCity } from './cityGen.js';
 import { buildCityScene, buildExitMarker, teardownCity } from './cityScene.js';
 import { updateFlow, reveal } from './grid.js';
-import { player, resetPlayerStats, updatePlayer } from './player.js';
+import { player, resetPlayerStats, refreshGun, updatePlayer } from './player.js';
 import { spawnZombieAt, findSpawnTile, updateZombies, updateDying } from './zombies.js';
 import { updateBullets } from './combat.js';
 import { burst, updateParticles, updatePickups } from './fx.js';
-import { showScreen, banner } from './hud.js';
+import { showScreen, banner, renderCraft } from './hud.js';
+import { interact, updateInteract, updateDrops, updateLandmarks, animateContainers } from './loot.js';
+import { updateThrowables } from './throwables.js';
 import { UPGRADES } from './upgrades.js';
 import { initAudio, sfx } from './audio.js';
 
@@ -27,14 +29,24 @@ export function startCity(level, seed){
   camFocus.copy(player.pos);
   Object.assign(state, { phase:'explore', crystalFound:false, hordeToSpawn:0, hordeAlive:0, cityKills:0, cityTime:0, spawnTimer:3, flowTimer:0 });
   updateFlow();
+  interact.target = null; interact.p = 0; fxLight.intensity = 0;
   const n = 10 + 4*level;
   for (let i=0;i<n;i++){ const s = findSpawnTile(24, 200); if (s) spawnZombieAt(s.x, s.z, false, false); }
+  // Police stations are guarded by a pack that stays near the door.
+  for (const l of city.landmarks){
+    if (l.type !== 'police') continue;
+    for (let i=0, tries=0, g=3+level; i<g && tries<80; tries++){
+      const tx = l.ox + Math.round(mr(-3,3)), tz = l.oz + Math.round(mr(-3,3));
+      if (tx < 1 || tz < 1 || tx >= N-1 || tz >= N-1 || !walkable(city.grid[tz*N+tx])) continue;
+      spawnZombieAt((tx+0.5)*TILE + mr(-0.4,0.4), (tz+0.5)*TILE + mr(-0.4,0.4), false, false, true); i++;
+    }
+  }
   $('cityName').textContent = `City ${level}: ${city.name}`;
   if (state.mode === 'play') banner(`City ${level}`, city.name);
 }
 export function newRun(){
   initAudio();
-  resetPlayerStats();
+  resetPlayerStats(); refreshGun();
   state.kills = 0; state.runTime = 0;
   state.mode = 'play';
   showScreen(null);
@@ -88,7 +100,7 @@ function completeCity(){
     const b = document.createElement('button'); b.className = 'upg';
     b.innerHTML = `<div class="ic">${u.icon}</div><b>${u.name}</b><span>${u.desc}</span>`;
     b.addEventListener('click', () => {
-      u.apply(player); player.mag = player.magSize; player.reloadT = 0;
+      u.apply(player); player.reloadT = 0;
       state.mode = 'play'; showScreen(null);
       startCity(state.level + 1, newSeed());
     });
@@ -114,6 +126,10 @@ export function die(){
   $('deathStats').innerHTML = statHTML([[`City ${state.level}`, 'Reached'], [state.kills, 'Total kills'], [fmtTime(state.runTime), 'Survived']]);
   $('deathBest').textContent = isBest ? 'New best run.' : bestLine(best);
   setTimeout(() => { if (state.mode === 'dead'){ showScreen('deathScreen'); $('retryBtn').focus(); } }, 900);
+}
+export function toggleCraft(){
+  if (state.mode === 'play'){ state.mode = 'craft'; mouse.down = false; renderCraft(); showScreen('craftScreen'); }
+  else if (state.mode === 'craft'){ state.mode = 'play'; showScreen(null); }
 }
 export function togglePause(){
   if (state.mode === 'play'){ state.mode = 'paused'; mouse.down = false; showScreen('pauseScreen'); $('resumeBtn').focus(); }
@@ -153,7 +169,12 @@ export function update(dt){
   updateZombies(dt);
   if (state.mode !== 'play') return;
   updateBullets(dt);
+  updateThrowables(dt);
+  if (state.mode !== 'play') return;
   updatePickups(dt);
+  updateDrops(dt);
+  updateInteract(dt);
+  updateLandmarks();
   if (state.phase === 'open' && Math.floor(player.pos.x/TILE) >= N-1) completeCity();
 }
 // Cosmetic animation; runs every frame in every mode.
@@ -174,6 +195,7 @@ export function animateWorld(dt, t){
     exitMarker.chev.forEach((c,i) => { c.position.y = 0.35 + Math.max(0, Math.sin(t*5 - i*0.8))*0.25; });
   }
   muzzleLight.intensity = Math.max(0, muzzleLight.intensity - dt*30);
+  animateContainers(t);
   updateParticles(dt);
   updateDying(dt);
 }

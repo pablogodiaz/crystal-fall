@@ -3,9 +3,13 @@ import * as THREE from 'three';
 import { TILE, N } from './config.js';
 import { scene, camera } from './renderer.js';
 import { SH } from './assets.js';
+import { WEAPONS, INV_SLOTS } from './items.js';
 import { world, keys, mouse, mouseNDC } from './state.js';
 import { resolveCircle, reveal } from './grid.js';
-import { fire } from './combat.js';
+import { fire, drainHp } from './combat.js';
+import { curWeapon, magSize } from './inventory.js';
+import { burst } from './fx.js';
+import { toast } from './hud.js';
 
 export const player = { pos:new THREE.Vector3(), vel:new THREE.Vector3(), radius:0.45, angle:0, walk:0 };
 (function buildPlayer(){
@@ -30,19 +34,30 @@ export const player = { pos:new THREE.Vector3(), vel:new THREE.Vector3(), radius
   const ring = new THREE.Mesh(new THREE.RingGeometry(0.55,0.68,28), new THREE.MeshBasicMaterial({ color:0xf2e6c8, transparent:true, opacity:0.45, depthWrite:false }));
   ring.rotation.x = -Math.PI/2; ring.position.y = 0.1; g.add(ring);
   const lamp = new THREE.PointLight(0xffe2b0, 0.55, 10, 2); lamp.position.y = 3; g.add(lamp);
-  player.g = g; player.inner = inner; player.legs = legs;
+  player.g = g; player.inner = inner; player.legs = legs; player.gun = gun;
   scene.add(g);
 })();
-// Base stats for a fresh run; upgrades modify these in place.
+// Base stats for a fresh run; upgrades modify these in place. Weapon stats live in WEAPONS;
+// dmgMul/fireMul/magMul/reloadMul/pellets/pierce are upgrade modifiers applied on top.
 export function resetPlayerStats(){
-  Object.assign(player, { hp:100, maxHp:100, speed:6, stamina:1, staminaDelay:0, fireRate:0.24, magSize:12, mag:12, reloadTime:1.3, reloadT:0, damage:1, pellets:1, pierce:0, regen:0, fireCd:0 });
+  Object.assign(player, { hp:100, maxHp:100, speed:6, stamina:1, staminaDelay:0, reloadT:0, fireCd:0,
+    dmgMul:1, fireMul:1, magMul:1, reloadMul:1, pellets:0, pierce:0, regen:0, hungerRate:1,
+    hunger:1, bleeding:false, bleedFx:0, starveWarn:false,
+    weapons:[{ id:'pistol', mag:12 }, null], cur:0, ammo:{ pistol:36, shotgun:0, smg:0, rifle:0 },
+    inv:[{ id:'bandage', n:1 }, { id:'food', n:1 }].concat(new Array(INV_SLOTS-2).fill(null)) });
+}
+// Barrel length follows the held weapon.
+export function refreshGun(){
+  const k = WEAPONS[player.weapons[player.cur].id].gun;
+  player.gun.scale.z = k; player.gun.position.z = 0.35 + 0.275*k;
 }
 resetPlayerStats();
 
 // Mouse aim: ray from the camera onto a horizontal plane at gun height.
 const raycaster = new THREE.Raycaster();
 const aimPlane = new THREE.Plane(new THREE.Vector3(0,1,0), -1.1);
-const aimPoint = new THREE.Vector3();
+export const aimPoint = new THREE.Vector3();
+const HUNGER_DRAIN = 1/420;  // full to empty in about 7 minutes
 
 export function updatePlayer(dt){
   // Screen-relative WASD mapped onto the isometric grid.
@@ -55,8 +70,9 @@ export function updatePlayer(dt){
   if (moving){ ix /= l; iz /= l; }
   let spd = player.speed;
   const sprint = (keys.ShiftLeft || keys.ShiftRight) && moving && player.stamina > 0.02;
+  const starving = player.hunger <= 0;
   if (sprint){ spd *= 1.55; player.stamina = Math.max(0, player.stamina - dt*0.4); player.staminaDelay = 0.8; }
-  else { player.staminaDelay -= dt; if (player.staminaDelay <= 0) player.stamina = Math.min(1, player.stamina + dt*0.28); }
+  else { player.staminaDelay -= dt; if (player.staminaDelay <= 0 && !starving) player.stamina = Math.min(1, player.stamina + dt*0.28); }
   const k = Math.min(1, dt*14);
   player.vel.x += (ix*spd - player.vel.x)*k; player.vel.z += (iz*spd - player.vel.z)*k;
   player.pos.x += player.vel.x*dt; player.pos.z += player.vel.z*dt;
@@ -73,10 +89,26 @@ export function updatePlayer(dt){
   const sw = Math.sin(player.walk)*0.6*Math.min(1, v/2);
   player.legs[0].rotation.x = sw; player.legs[1].rotation.x = -sw;
   player.inner.position.y = Math.abs(Math.sin(player.walk))*0.05*Math.min(1, v/2);
-  if (player.reloadT > 0){ player.reloadT -= dt; if (player.reloadT <= 0){ player.reloadT = 0; player.mag = player.magSize; } }
+  if (player.reloadT > 0){
+    player.reloadT -= dt;
+    if (player.reloadT <= 0){
+      const w = curWeapon(), k = Math.min(magSize(w) - w.mag, player.ammo[w.id]);
+      player.reloadT = 0; w.mag += k; player.ammo[w.id] -= k;
+    }
+  }
   player.fireCd -= dt;
   if (mouse.down) fire();
-  if (player.regen > 0 && player.hp < player.maxHp) player.hp = Math.min(player.maxHp, player.hp + player.regen*1.2*dt);
+  // Survival: hunger drains (faster while sprinting); empty = no stamina regen and slow health loss.
+  player.hunger = Math.max(0, player.hunger - dt*HUNGER_DRAIN*player.hungerRate*(sprint ? 1.6 : 1));
+  if (player.hunger < 0.2 && !player.starveWarn){ player.starveWarn = true; toast('You’re getting hungry. Eat something', 'bad'); }
+  if (player.hunger >= 0.2) player.starveWarn = false;
+  if (player.regen > 0 && player.hp < player.maxHp && !starving) player.hp = Math.min(player.maxHp, player.hp + player.regen*1.2*dt);
+  if (player.bleeding){
+    player.bleedFx -= dt;
+    if (player.bleedFx <= 0){ player.bleedFx = 0.35; burst(new THREE.Vector3(player.pos.x, 0.9, player.pos.z), 'blood', 1, 1); }
+  }
+  const loss = (player.bleeding ? 1.1 : 0) + (starving ? 0.5 : 0);
+  if (loss > 0 && drainHp(loss*dt)) return;
   const tx = Math.floor(player.pos.x/TILE), tz = Math.floor(player.pos.z/TILE), ti = tz*N+tx;
   if (ti !== world.lastTile){ world.lastTile = ti; reveal(tx, tz, 8); }
 }

@@ -4,15 +4,22 @@ import { renderer } from './renderer.js';
 import { state, keys, mouse, mouseNDC } from './state.js';
 import { tryReload } from './combat.js';
 import { toggleMute } from './audio.js';
-import { newRun, togglePause } from './game.js';
+import { newRun, togglePause, toggleCraft } from './game.js';
+import { swapWeapon, useSlot } from './inventory.js';
+import { craftFromKey } from './hud.js';
 
 export function initInput(){
   addEventListener('keydown', e => {
     keys[e.code] = true;
-    if (e.code === 'KeyR') tryReload();
-    if (e.code === 'Escape' || e.code === 'KeyP') togglePause();
-    if (e.code === 'KeyM') toggleMute();
     if (state.mode === 'play' && ['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
+    if (e.repeat) return;
+    if (e.code === 'KeyR') tryReload();
+    if (e.code === 'KeyQ') swapWeapon();
+    if (e.code === 'KeyC') toggleCraft();
+    const digit = /^Digit([1-8])$/.exec(e.code);
+    if (digit){ if (state.mode === 'craft') craftFromKey(+digit[1] - 1); else useSlot(+digit[1] - 1); }
+    if (e.code === 'Escape' || e.code === 'KeyP'){ if (state.mode === 'craft') toggleCraft(); else togglePause(); }
+    if (e.code === 'KeyM') toggleMute();
   });
   addEventListener('keyup', e => { keys[e.code] = false; });
   const cv = renderer.domElement;
@@ -25,4 +32,5 @@ export function initInput(){
   $('startBtn').addEventListener('click', newRun);
   $('retryBtn').addEventListener('click', newRun);
   $('resumeBtn').addEventListener('click', togglePause);
+  $('craftClose').addEventListener('click', toggleCraft);
 }

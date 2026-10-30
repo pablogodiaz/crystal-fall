@@ -10,11 +10,14 @@ export const state = { mode:'menu', level:1, phase:'explore', crystalFound:false
 // Per-city references, replaced by startCity() / teardownCity().
 export const world = {
   city:null, cityGroup:null, buildingMeshes:[], crystal:null, barricade:null, exitMarker:null,
-  explored:new Uint8Array(N*N), mmDirty:true, lastTile:-1
+  explored:new Uint8Array(N*N), mmDirty:true, lastTile:-1,
+  lure:null  // active pipe bomb that alerted zombies walk toward
 };
 
 // Live entity lists (mutated in place, never reassigned).
 export const zombies = [], dying = [], bullets = [], particles = [], pickups = [], decals = [];
+// Ground loot, thrown molotovs/pipe bombs in flight, and landed fires/bombs.
+export const drops = [], throwns = [], hazards = [];
 
 // Raw input state, written by input.js.
 export const keys = {};

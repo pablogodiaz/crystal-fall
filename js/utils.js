@@ -9,6 +9,8 @@ export const rand = (a,b) => a + rng()*(b-a);
 export const randi = (a,b) => Math.floor(rand(a,b+1));
 export const pick = arr => arr[Math.floor(rng()*arr.length)];
 export const mr = (a,b) => a + Math.random()*(b-a);
+export const mri = (a,b) => Math.floor(mr(a,b+1));
+export const mpick = arr => arr[Math.floor(Math.random()*arr.length)];
 
 export const clamp = (v,a,b) => v < a ? a : v > b ? b : v;
 export function lerpAngle(a,b,t){ const d = ((b-a+Math.PI)%(Math.PI*2)+Math.PI*2)%(Math.PI*2)-Math.PI; return a + d*t; }

@@ -9,12 +9,13 @@ import { distField, isBlockedTile, resolveCircle } from './grid.js';
 import { player } from './player.js';
 import { hurtPlayer } from './combat.js';
 import { burst, addDecal, spawnPickup } from './fx.js';
+import { dropZombieAmmo } from './loot.js';
 import { sfx } from './audio.js';
 
 const ZTYPES = {
-  walker: { hp:3, speed:[2.0,2.8], r:0.42, dmg:10, scale:1, skin:0x7d9468 },
-  runner: { hp:2, speed:[4.3,5.1], r:0.38, dmg:8, scale:0.92, skin:0xa3a777 },
-  brute:  { hp:12, speed:[1.6,1.9], r:0.7, dmg:22, scale:1.5, skin:0x5e7052 }
+  walker: { hp:3, speed:[2.0,2.8], r:0.42, dmg:10, bleed:0.25, scale:1, skin:0x7d9468 },
+  runner: { hp:2, speed:[4.3,5.1], r:0.38, dmg:8, bleed:0.3, scale:0.92, skin:0xa3a777 },
+  brute:  { hp:12, speed:[1.6,1.9], r:0.7, dmg:22, bleed:0.5, scale:1.5, skin:0x5e7052 }
 };
 const SHIRTS = [0x6b4a3a,0x4a5a6b,0x5a5a4a,0x7a3a3a,0x3a4a3a,0x6a6a72,0x8a7a5a];
 function createZombieMesh(type){
@@ -33,7 +34,8 @@ function createZombieMesh(type){
   g.scale.setScalar(S.scale);
   return { g, b, mats:[bodyMat, skinMat], legs:[l1,l2], arms:[a1,a2] };
 }
-export function spawnZombieAt(x,z,horde,alert){
+// guard = stays near its spawn point (police station) and never despawns.
+export function spawnZombieAt(x,z,horde,alert,guard){
   const lv = state.level, r = Math.random();
   const bruteC = lv >= 2 ? Math.min(0.2, 0.05 + 0.04*(lv-2)) : (horde ? 0.05 : 0);
   const runC = Math.min(0.38, 0.1 + 0.07*(lv-1));
@@ -43,8 +45,8 @@ export function spawnZombieAt(x,z,horde,alert){
   scene.add(m.g);
   const hp = S.hp * (1 + 0.3*(lv-1));
   const zz = { type, g:m.g, b:m.b, mats:m.mats, legs:m.legs, arms:m.arms, pos:m.g.position, vel:new THREE.Vector3(),
-    hp, speed:mr(S.speed[0],S.speed[1])*(1+0.04*(lv-1)), r:S.r, dmg:S.dmg, atkCd:0, flash:0,
-    horde, alert:!!alert || horde, wanderT:0, wx:0, wz:0, phase:Math.random()*6, groan:mr(3,10) };
+    hp, speed:mr(S.speed[0],S.speed[1])*(1+0.04*(lv-1)), r:S.r, dmg:S.dmg, bleed:S.bleed, atkCd:0, flash:0,
+    horde, guard:!!guard, hx:x, hz:z, alert:!!alert || horde, wanderT:0, wx:0, wz:0, phase:Math.random()*6, groan:mr(3,10) };
   zombies.push(zz); if (horde) state.hordeAlive++;
   return zz;
 }
@@ -62,13 +64,17 @@ export function findSpawnTile(minD, maxD){
   return null;
 }
 export function disposeZombie(z){ scene.remove(z.g); for (const m of z.mats) m.dispose(); }
-export function damageZombie(z, dmg, dx, dz){
+// Alerts every unalerted zombie within r of (x,z).
+export function makeNoise(x, z, r){
+  for (const o of zombies) if (!o.alert && Math.hypot(o.pos.x-x, o.pos.z-z) < r) o.alert = true;
+}
+// quiet = damage over time (fire): no blood burst or hit sound.
+export function damageZombie(z, dmg, dx, dz, quiet){
   z.hp -= dmg; z.alert = true; z.flash = 0.08;
-  for (const m of z.mats) m.emissive.setHex(0x663333);
+  for (const m of z.mats) m.emissive.setHex(quiet ? 0x804010 : 0x663333);
   const kb = z.type === 'brute' ? 1.2 : 3.5;
   z.vel.x += dx*kb; z.vel.z += dz*kb;
-  burst(new THREE.Vector3(z.pos.x, 1.2, z.pos.z), 'blood', 4, 3);
-  sfx.hit();
+  if (!quiet){ burst(new THREE.Vector3(z.pos.x, 1.2, z.pos.z), 'blood', 4, 3); sfx.hit(); }
   if (z.hp <= 0) killZombie(z);
 }
 function killZombie(z){
@@ -79,18 +85,24 @@ function killZombie(z){
   burst(new THREE.Vector3(z.pos.x, 1, z.pos.z), 'blood', 10, 4);
   for (const m of z.mats) m.emissive.setHex(0);
   dying.push({ z, t:0 });
-  const chance = 0.08 + (player.hp < player.maxHp*0.4 ? 0.07 : 0) + (z.type === 'brute' ? 0.25 : 0);
+  // Health drops are rare on purpose: most healing comes from searching the city.
+  const chance = 0.025 + (player.hp < player.maxHp*0.4 ? 0.03 : 0) + (z.type === 'brute' ? 0.1 : 0);
   if (Math.random() < chance) spawnPickup(z.pos.x, z.pos.z);
+  else if (Math.random() < 0.07) dropZombieAmmo(z.pos.x, z.pos.z);
 }
 export function updateZombies(dt){
-  const p = player.pos;
+  const p = player.pos, lure = world.lure;
   for (let i=zombies.length-1;i>=0;i--){
     const z = zombies[i];
     const dx = p.x - z.pos.x, dz = p.z - z.pos.z, dist = Math.hypot(dx,dz) || 0.0001;
     if (!z.alert && dist < 15) z.alert = true;
-    if (!z.alert && !z.horde && dist > 62){ disposeZombie(z); zombies.splice(i,1); continue; }
+    if (!z.alert && !z.horde && !z.guard && dist > 62){ disposeZombie(z); zombies.splice(i,1); continue; }
     let desX = 0, desZ = 0, spd = z.speed;
-    if (z.alert){
+    const lx = lure ? lure.x - z.pos.x : 0, lz = lure ? lure.z - z.pos.z : 0, ld = lure ? Math.hypot(lx,lz) : 1e9;
+    if (z.alert && ld < 32 && dist > 3.5){
+      // A beeping pipe bomb pulls alerted zombies off the player.
+      if (ld > 0.9){ desX = lx/ld; desZ = lz/ld; }
+    } else if (z.alert){
       if (dist < 4.5){ desX = dx/dist; desZ = dz/dist; }
       else {
         // Step toward the neighbouring tile with the lowest flow-field distance.
@@ -110,7 +122,9 @@ export function updateZombies(dt){
       z.wanderT -= dt;
       if (z.wanderT <= 0){
         const a = Math.random()*Math.PI*2;
-        if (Math.random() < 0.35){ z.wx = 0; z.wz = 0; } else { z.wx = Math.sin(a); z.wz = Math.cos(a); }
+        const hx = z.hx - z.pos.x, hz = z.hz - z.pos.z, hd = Math.hypot(hx,hz);
+        if (z.guard && hd > 6){ z.wx = hx/hd; z.wz = hz/hd; }
+        else if (Math.random() < 0.35){ z.wx = 0; z.wz = 0; } else { z.wx = Math.sin(a); z.wz = Math.cos(a); }
         z.wanderT = mr(2,4);
       }
       desX = z.wx; desZ = z.wz; spd *= 0.3;

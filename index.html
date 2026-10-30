@@ -17,7 +17,9 @@
   <div id="topLeft" class="panel">
     <div id="cityName" class="display">City 1</div>
     <div class="bar"><div class="fill hp" id="hpFill"></div><span id="hpText">100</span></div>
-    <div class="bar thin"><div class="fill st" id="stFill"></div></div>
+    <div class="meter"><small>Stamina</small><div class="bar thin"><div class="fill st" id="stFill"></div></div></div>
+    <div class="meter"><small>Food</small><div class="bar thin"><div class="fill hu" id="huFill"></div></div></div>
+    <div id="status"></div>
     <div class="stats"><span id="killText">0 kills</span><span id="timeText">0:00</span></div>
   </div>
   <div id="objective" class="panel">
@@ -26,8 +28,18 @@
     <div id="crystalBar" class="bar thin hidden"><div class="fill cr" id="crFill"></div></div>
   </div>
   <div id="minimapWrap"><canvas id="minimap" width="184" height="184"></canvas></div>
-  <div id="ammo" class="panel"><span id="ammoText" class="display">12</span><small id="ammoSub">/ 12</small></div>
-  <div id="hint">WASD to move, mouse to aim, click to shoot. Shift sprints, R reloads, Esc pauses, M mutes.</div>
+  <div id="ammo" class="panel">
+    <div id="wpnName">Pistol</div>
+    <div class="ammoRow"><span id="ammoText" class="display">12</span><small id="ammoSub">/ 36</small></div>
+    <div id="wpnAlt"></div>
+  </div>
+  <div id="toasts" aria-live="polite"></div>
+  <div id="inventory"></div>
+  <div id="interact" class="hidden">
+    <svg viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="18" class="track"/><circle cx="22" cy="22" r="18" class="prog" id="interactRing"/></svg>
+    <div class="label"><kbd>E</kbd><span id="interactLabel"></span></div>
+  </div>
+  <div id="hint">Hold E to search. 1–8 use items, right-click drops. Q swaps guns, C crafts.</div>
 </div>
 
 <div id="banner"><div id="bannerTitle" class="display"></div><div id="bannerSub"></div></div>
@@ -35,12 +47,16 @@
 <div class="screen" id="menuScreen">
   <div class="card">
     <h1 class="title display">Crystal Fall</h1>
-    <p class="lead">Every quarantined city hides a Crystal. Find it, shatter it, survive the horde it summons, and take the road to the next city. One life per run.</p>
+    <p class="lead">Every quarantined city hides a Crystal. Find it, shatter it, survive the horde it summons, and take the road to the next city. Scavenge for ammo, food and bandages on the way. One life per run.</p>
     <div class="controls">
       <kbd>W A S D</kbd><span>Move</span>
       <kbd>Mouse</kbd><span>Aim, hold click to shoot</span>
       <kbd>Shift</kbd><span>Sprint (uses stamina)</span>
-      <kbd>R</kbd><span>Reload</span>
+      <kbd>R</kbd><span>Reload (ammo is limited, scavenge for more)</span>
+      <kbd>Hold E</kbd><span>Search cars, dumpsters, crates and doors (it’s noisy)</span>
+      <kbd>Q</kbd><span>Swap between your two guns</span>
+      <kbd>1 – 8</kbd><span>Use an item (right-click a slot to drop it)</span>
+      <kbd>C</kbd><span>Craft molotovs and pipe bombs from scrap</span>
       <kbd>Esc</kbd><span>Pause</span>
     </div>
     <button class="btn" id="startBtn">Start run</button>
@@ -53,6 +69,15 @@
     <h2 class="title display" style="font-size:64px">Paused</h2>
     <p class="lead">Gunfire draws the dead toward you. Sometimes the quiet route is the smart one.</p>
     <div class="row"><button class="btn" id="resumeBtn">Resume</button></div>
+  </div>
+</div>
+
+<div class="screen hidden" id="craftScreen">
+  <div class="card">
+    <h2 class="title display" style="font-size:64px">Workbench</h2>
+    <p class="lead" style="margin-bottom:0">Turn scrap into something that keeps you alive. You have <b id="scrapCount">0</b> scrap. Throwables go to the cursor.</p>
+    <div class="cards two" id="craftCards"></div>
+    <div class="row"><button class="btn" id="craftClose">Back to the street</button></div>
   </div>
 </div>
 

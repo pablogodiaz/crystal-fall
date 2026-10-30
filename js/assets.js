@@ -27,7 +27,8 @@ export const SH = {};
     spark: new THREE.MeshBasicMaterial({ color:0xffd27a }),
     crystal: new THREE.MeshBasicMaterial({ color:0xc4a1ff }),
     dust: new THREE.MeshBasicMaterial({ color:0x8a8780 }),
-    heal: new THREE.MeshBasicMaterial({ color:0x7dffa8 })
+    heal: new THREE.MeshBasicMaterial({ color:0x7dffa8 }),
+    fire: new THREE.MeshBasicMaterial({ color:0xff8a2a })
   };
   SH.decalGeo = new THREE.CircleGeometry(0.55, 10);
   SH.decalMat = new THREE.MeshBasicMaterial({ color:0x3d0707, transparent:true, opacity:0.75, depthWrite:false });
@@ -52,5 +53,38 @@ export const SH = {};
   SH.crossMat = new THREE.MeshStandardMaterial({ color:0xe23b3b, emissive:0x8a1010, roughness:0.5 });
   SH.ringGeo = new THREE.RingGeometry(0.42,0.6,20);
   SH.healGlow = new THREE.MeshBasicMaterial({ color:0x7dffa8, transparent:true, opacity:0.35, depthWrite:false, side:THREE.DoubleSide });
+  // Containers
+  SH.dumpBody = new THREE.BoxGeometry(1.7,1.0,1.0); SH.dumpBody.translate(0,0.55,0);
+  SH.dumpLid = new THREE.BoxGeometry(1.76,0.08,1.06); SH.dumpLid.translate(0,0,0.53);
+  SH.dumpMat = new THREE.MeshStandardMaterial({ color:0x2f5a3c, roughness:0.8, metalness:0.3 });
+  SH.dumpLidMat = new THREE.MeshStandardMaterial({ color:0x1f3a28, roughness:0.8, metalness:0.3 });
+  SH.crateBody = new THREE.BoxGeometry(1.1,0.95,1.1); SH.crateBody.translate(0,0.48,0);
+  SH.crateLid = new THREE.BoxGeometry(1.16,0.1,1.16);
+  SH.crateMat = new THREE.MeshStandardMaterial({ color:0x8a6a3e, roughness:1 });
+  SH.crateLidMat = new THREE.MeshStandardMaterial({ color:0x6b5130, roughness:1 });
+  SH.doorFrame = new THREE.BoxGeometry(1.1,1.95,0.06);
+  SH.doorGeo = new THREE.BoxGeometry(0.9,1.75,0.08);
+  SH.frameMat = new THREE.MeshStandardMaterial({ color:0x1d1f23, roughness:1 });
+  SH.doorMat = new THREE.MeshStandardMaterial({ color:0x5a3d2a, roughness:0.9 });
+  SH.glintGeo = new THREE.OctahedronGeometry(0.17,0);
+  SH.glintMat = new THREE.MeshBasicMaterial({ color:0xffe08a, transparent:true, opacity:0.85 });
+  // Ground loot
+  SH.dropGeo = new THREE.BoxGeometry(0.5,0.32,0.4);
+  SH.dropGunGeo = new THREE.BoxGeometry(0.22,0.18,1.0);
+  SH.dropMats = {
+    item: new THREE.MeshStandardMaterial({ color:0xd9c9a3, roughness:0.8 }),
+    ammo: new THREE.MeshStandardMaterial({ color:0x5f6b3a, roughness:0.7, metalness:0.3 }),
+    weapon: new THREE.MeshStandardMaterial({ color:0x25282d, roughness:0.5, metalness:0.5 })
+  };
+  SH.dropGlow = new THREE.MeshBasicMaterial({ color:0xffe08a, transparent:true, opacity:0.3, depthWrite:false, side:THREE.DoubleSide });
+  // Throwables and hazards
+  SH.bottleGeo = new THREE.CylinderGeometry(0.09,0.12,0.42,8);
+  SH.bottleMat = new THREE.MeshStandardMaterial({ color:0x4f7a3a, roughness:0.3, emissive:0x7a2a00 });
+  SH.pipeGeo = new THREE.CylinderGeometry(0.11,0.11,0.48,8);
+  SH.pipeMat = new THREE.MeshStandardMaterial({ color:0x6d7077, roughness:0.5, metalness:0.6 });
+  SH.beepGeo = new THREE.SphereGeometry(0.07,8,6);
+  SH.beepMat = new THREE.MeshBasicMaterial({ color:0xff3030 });
+  SH.fireGeo = new THREE.CircleGeometry(1,24);
+  SH.fireMat = new THREE.MeshBasicMaterial({ color:0xff6a1a, transparent:true, opacity:0.45, blending:THREE.AdditiveBlending, depthWrite:false });
 })();
 export const carMat = c => SH.carMats[c] || (SH.carMats[c] = new THREE.MeshStandardMaterial({ color:c, roughness:0.7, metalness:0.25 }));
