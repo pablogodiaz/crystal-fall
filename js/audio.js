@@ -26,6 +26,7 @@ function sTone(f1, f2, dur, type, vol){
   o.type = type; o.frequency.setValueAtTime(f1, t); o.frequency.exponentialRampToValueAtTime(Math.max(20,f2), t+dur);
   g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t+dur);
   o.connect(g); g.connect(master); o.start(t); o.stop(t+dur+0.05);
+  return o;
 }
 // [noise dur, noise lowpass, noise vol, thump freq, thump vol] per weapon.
 const SHOTS = { pistol:[0.14,1900,0.55,180,0.12], shotgun:[0.32,1200,0.8,120,0.2], smg:[0.08,2400,0.36,220,0.07], rifle:[0.42,2800,0.8,140,0.22] };
@@ -50,5 +51,12 @@ export const sfx = {
   ignite: () => { sNoise(0.9, 900, 0.45); sTone(200, 80, 0.5, 'sawtooth', 0.06); },
   beep: () => sTone(1500, 1500, 0.06, 'square', 0.07),
   boom: () => { sNoise(1.4, 600, 0.9); sTone(110, 30, 1.0, 'sine', 0.5); },
+  // Returns a function that cuts the rising whine short (screamer killed mid wind-up).
+  windup: () => { const o = sTone(260, 1500, 1.5, 'sawtooth', 0.07); return () => { try { if (o) o.stop(); } catch(e){} }; },
+  scream: () => { sTone(1700, 480, 1.1, 'sawtooth', 0.16); sTone(1150, 320, 1.2, 'square', 0.07); sNoise(1.0, 3600, 0.35); },
+  spit: () => { sNoise(0.18, 700, 0.25); sTone(260, 120, 0.15, 'sine', 0.12); },
+  splash: () => { sNoise(0.35, 1500, 0.25); sTone(180, 90, 0.2, 'sine', 0.08); },
+  clank: () => { sTone(1900, 1500, 0.06, 'square', 0.05); sTone(640, 520, 0.12, 'triangle', 0.1); },
+  fuse: () => { for (let i=0;i<3;i++) setTimeout(() => sTone(1900, 1900, 0.05, 'square', 0.08), i*120); },
   alarm: () => { for (let i=0;i<8;i++) setTimeout(() => sTone(i%2 ? 700 : 950, i%2 ? 700 : 950, 0.26, 'square', 0.07), i*280); }
 };

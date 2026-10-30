@@ -72,14 +72,38 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   in the pack, right-click cancels. Mouse wheel / T cycles (`cycleThrowable`). `player.throwSel` is a preference: if you carry
   none of it but some of another kind, `selectedThrowable()` falls back to that. Shown under the
   weapon panel. Keys 1–8 can still throw from a specific slot.
-- **Zombies:** `walker`, `runner`, `brute` (`ZTYPES` in `js/zombies.js`). HP scales +30%/level,
-  speed +4%/level; runner/brute odds rise with level. Unalerted zombies wander and despawn when
-  >62 units away; they alert within 15 units, when shot, or when you fire within 28 units.
-  Alerted zombies follow a BFS flow field toward the player (recomputed every 0.25 s).
+- **Zombies:** every number lives in `js/threats.js` (pure data). A zombie has one type from
+  `ZTYPES` (`walker`, `runner`, `brute`, `screamer`, `spitter`) and any number of stacking
+  modifiers from `ZMODS` (`explosive`, `armored`), rolled independently per spawn (`rollThreat` in
+  `specials.js`). HP scales +30%/city, speed +4%/city; each type/modifier's odds are
+  `chance = [base, perCity, max]` counted from the city it was introduced in (walker fills the rest).
+  Unalerted zombies wander and despawn when >62 units away; they alert within 15 units, when shot,
+  or when you fire within 28 units. Alerted zombies follow a BFS flow field toward the player
+  (recomputed every 0.25 s).
+- **Threat progression:** City 1 has walkers and runners (`THREAT_BASE`). Each later city
+  introduces one more threat from `THREAT_POOL`, in an order shuffled per run (`shuffleThreats`,
+  `state.threatOrder`); earlier ones keep appearing. The newest is forced onto the first
+  `INTRO_FORCED` spawns of its city. The first time a type/modifier with a `tip` comes within
+  `SPOT_RANGE` of the player, a "New threat: …" banner shows (`state.seenThreats`, queued behind
+  other banners via `queueBanner`).
+  - **Screamer:** pale, gaunt, open mouth. On line of sight within `sight` it roots for 1.5 s while
+    its head swells and glows and its arms rise, then screams once: alerts everything within
+    `alertR` and spawns 6–10 zombies (never screamers) nearby (horde members during the horde).
+    Killing it during the wind-up cancels the scream.
+  - **Spitter:** green and bloated with a glowing acid sac. Keeps 7–13 units away (backs off,
+    sidesteps) and lobs acid on an arc; a green ring + filling disc marks the landing spot. The
+    acid leaves a puddle that hurts the player (not zombies) for a few seconds.
+  - **Explosive:** orange-glowing body and canisters. Explodes on death (after a short delay so
+    blasts can chain) or after a blinking 0.45 s fuse once next to the player; hurts zombies and
+    the player (`explosion`/`queueBlast` in `throwables.js`, shared with pipe bombs).
+  - **Armored:** riot helmet, visor, vest and a shield with a white stripe. Hits within `frontArc`
+    of its facing deal `frontMul` damage (sparks + clank); flanks, fire and blasts from behind
+    hit fully. Police-station guards get extra odds once it's unlocked.
 - **Ambient spawning:** outside the horde, zombies trickle in 24–42 units away up to a cap
   (`12 + 4*level`, or `8 + 4*level` once the road is open).
 - **Zombie drops:** deliberately rare so loot matters: a health cross (+20 HP, ~2.5%, more from
-  brutes or when below 40% HP), otherwise ~7% a small ammo box.
+  brutes (`heal` in `ZTYPES`) or when below 40% HP), otherwise ~7% a small ammo box. An
+  exploder's own detonation gives no kill and no drop.
 - **Meta:** best run (`{ city, kills }`) stored in `localStorage['crystal-fall-best']`.
 - **Controls:** WASD/arrows move, mouse aims, hold left click to fire, Shift sprints, R reloads,
   F melee, Q swaps guns, hold G to aim + release to throw (wheel/T picks molotov or pipe bomb, right-click cancels), hold E searches, 1–8 use items (right-click a slot drops it), C crafts, Esc/P pauses,
@@ -94,6 +118,7 @@ js/
   main.js         Boot (input, best score, menu city) and the requestAnimationFrame loop
   config.js       Grid constants: TILE, N, tile types T, walkable(), DIRS8, names, palette
   items.js        Pure data: WEAPONS, ITEMS, RECIPES, LOOT tables, LANDMARKS (no imports)
+  threats.js      Pure data: zombie types (ZTYPES), modifiers (ZMODS), unlock pool/order, banner tips
   utils.js        Seeded RNG (rng/rand/randi/pick), mr/mri/mpick (Math.random), clamp, lerpAngle, fmtTime, $
   state.js        Shared mutable state: `state`, `world`, entity arrays, input state
   renderer.js     WebGLRenderer, scene, orthographic camera, lights (incl. pooled muzzle/fx lights), updateCamera()
@@ -103,11 +128,13 @@ js/
   cityScene.js    Builds/tears down the city's Three.js meshes, containers, signs, Crystal, barricade, exit
   grid.js         Tile collision (isBlockedTile, resolveCircle), BFS flow field, fog-of-war reveal
   player.js       Player mesh, base stats + starting kit, movement/aim/reload, melee pose, hunger/bleeding
-  zombies.js      Zombie types, spawning, AI (flow field, pipe-bomb lure), makeNoise, damage/death
+  zombies.js      Zombie meshes (incl. type/modifier tells), spawning, AI (flow field, pipe-bomb lure),
+                  makeNoise, damage (armor)/death, explosive fuse
+  specials.js     Threat unlocks and rolls, screamer/spitter behaviour, acid, "New threat" banners
   combat.js       Firing per weapon, melee start/strike, bullets, hurtPlayer/drainHp, Crystal hits
   inventory.js    Item stacks, weapon slots, ammo reserves, using/dropping items, crafting
   loot.js         Hold-E searching, loot rolls, ground drops, landmark discovery
-  throwables.js   Molotov fire zones and pipe bombs (lure + explosion)
+  throwables.js   Molotov fire zones, pipe bombs (lure + explosion), shared explosion()/queueBlast()
   fx.js           Particles, blood decals, health pickups, building fade (camera-side occluders)
   hud.js          HUD bars/text, weapon panel, inventory bar, interact prompt, toasts, minimap,
                   craft screen, banner, showScreen()
@@ -119,6 +146,9 @@ js/
 
 ## Conventions
 
+- **Branch names must be meaningful.** Name every new branch `<type>/<short-kebab-summary>` describing
+  the change (e.g. `feature/special-zombies`, `fix/molotov-and-crystal-damage`); never use random,
+  auto-generated or generic names like `claude/laughing-gates-gg9mij`, `patch-1` or `wip`.
 - **No build tooling.** Only browser-native ES modules with relative `./x.js` imports
   (include the `.js` extension). The only bare specifier is `'three'`, mapped in `index.html`.
   New external libs go in the import map with a pinned version from cdnjs.
@@ -126,11 +156,11 @@ js/
   module bindings, so per-city references (`city`, `cityGroup`, `crystal`, `barricade`,
   `exitMarker`, `buildingMeshes`, `explored`, `mmDirty`, `lastTile`, `lure`) live on `world` in
   `state.js`; run/game state lives on `state`. Entity arrays (`zombies`, `bullets`, `drops`,
-  `throwns`, `hazards`, …) are
+  `throwns`, `hazards`, `spits`, `puddles`, `rings`, …) are
   mutated in place (`push`/`splice`/`length = 0`), never reassigned.
   Exception: `utils.js` owns `rng`, which only it reassigns via `seedRng()`.
 - **Circular imports are allowed but only between function bodies.** Top-level module code may
-  only use `three`, `config`, `items`, `utils`, `state`, `renderer`, and `assets` — those modules must
+  only use `three`, `config`, `items`, `threats`, `utils`, `state`, `renderer`, and `assets` — those modules must
   stay free of imports from gameplay modules so they always evaluate first. Don't call imported
   gameplay functions at module top level; do it from `main.js` or inside functions.
 - **Two RNGs:** city layout uses the seeded `rng`/`rand`/`randi`/`pick` (deterministic per seed);
@@ -141,7 +171,8 @@ js/
   to each `city.containers` entry, and `loot.js` sets `found` on landmarks. Per-city, so no reset needed.
 - **Resource ownership:** per-city geometries/materials are registered with `own()` in
   `cityScene.js` and disposed in `teardownCity()`. Things in `SH` (assets.js) are shared and
-  never disposed. Zombie materials are per-zombie and disposed in `disposeZombie()`.
+  never disposed. Zombie materials are per-zombie and disposed in `disposeZombie()`
+  (zombie gear/tell meshes use shared `SH` geometry and materials).
 - **Units:** grid tiles are `TILE = 2` world units; the map is `N = 46` tiles square. Tile index
   is `z*N + x`. World→tile is `Math.floor(pos/TILE)`; tile center is `(t+0.5)*TILE`.
 - **Code style:** compact, dense lines matching the existing code; section header comments
@@ -153,7 +184,8 @@ js/
   fade only if their center is on the camera side of the player, so buildings beyond stay solid.
   Opacity eases toward 0.2 / 1; `faded` maps mesh → current opacity.
 - **Ground heights:** roads are at y=0, block slabs (sidewalk, park, lot, plaza) top out at 0.08.
-  Anything flat drawn on the ground (decals 0.09, fire 0.12) must sit above 0.08 off-road.
+  Anything flat drawn on the ground (decals 0.09, acid 0.11, fire 0.12, acid marker 0.13) must sit
+  above 0.08 off-road.
 - **No runtime lights.** Adding/removing lights recompiles shaders; reuse `muzzleLight`/`fxLight`.
 
 ## Testing

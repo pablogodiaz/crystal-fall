@@ -5,7 +5,7 @@ import { TILE, N } from './config.js';
 import { mr } from './utils.js';
 import { scene } from './renderer.js';
 import { SH, WIN_TEX, carMat } from './assets.js';
-import { state, world, zombies, dying, bullets, particles, pickups, decals, drops, throwns, hazards } from './state.js';
+import { state, world, zombies, dying, bullets, particles, pickups, decals, drops, throwns, hazards, spits, puddles, rings } from './state.js';
 import { LOOT, LANDMARKS } from './items.js';
 import { disposeZombie } from './zombies.js';
 import { faded } from './fx.js';
@@ -253,7 +253,7 @@ export function teardownCity(){
   for (const z of zombies) disposeZombie(z);
   for (const d of dying) disposeZombie(d.z);
   zombies.length = 0; dying.length = 0;
-  for (const arr of [bullets, particles, pickups, drops, throwns, hazards]) { for (const o of arr) scene.remove(o.mesh || o.m || o.g); arr.length = 0; }
+  for (const arr of [bullets, particles, pickups, drops, throwns, hazards, spits, puddles, rings]) { for (const o of arr) scene.remove(o.mesh || o.m || o.g); arr.length = 0; }
   for (const d of decals) scene.remove(d); decals.length = 0;
   world.crystal = null; world.barricade = null; world.exitMarker = null; world.lure = null;
 }
