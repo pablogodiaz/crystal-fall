@@ -1,5 +1,6 @@
 // ---------- Throwables ----------
-// Molotovs (burning area) and pipe bombs (beeping noise lure, then an explosion).
+// Molotovs (burning area) and pipe bombs (beeping noise lure, then a stunning concussion blast).
+// explosion()/queueBlast() are the damaging blasts of exploding zombies.
 import * as THREE from 'three';
 import { TILE } from './config.js';
 import { mr } from './utils.js';
@@ -8,13 +9,13 @@ import { SH } from './assets.js';
 import { state, world, zombies, throwns, hazards } from './state.js';
 import { isBlockedTile } from './grid.js';
 import { player, aimPoint } from './player.js';
-import { damageZombie, makeNoise } from './zombies.js';
+import { damageZombie, stunZombie, makeNoise } from './zombies.js';
 import { hurtPlayer, hitCrystal, CRYSTAL_R } from './combat.js';
 import { selectedThrowable, countItem } from './inventory.js';
 import { burst } from './fx.js';
 import { sfx } from './audio.js';
 
-const FIRE_R = 2.6, FIRE_TIME = 6, FIRE_DPS = 2.4, BOMB_FUSE = 3.5, BOMB_R = 5.5, BOMB_DMG = 16, LURE_R = 32;
+const FIRE_R = 2.6, FIRE_TIME = 6, FIRE_DPS = 2.4, BOMB_FUSE = 3.5, BOMB_R = 6, STUN_TIME = 2.5, LURE_R = 32;
 let flash = 0;
 
 // Flight path of a throw toward the cursor: max 13 units, landing short of the first wall in the way.
@@ -41,7 +42,7 @@ export function throwItem(id){
 // ---------- Aim preview (hold G) ----------
 // Outline of the area the throwable will affect (fire / blast radius) plus a dotted flight arc.
 // Drawn without depth testing so it stays visible behind buildings. Built once, never disposed.
-const PREVIEW = { molotov:{ r:FIRE_R, color:0xff8a2a }, pipebomb:{ r:BOMB_R, color:0xff4a3a } };
+const PREVIEW = { molotov:{ r:FIRE_R, color:0xff8a2a }, pipebomb:{ r:BOMB_R, color:0x8cc8ff } };
 let preview = null;
 function buildPreview(){
   const mat = new THREE.MeshBasicMaterial({ transparent:true, opacity:0.85, depthTest:false, depthWrite:false, side:THREE.DoubleSide });
@@ -106,6 +107,21 @@ export function explosion(x, z, R, zDmg, pDmg, noise){
   state.shake = Math.max(state.shake, 0.7);
   sfx.boom(); makeNoise(x, z, noise);
 }
+// Pipe bomb: a concussion that stuns zombies within BOMB_R (longest at the center) and shoves
+// them back. Deals no damage to anyone.
+function stunBlast(x, z){
+  for (const o of zombies){
+    const dx = o.pos.x - x, dz = o.pos.z - z, d = Math.hypot(dx,dz);
+    if (d >= BOMB_R) continue;
+    stunZombie(o, STUN_TIME*(1 - 0.4*d/BOMB_R));
+    o.vel.x += dx/(d||1)*o.kb*1.2; o.vel.z += dz/(d||1)*o.kb*1.2;
+  }
+  const p = new THREE.Vector3(x, 0.6, z);
+  burst(p, 'spark', 22, 9); burst(p, 'dust', 20, 7);
+  fxLight.position.set(x, 2, z); flash = 7;
+  state.shake = Math.max(state.shake, 0.6);
+  sfx.boom(); makeNoise(x, z, 40);
+}
 // Delayed blast (exploding zombies), so chain reactions ripple instead of going off in one frame.
 export function queueBlast(x, z, delay, R, zDmg, pDmg){ hazards.push({ kind:'blast', x, z, t:delay, R, zDmg, pDmg }); }
 export function updateThrowables(dt){
@@ -147,7 +163,7 @@ export function updateThrowables(dt){
       if (h.t <= 0){
         scene.remove(h.mesh); hazards.splice(i,1);
         if (world.lure === h) world.lure = null;
-        explosion(h.x, h.z, BOMB_R, BOMB_DMG, 45, 40);
+        stunBlast(h.x, h.z);
         if (state.mode !== 'play') return;
       }
     }

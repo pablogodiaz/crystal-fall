@@ -95,8 +95,9 @@ export function updateBullets(dt){
         if (b.hit.has(z)) continue;
         const zx = bp.x - z.pos.x, zz = bp.z - z.pos.z, rr = z.r + 0.14;
         if (zx*zx + zz*zz < rr*rr){
-          b.hit.add(z); damageZombie(z, b.damage, b.dx, b.dz);
-          if (b.pierce > 0) b.pierce--; else dead = true;
+          // A riot shield stops the bullet outright, piercing or not.
+          b.hit.add(z); const blocked = damageZombie(z, b.damage, b.dx, b.dz);
+          if (b.pierce > 0 && !blocked) b.pierce--; else dead = true;
           break;
         }
       }
@@ -114,7 +115,7 @@ export function hurtPlayer(dmg, z){
   }
   if (player.hp <= 0){ player.hp = 0; die(); }
 }
-// Silent health loss (bleeding, starving). Returns true if it killed the player.
+// Silent health loss (bleeding). Returns true if it killed the player.
 export function drainHp(n){
   player.hp -= n;
   if (player.hp <= 0){ player.hp = 0; die(); return true; }

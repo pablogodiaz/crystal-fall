@@ -43,7 +43,7 @@ function landmarkLoot(type){
     return [{ weapon:w }, ammoRoll(w, 1.5), ammoRoll(ammoType()), ammoRoll(ammoType()), { item:'bandage', n:1 }];
   }
   if (type === 'pharmacy') return [{ item:'bandage', n:mri(2,4) }, { item:'medkit', n:mri(1,2) }];
-  if (type === 'supermarket') return [{ item:'food', n:mri(3,5) }];
+  if (type === 'supermarket') return [{ item:'drink', n:mri(2,3) }].concat(Math.random() < 0.5 ? [{ item:'bandage', n:1 }] : []);
   const out = [{ item:'scrap', n:mri(5,8) }];
   if (Math.random() < 0.5) out.push({ item:'pipebomb', n:1 });
   return out;
@@ -59,7 +59,7 @@ export function rollLoot(c){
 // Hands loot to the player; anything that doesn't fit lands on the ground.
 function grantLoot(raw){
   const msgs = [], x = player.pos.x, z = player.pos.z, list = [];
-  for (const e of raw){  // merge repeated finds so "+2 food" reads as one line
+  for (const e of raw){  // merge repeated finds so "+2 scrap" reads as one line
     const same = list.find(o => !e.weapon && o.item === e.item && o.ammo === e.ammo);
     if (same) same.n += e.n; else list.push(Object.assign({}, e));
   }

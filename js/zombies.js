@@ -74,7 +74,7 @@ export function spawnZombieAt(x,z,horde,alert,guard,exclude){
     hp, speed:mr(S.speed[0],S.speed[1])*(1+SCALE.speed*(lv-1))*(mods.armored ? A.speedMul : 1), r:S.r, dmg:S.dmg, bleed:S.bleed,
     kb:S.kb*(mods.armored ? A.kbMul : 1), atkCd:0, flash:0,
     horde, guard:!!guard, hx:x, hz:z, alert:!!alert || horde, wanderT:0, wx:0, wz:0, phase:Math.random()*6, groan:mr(3,10),
-    dead:false, fuse:0, los:false, losT:Math.random()*0.2, windup:0, screamed:false, spitT:0, spitCd:mr(1,2.5), side:Math.random() < 0.5 ? -1 : 1 };
+    dead:false, fuse:0, los:false, losT:Math.random()*0.2, windup:0, screamed:false, spitT:0, spitCd:mr(1,2.5), stun:0, side:Math.random() < 0.5 ? -1 : 1 };
   zombies.push(zz); if (horde) state.hordeAlive++;
   return zz;
 }
@@ -113,8 +113,9 @@ export function makeNoise(x, z, r){
 }
 // quiet = damage over time (fire): no blood burst or hit sound. (dx,dz) = hit direction and knockback.
 // Armored zombies take frontMul damage from hits landing within frontArc of where they face.
+// Returns true if the shield took the hit (bullets stop there instead of piercing).
 export function damageZombie(z, dmg, dx, dz, quiet){
-  if (z.dead) return;
+  if (z.dead) return false;
   const A = ZMODS.armored, l = Math.hypot(dx,dz);
   const blocked = z.mods.armored && l > 0 && -(Math.sin(z.g.rotation.y)*dx + Math.cos(z.g.rotation.y)*dz)/l > Math.cos(A.frontArc);
   if (blocked) dmg *= A.frontMul;
@@ -126,6 +127,13 @@ export function damageZombie(z, dmg, dx, dz, quiet){
     else { burst(new THREE.Vector3(z.pos.x, 1.2, z.pos.z), 'blood', 4, 3); sfx.hit(); }
   }
   if (z.hp <= 0) killZombie(z);
+  return blocked;
+}
+// Pipe-bomb concussion: frozen and swaying for t seconds; wind-ups (scream, spit) are interrupted.
+export function stunZombie(z, t){
+  if (z.dead) return;
+  z.stun = Math.max(z.stun, t); z.alert = true; z.spitT = 0;
+  if (z.windup > 0) cancelScream(z);
 }
 // credit = false for an exploder's own detonation: no kill counted, no drops.
 function killZombie(z, credit = true){
@@ -158,11 +166,14 @@ export function updateZombies(dt){
     if (!z.alert && dist < 15) z.alert = true;
     if (!z.alert && !z.horde && !z.guard && dist > 62){ disposeZombie(z); zombies.splice(i,1); continue; }
     let desX = 0, desZ = 0, spd = z.speed, hold = false, mv = null;
+    if (z.stun > 0) z.stun -= dt;
+    const stunned = z.stun > 0;
     // Specials: a winding-up screamer roots in place; an alerted spitter picks its own spacing.
-    if (z.type === 'screamer') hold = updateScreamer(z, dt, dist);
+    if (stunned){}
+    else if (z.type === 'screamer') hold = updateScreamer(z, dt, dist);
     else if (z.type === 'spitter') mv = updateSpitter(z, dt, dist, dx, dz);
     const lx = lure ? lure.x - z.pos.x : 0, lz = lure ? lure.z - z.pos.z : 0, ld = lure ? Math.hypot(lx,lz) : 1e9;
-    if (hold){}
+    if (hold || stunned){}
     else if (mv){ desX = mv[0]; desZ = mv[1]; spd *= mv[2]; }
     else if (z.alert && ld < 32 && dist > 3.5){
       // A beeping pipe bomb pulls alerted zombies off the player.
@@ -210,7 +221,8 @@ export function updateZombies(dt){
     if (nd < minD && nd > 1e-4){ z.pos.x = p.x - ndx/nd*minD; z.pos.z = p.z - ndz/nd*minD; }
     resolveCircle(z.pos, z.r);
     const vl = Math.hypot(z.vel.x, z.vel.z);
-    if (hold || mv) z.g.rotation.y = lerpAngle(z.g.rotation.y, Math.atan2(dx, dz), Math.min(1, dt*8));
+    if (stunned){}
+    else if (hold || mv) z.g.rotation.y = lerpAngle(z.g.rotation.y, Math.atan2(dx, dz), Math.min(1, dt*8));
     else if (vl > 0.2) z.g.rotation.y = lerpAngle(z.g.rotation.y, Math.atan2(z.vel.x, z.vel.z), Math.min(1, dt*8));
     z.phase += dt*(vl*2.4 + 0.5);
     const sw = Math.sin(z.phase)*0.6*Math.min(1, vl/1.5);
@@ -218,11 +230,11 @@ export function updateZombies(dt){
     z.arms[0].rotation.x = -0.1 + Math.sin(z.phase*0.5)*0.15; z.arms[1].rotation.x = -0.1 - Math.sin(z.phase*0.5+1)*0.15;
     z.b.rotation.z = Math.sin(z.phase*0.5)*0.06;
     z.atkCd -= dt;
-    if (nd < minD + 0.35 && z.atkCd <= 0){ z.atkCd = 1.0; hurtPlayer(z.dmg, z); if (state.mode !== 'play') return; }
+    if (nd < minD + 0.35 && z.atkCd <= 0 && !stunned){ z.atkCd = 1.0; hurtPlayer(z.dmg, z); if (state.mode !== 'play') return; }
     if (z.flash > 0){ z.flash -= dt; if (z.flash <= 0) z.mats.forEach((m,j) => m.emissive.setHex(z.em[j])); }
     if (z.mods.explosive){
       // Arms a short fuse next to the player, blinking white, then detonates.
-      if (!z.fuse && nd < minD + E.trigger){ z.fuse = E.fuse; sfx.fuse(); }
+      if (!z.fuse && !stunned && nd < minD + E.trigger){ z.fuse = E.fuse; sfx.fuse(); }
       if (z.fuse > 0){
         z.fuse -= dt;
         z.mats[0].emissive.setHex(Math.floor(z.fuse*16) % 2 ? 0xffffff : 0xff5000); z.mats[0].emissiveIntensity = 2;
@@ -230,6 +242,12 @@ export function updateZombies(dt){
       } else z.mats[0].emissiveIntensity = 0.8 + Math.sin(t*6 + z.phase)*0.5;
     }
     poseSpecial(z);
+    if (stunned){
+      // Dazed: slow drunken sway, arms hanging, the odd spark above the head.
+      z.b.rotation.z = Math.sin(t*7 + z.phase)*0.2; z.b.rotation.x = 0.15;
+      z.arms[0].rotation.x = z.arms[1].rotation.x = 0.3;
+      if (Math.random() < dt*4) burst(new THREE.Vector3(z.pos.x, 2.1*z.g.scale.y, z.pos.z), 'spark', 1, 0.8);
+    } else if (z.stun < 0){ z.stun = 0; z.b.rotation.x = 0; }
     if (z.alert){ z.groan -= dt; if (z.groan <= 0){ z.groan = mr(5,11); if (dist < 14) sfx.groan(); } }
   }
 }

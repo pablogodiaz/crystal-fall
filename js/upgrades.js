@@ -10,6 +10,6 @@ export const UPGRADES = [
   { icon:'🔱', name:'Spread shot', desc:'+1 bullet per shot', apply:p => p.pellets += 1 },
   { icon:'🎯', name:'Armor piercing', desc:'Bullets pass through one more zombie', apply:p => p.pierce += 1 },
   { icon:'✋', name:'Quick hands', desc:'Reload 30% faster', apply:p => p.reloadMul *= 0.7 },
-  { icon:'🩹', name:'Second wind', desc:'Slowly regenerate health while fed', apply:p => p.regen += 1 },
-  { icon:'🥫', name:'Iron stomach', desc:'Hunger drains 35% slower', apply:p => p.hungerRate *= 0.65 }
+  { icon:'🩹', name:'Second wind', desc:'Slowly regenerate health', apply:p => p.regen += 1 },
+  { icon:'🫁', name:'Iron lungs', desc:'Sprinting drains stamina 35% slower', apply:p => p.staminaRate *= 0.65 }
 ];

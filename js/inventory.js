@@ -67,9 +67,9 @@ export function useSlot(i){
     case 'medkit':
       if (!player.bleeding && player.hp >= player.maxHp) return toast('Already at full health');
       consume(i); heal(50); player.bleeding = false; sfx.use(); return toast('+50 health', 'good');
-    case 'food':
-      if (player.hunger > 0.95) return toast('You’re not hungry');
-      consume(i); player.hunger = Math.min(1, player.hunger + 0.35); sfx.use(); return toast('+35 food', 'good');
+    case 'drink':
+      if (player.boost > 2 && player.stamina > 0.95) return toast('Already wired');
+      consume(i); player.stamina = 1; player.winded = false; player.boost = 20; sfx.use(); return toast('Energized: sprinting is cheap for 20 s', 'good');
     case 'scrap': return toast('Press C to craft with scrap');
     case 'molotov': case 'pipebomb':
       if (throwItem(s.id)) consume(i); return;

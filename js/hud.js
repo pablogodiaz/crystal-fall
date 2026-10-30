@@ -68,8 +68,8 @@ export function updateHUD(dt, t){
   $('hpFill').style.width = (player.hp/player.maxHp*100) + '%';
   setText('hpText', Math.ceil(player.hp) + ' / ' + player.maxHp);
   $('stFill').style.width = (player.stamina*100) + '%';
-  $('huFill').style.width = (player.hunger*100) + '%';
-  const st = (player.bleeding ? '<span>Bleeding</span>' : '') + (player.hunger <= 0 ? '<span>Starving</span>' : player.hunger < 0.2 ? '<span class="warn">Hungry</span>' : '');
+  $('stFill').classList.toggle('winded', player.winded);
+  const st = (player.bleeding ? '<span>Bleeding</span>' : '') + (player.winded ? '<span class="warn">Winded</span>' : '') + (player.boost > 0 ? '<span class="good">Energized</span>' : '');
   if (hudCache.status !== st){ hudCache.status = st; $('status').innerHTML = st; }
   setText('killText', state.kills + (state.kills === 1 ? ' kill' : ' kills'));
   setText('timeText', fmtTime(state.runTime));

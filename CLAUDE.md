@@ -33,7 +33,10 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
 - **Game modes** (`state.mode`): `menu` (camera orbits a city behind the title card), `play`,
   `paused`, `craft` (workbench overlay, C), `upgrade`, `dead`. Simulation (`update`) only runs in
   `play`; cosmetic animation (`animateWorld`) runs always.
-- **Player:** 100 HP, stamina-based sprint (×1.55). WASD is screen-relative on the isometric grid;
+- **Player:** 100 HP, walk speed 4.6 (slower than runners, so sprinting matters). Sprint is ×1.75
+  and drains stamina (~3.6 s from full); it refills after a 1 s pause, 1.7× faster standing still.
+  Running dry makes you **winded** (`player.winded`): no sprint and 0.8× walk until stamina is back
+  to 40%. Tunables are the constants above `updatePlayer` in `player.js`. WASD is screen-relative on the isometric grid;
   mouse aims on a plane at gun height. Upgrades (`js/upgrades.js`) mutate player stats directly;
   weapon upgrades are modifiers (`dmgMul`, `fireMul`, `magMul`, `reloadMul`, `pellets`, `pierce`)
   applied on top of every gun's base stats.
@@ -46,26 +49,27 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   hitting zombies (and the Crystal) in a ±1 rad cone within ~1.7 units for 1 damage (× `dmgMul`)
   plus knockback.
   0.55 s cooldown, small noise radius, blocks firing while swinging.
-- **Inventory:** 8 slots of stackable items (`player.inv`, `ITEMS`): bandage, medkit, canned food,
-  scrap, molotov, pipe bomb. Keys 1–8 (or click) use a slot, right-click drops the stack. Full pack →
+- **Inventory:** 8 slots of stackable items (`player.inv`, `ITEMS`): bandage, medkit, energy drink
+  (full stamina + sprint drains 60% less for 20 s via `player.boost`), scrap, molotov, pipe bomb. Keys 1–8 (or click) use a slot, right-click drops the stack. Full pack →
   overflow is dropped on the ground (`drops`), picked up by walking over it. Inventory, weapons,
-  ammo, hunger and bleeding all live on `player`, so they carry over between cities; only `newRun`
+  ammo and bleeding all live on `player`, so they carry over between cities; only `newRun`
   resets them (`resetPlayerStats`).
-- **Survival:** `player.hunger` (0–1) drains in ~7 min (faster while sprinting). At 0 stamina stops
-  regenerating and health drains 0.5/s. Zombie hits may cause bleeding (`bleed` chance per type in
-  `ZTYPES`): −1.1 HP/s until a bandage or medkit.
+- **Bleeding:** zombie hits may cause bleeding (`bleed` chance per type in `ZTYPES`): −1.1 HP/s until
+  a bandage or medkit. (There is no hunger system; it was removed.)
 - **Looting** (`js/loot.js`): containers are car trunks, dumpsters, crates and doors on some
   buildings. Hold E within range for 1.5 s (2.5 s at landmarks); a progress ring shows on screen.
   Searching makes noise (`makeNoise`) that can alert nearby zombies; trunks can set off a car alarm.
   Loot tables are in `LOOT` (`js/items.js`), rolled with `Math.random` at search time.
 - **Landmarks:** 3–5 per city (`LANDMARKS`): police station (a weapon plus ammo, guarded by
   `3 + level` zombies that stay near the door and never despawn), pharmacy (bandages, medkits),
-  supermarket (food), hardware store (scrap, maybe a pipe bomb). Each has a roof sign and a door;
+  supermarket (energy drinks, maybe a bandage), hardware store (scrap, maybe a pipe bomb). Each has a roof sign and a door;
   discovered once the tile in front of the door is revealed, then shown on the minimap.
 - **Crafting** (C, `RECIPES`): molotov (3 scrap) burns a 2.6-unit area for 6 s, also damaging the
   Crystal if it's in the fire; pipe bomb (4 scrap)
-  beeps for 3.5 s (alerted zombies within 32 units walk to it via `world.lure`), then explodes.
-  Both are thrown at the cursor (max 13 units), landing short of walls. They hurt the player too.
+  beeps for 3.5 s (alerted zombies within 32 units walk to it via `world.lure`), then a concussion
+  blast (`stunBlast`) stuns zombies within 6 units for up to 2.5 s (`stunZombie`, `z.stun`: frozen,
+  swaying, can't attack, wind-ups cancelled) and shoves them back. It deals **no damage** to anyone.
+  Both are thrown at the cursor (max 13 units), landing short of walls. Fire hurts the player too.
 - **Throwing** (`THROWABLES` in `items.js`): hold G to aim (`player.aiming`; `updateThrowPreview` in
   `throwables.js` draws the effect radius at the landing point plus a dotted arc, sharing
   `throwPath`/`arcY` with the real throw), release to throw the selected kind from wherever it sits
@@ -95,10 +99,10 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     acid leaves a puddle that hurts the player (not zombies) for a few seconds.
   - **Explosive:** orange-glowing body and canisters. Explodes on death (after a short delay so
     blasts can chain) or after a blinking 0.45 s fuse once next to the player; hurts zombies and
-    the player (`explosion`/`queueBlast` in `throwables.js`, shared with pipe bombs).
+    the player (`explosion`/`queueBlast` in `throwables.js`).
   - **Armored:** riot helmet, visor, vest and a shield with a white stripe. Hits within `frontArc`
-    of its facing deal `frontMul` damage (sparks + clank); flanks, fire and blasts from behind
-    hit fully. Police-station guards get extra odds once it's unlocked.
+    of its facing deal `frontMul` damage (sparks + clank) and stop the bullet even if it would pierce
+    (`damageZombie` returns `blocked`); flanks, fire and blasts from behind hit fully. Police-station guards get extra odds once it's unlocked.
 - **Ambient spawning:** outside the horde, zombies trickle in 24–42 units away up to a cap
   (`12 + 4*level`, or `8 + 4*level` once the road is open).
 - **Zombie drops:** deliberately rare so loot matters: a health cross (+20 HP, ~2.5%, more from
@@ -127,14 +131,14 @@ js/
   cityGen.js      Pure procedural city generation from a seed (grid, props, containers, landmarks)
   cityScene.js    Builds/tears down the city's Three.js meshes, containers, signs, Crystal, barricade, exit
   grid.js         Tile collision (isBlockedTile, resolveCircle), BFS flow field, fog-of-war reveal
-  player.js       Player mesh, base stats + starting kit, movement/aim/reload, melee pose, hunger/bleeding
+  player.js       Player mesh, base stats + starting kit, movement/sprint/stamina, aim/reload, melee pose, bleeding
   zombies.js      Zombie meshes (incl. type/modifier tells), spawning, AI (flow field, pipe-bomb lure),
-                  makeNoise, damage (armor)/death, explosive fuse
+                  makeNoise, damage (armor)/death, stun, explosive fuse
   specials.js     Threat unlocks and rolls, screamer/spitter behaviour, acid, "New threat" banners
   combat.js       Firing per weapon, melee start/strike, bullets, hurtPlayer/drainHp, Crystal hits
   inventory.js    Item stacks, weapon slots, ammo reserves, using/dropping items, crafting
   loot.js         Hold-E searching, loot rolls, ground drops, landmark discovery
-  throwables.js   Molotov fire zones, pipe bombs (lure + explosion), shared explosion()/queueBlast()
+  throwables.js   Molotov fire zones, pipe bombs (lure + stun blast), exploder explosion()/queueBlast()
   fx.js           Particles, blood decals, health pickups, building fade (camera-side occluders)
   hud.js          HUD bars/text, weapon panel, inventory bar, interact prompt, toasts, minimap,
                   craft screen, banner, showScreen()
