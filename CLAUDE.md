@@ -38,8 +38,12 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   applied on top of every gun's base stats.
 - **Weapons** (`WEAPONS` in `js/items.js`): pistol (start), shotgun, SMG, hunting rifle. Two weapon
   slots (`player.weapons`, `player.cur`), Q swaps. Ammo is finite: each gun has its own reserve
-  (`player.ammo[id]`, capped by `maxAmmo`); reloads draw from it. With an empty mag and reserve,
-  clicking does a short melee shove. Each gun has its own noise radius (alerts zombies).
+  (`player.ammo[id]`, capped by `maxAmmo`); reloads draw from it. Each gun has its own noise
+  radius (alerts zombies).
+- **Melee:** F any time (left click falls back to it when the held gun has no mag or reserve): a
+  0.4 s butt-stroke animation (`poseMelee` in `player.js`); the blow lands 42% in (`meleeStrike`),
+  hitting zombies in a ±1 rad cone within ~1.7 units for 1 damage (× `dmgMul`) plus knockback.
+  0.55 s cooldown, small noise radius, blocks firing while swinging.
 - **Inventory:** 8 slots of stackable items (`player.inv`, `ITEMS`): bandage, medkit, canned food,
   scrap, molotov, pipe bomb. Keys 1–8 (or click) use a slot, right-click drops the stack. Full pack →
   overflow is dropped on the ground (`drops`), picked up by walking over it. Inventory, weapons,
@@ -69,7 +73,7 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   brutes or when below 40% HP), otherwise ~7% a small ammo box.
 - **Meta:** best run (`{ city, kills }`) stored in `localStorage['crystal-fall-best']`.
 - **Controls:** WASD/arrows move, mouse aims, hold left click to fire, Shift sprints, R reloads,
-  Q swaps guns, hold E searches, 1–8 use items (right-click a slot drops it), C crafts, Esc/P pauses,
+  F melee, Q swaps guns, hold E searches, 1–8 use items (right-click a slot drops it), C crafts, Esc/P pauses,
   M mutes.
 
 ## Folder structure
@@ -89,13 +93,13 @@ js/
   cityGen.js      Pure procedural city generation from a seed (grid, props, containers, landmarks)
   cityScene.js    Builds/tears down the city's Three.js meshes, containers, signs, Crystal, barricade, exit
   grid.js         Tile collision (isBlockedTile, resolveCircle), BFS flow field, fog-of-war reveal
-  player.js       Player mesh, base stats + starting kit, movement/aim/reload, hunger/bleeding
+  player.js       Player mesh, base stats + starting kit, movement/aim/reload, melee pose, hunger/bleeding
   zombies.js      Zombie types, spawning, AI (flow field, pipe-bomb lure), makeNoise, damage/death
-  combat.js       Firing per weapon, melee, bullets, hurtPlayer/drainHp, Crystal hits
+  combat.js       Firing per weapon, melee start/strike, bullets, hurtPlayer/drainHp, Crystal hits
   inventory.js    Item stacks, weapon slots, ammo reserves, using/dropping items, crafting
   loot.js         Hold-E searching, loot rolls, ground drops, landmark discovery
   throwables.js   Molotov fire zones and pipe bombs (lure + explosion)
-  fx.js           Particles, blood decals, health pickups, building fade
+  fx.js           Particles, blood decals, health pickups, building fade (camera-side occluders)
   hud.js          HUD bars/text, weapon panel, inventory bar, interact prompt, toasts, minimap,
                   craft screen, banner, showScreen()
   upgrades.js     Upgrade definitions
@@ -135,6 +139,10 @@ js/
   `// ---------- Name ----------`; brief comments only where intent isn't obvious.
 - **UI text** is in `index.html`/`hud.js`. HUD writes go through `setText()` to avoid DOM churn;
   the inventory bar re-renders only when its contents change. Short messages go through `toast()`.
+- **Building fade** (`updateFade` in `fx.js`): rays from the camera to the player and to 20 points
+  on a 7-unit disc around them. Buildings hiding the player always fade; buildings hiding the disc
+  fade only if their center is on the camera side of the player, so buildings beyond stay solid.
+  Opacity eases toward 0.2 / 1; `faded` maps mesh → current opacity.
 - **No runtime lights.** Adding/removing lights recompiles shaders; reuse `muzzleLight`/`fxLight`.
 
 ## Testing

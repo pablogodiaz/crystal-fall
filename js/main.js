@@ -22,7 +22,7 @@ function loop(now){
   if (state.mode === 'play') update(dt);
   animateWorld(dt, t);
   updateCamera(dt, player.pos);
-  if (state.mode !== 'menu'){ updateFade(); updateHUD(dt, t); }
+  if (state.mode !== 'menu'){ updateFade(dt); updateHUD(dt, t); }
   renderer.render(scene, camera);
 }
 requestAnimationFrame(loop);

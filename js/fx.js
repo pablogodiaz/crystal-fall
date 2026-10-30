@@ -60,22 +60,37 @@ export function updatePickups(dt){
   }
 }
 
-// ---------- Building fade (keeps the player visible) ----------
-export const faded = new Set();
+// ---------- Building fade (keeps the player and their surroundings visible) ----------
+// Rays run from the camera to the player and to sample points on a disc around them. A building
+// they hit fades out, but (apart from ones hiding the player) only if its center is on the camera
+// side of the player, so buildings beyond you stay solid. Opacity eases in and out.
+export const faded = new Map();  // mesh -> current opacity
+const FADE_R = 7, FADE_MIN = 0.2, FADE_SPEED = 5;
+const SAMPLES = [];
+for (const r of [3.5, FADE_R]) for (let i=0;i<10;i++){ const a = i/10*Math.PI*2; SAMPLES.push([Math.cos(a)*r, Math.sin(a)*r]); }
 const camDir = new THREE.Vector3(), fadeOrigin = new THREE.Vector3();
-const fadeRay = new THREE.Raycaster();
+const fadeRay = new THREE.Raycaster(), want = new Set();
 function setOpacity(mesh, o){
   for (const m of mesh.userData.mats){ m.transparent = o < 1; m.opacity = o; m.depthWrite = o >= 1; }
 }
-export function updateFade(){
-  const next = new Set();
-  camera.getWorldDirection(camDir);
-  for (const oy of [0.4, 1.8]){
-    fadeOrigin.set(player.pos.x, oy, player.pos.z).addScaledVector(camDir, -120);
-    fadeRay.set(fadeOrigin, camDir); fadeRay.far = 119.5;
-    for (const h of fadeRay.intersectObjects(world.buildingMeshes, false)) next.add(h.object);
+function castFade(x, y, z, cameraSideOnly){
+  fadeOrigin.set(x, y, z).addScaledVector(camDir, -120);
+  fadeRay.set(fadeOrigin, camDir); fadeRay.far = 119.5;
+  for (const h of fadeRay.intersectObjects(world.buildingMeshes, false)){
+    const p = h.object.position;
+    if (!cameraSideOnly || (p.x - player.pos.x)*-camDir.x + (p.z - player.pos.z)*-camDir.z > 0) want.add(h.object);
   }
-  for (const m of faded) if (!next.has(m)) setOpacity(m, 1);
-  for (const m of next) if (!faded.has(m)) setOpacity(m, 0.22);
-  faded.clear(); for (const m of next) faded.add(m);
+}
+export function updateFade(dt){
+  want.clear();
+  camera.getWorldDirection(camDir);
+  const px = player.pos.x, pz = player.pos.z;
+  castFade(px, 0.4, pz, false); castFade(px, 1.8, pz, false);
+  for (const [ox,oz] of SAMPLES) castFade(px + ox, 0.5, pz + oz, true);
+  for (const m of want) if (!faded.has(m)) faded.set(m, 1);
+  for (const [m, o] of faded){
+    const n = want.has(m) ? Math.max(FADE_MIN, o - dt*FADE_SPEED) : Math.min(1, o + dt*FADE_SPEED);
+    setOpacity(m, n);
+    if (n >= 1) faded.delete(m); else faded.set(m, n);
+  }
 }

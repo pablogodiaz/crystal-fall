@@ -24,7 +24,7 @@ export function tryReload(){
 export function fire(){
   if (player.reloadT > 0 || player.fireCd > 0) return;
   const w = curWeapon(), W = WEAPONS[w.id];
-  if (w.mag <= 0){ if (player.ammo[w.id] > 0) tryReload(); else melee(); return; }
+  if (w.mag <= 0){ if (player.ammo[w.id] > 0) tryReload(); else dryMelee(); return; }
   w.mag--; player.fireCd = W.rate*player.fireMul;
   const n = W.pellets + player.pellets, spread = W.spread || 0.11;
   for (let i=0;i<n;i++){
@@ -42,11 +42,23 @@ export function fire(){
   makeNoise(player.pos.x, player.pos.z, W.noise);
   if (w.mag === 0) tryReload();
 }
-// Out of ammo for this gun: a short-range shove with the stock.
+// ---------- Melee ----------
+// A butt-stroke with the held gun: F any time, or left click once the gun is completely dry.
+// melee() starts the swing; player.js animates it and calls meleeStrike() when the blow lands.
+export const MELEE_TIME = 0.4, MELEE_HIT = 0.42;  // swing length (s), fraction where the blow lands
+export function melee(){
+  if (state.mode !== 'play' || player.meleeT > 0 || player.meleeCd > 0) return;
+  player.meleeT = MELEE_TIME; player.meleeHit = false; player.meleeCd = 0.55;
+  player.fireCd = Math.max(player.fireCd, MELEE_TIME);
+  sfx.swing();
+}
 let dryWarned = 0;
-function melee(){
-  player.fireCd = 0.55; sfx.swing();
+function dryMelee(){
   if (performance.now() - dryWarned > 6000){ dryWarned = performance.now(); toast(`Out of ${WEAPONS[curWeapon().id].ammo}. Search the city or press Q to swap`, 'bad'); }
+  melee();
+}
+export function meleeStrike(){
+  makeNoise(player.pos.x, player.pos.z, 6);
   for (const z of zombies.slice()){
     const dx = z.pos.x - player.pos.x, dz = z.pos.z - player.pos.z, d = Math.hypot(dx,dz) || 0.001;
     if (d > 1.7 + z.r) continue;
