@@ -92,8 +92,11 @@ export function buildCityScene(c){
     }
     if (b.lm){
       // Roof sign angled toward the camera.
-      const sign = new THREE.Mesh(own(new THREE.BoxGeometry(Math.max(2.4, Math.min(w, d)*0.9), 0.75, 0.2)), signMats(b.lm));
+      // Own material copies so the sign fades along with its building.
+      const sm = signMats(b.lm), side = own(sm[0].clone()), front = own(sm[4].clone());
+      const sign = new THREE.Mesh(own(new THREE.BoxGeometry(Math.max(2.4, Math.min(w, d)*0.9), 0.75, 0.2)), [side,side,side,side,front,side]);
       sign.position.set(0, b.h/2 + 0.5, 0); sign.rotation.y = Math.PI/4; sign.castShadow = true; mesh.add(sign);
+      uniq = uniq.concat([side, front]);
     }
     mesh.userData.mats = uniq;
     buildingMeshes.push(mesh); cityGroup.add(mesh);

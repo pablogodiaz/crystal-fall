@@ -2,7 +2,7 @@
 import { $ } from './utils.js';
 import { renderer } from './renderer.js';
 import { state, keys, mouse, mouseNDC } from './state.js';
-import { tryReload } from './combat.js';
+import { tryReload, melee } from './combat.js';
 import { toggleMute } from './audio.js';
 import { newRun, togglePause, toggleCraft } from './game.js';
 import { swapWeapon, useSlot } from './inventory.js';
@@ -15,6 +15,7 @@ export function initInput(){
     if (e.repeat) return;
     if (e.code === 'KeyR') tryReload();
     if (e.code === 'KeyQ') swapWeapon();
+    if (e.code === 'KeyF') melee();
     if (e.code === 'KeyC') toggleCraft();
     const digit = /^Digit([1-8])$/.exec(e.code);
     if (digit){ if (state.mode === 'craft') craftFromKey(+digit[1] - 1); else useSlot(+digit[1] - 1); }
