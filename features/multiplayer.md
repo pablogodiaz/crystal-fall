@@ -20,7 +20,8 @@ This file covers what's left. Build it on a new branch on top of that one, e.g.
     the game. It assigns each connection an id and forwards messages between the host and clients, so
     the game logic stays in JS.
   - LAN: `http://<host-lan-ip>:8000`. Tailscale: `http://<machine-name>:8000` (tailnet traffic is
-    already encrypted). Optional: `tailscale serve` for an `https://`/`wss://` address.
+    already encrypted). Optional: `tailscale serve` for an `https://`/`wss://` address. The full
+    host/join steps, Tailscale included, go in README.md (step 10).
   - Rejected: WebRTC/PeerJS. It needs signalling, and Chrome hides LAN addresses behind mDNS names,
     which don't resolve across a tailnet. GitHub Pages can't host a relay, so networked games are
     always played from the host's server (solo still works on Pages).
@@ -93,7 +94,21 @@ Host → clients:
      to the menu ("Host left"). There's no host migration.
    - Best run is saved on every machine with the team result. `state.cheated` comes from the host.
 10. **Docs:** update CLAUDE.md (net module, message list, client/host split, how to test two
-    instances) and the in-game controls text.
+    instances) and the in-game controls text. **README.md must describe how to host and join**,
+    including playing across different networks via Tailscale:
+    - One-time setup: install Tailscale on every machine. Get everyone into one tailnet: invite
+      them, or share just the host's machine (admin console → Machines → Share… → their email).
+      Turn on MagicDNS.
+    - Each session: the host runs `python3 server/serve.py` (it must listen on all interfaces and
+      print its LAN and Tailscale addresses). Friends open `http://<host-machine-name>:8000` (or the
+      `100.x.y.z` address from `tailscale ip -4`) and click **Join co-op**.
+    - Troubleshooting: `tailscale ping <host>` (fails → the share or invite is missing); the page
+      doesn't load → the host's firewall is blocking port 8000 (allow Python / the Tailscale adapter);
+      custom tailnet ACLs must allow port 8000; "via DERP" in the ping means relayed, so expect
+      higher latency.
+    - Optional HTTPS: `tailscale serve --bg 8000` → `https://<machine>.<tailnet>.ts.net` (the game's
+      WebSocket then uses `wss://` automatically, so `js/net.js` must build its URL from
+      `location`).
 
 ## Testing
 
