@@ -40,16 +40,17 @@ export const WEAPONS = {
   // to slow) and freezes solid at 1 for `freeze` s: frozen zombies can't act and shatter at the next hit
   // (fire thaws them). mag = coolant (use per s), reloaded from canisters found like ammo.
   cryo:    { name:'Cryo sprayer',  ammo:'coolant', unique:true, kind:'cryo', mag:100, use:10, reload:1.6, range:6, cone:0.36, chill:1.7, thaw:0.35, slow:0.7, freeze:4, noise:12,
-             maxAmmo:200, find:[25,45], start:100,
+             maxAmmo:200, find:[12,22], start:100,
              desc:'Hold to spray frost: zombies slow down, then freeze solid. Any hit shatters a frozen one, even a brute' },
-  // Crystal shard: fires a violet shard that ricochets off walls `bounce` times and pierces. mag = shards, only
-  // recharged (+refill, up to mag) when you break a city's Crystal.
-  shard:   { name:'Crystal shard', ammo:'shards', unique:true, kind:'shard', mag:24, refill:12, dmg:3.5, rate:0.24, speed:34, life:1.6, pierce:2, bounce:3, jitter:0.01, noise:14,
-             desc:'Shoots crystal splinters that ricochet off walls. Only recharges when you break a city’s Crystal' },
+  // Crystal shard: each shot (one charge) fans `pellets` violet shards `spread` rad apart that ricochet off walls
+  // `bounce` times and pierce `pierce` zombies. mag = charges, only recharged (+refill, up to mag) when you
+  // break a city's Crystal.
+  shard:   { name:'Crystal shard', ammo:'shards', unique:true, kind:'shard', mag:24, refill:12, dmg:3, pellets:3, spread:0.09, rate:0.3, speed:34, life:1.6, pierce:5, bounce:3, jitter:0.01, noise:14,
+             desc:'Fans out three crystal splinters that pierce through crowds and ricochet off walls. Only recharges when you break a city’s Crystal' },
   // Guardian drone: click to launch or dock it. Flying, it circles you and shoots the nearest zombie it can see
-  // within range every `rate` s, whatever you're holding. mag = battery: drains `drain`/s flying, recharges
-  // `recharge`/s docked; it docks itself when flat.
-  drone:   { name:'Guardian drone', ammo:'battery', unique:true, kind:'drone', mag:100, drain:1.6, recharge:2, dmg:1.2, rate:0.45, range:11, speed:44, orbit:2.2, noise:12,
+  // within range every `rate` s, whatever you're holding. mag = battery: drains `drain`/s flying (40 s from full),
+  // recharges `recharge`/s docked (about 2 min to full); it docks itself when flat and needs `launch` to take off.
+  drone:   { name:'Guardian drone', ammo:'battery', unique:true, kind:'drone', mag:100, drain:2.5, recharge:0.8, launch:25, dmg:1.2, rate:0.45, range:11, speed:44, orbit:2.2, noise:12,
              desc:'Click to launch: it circles you and shoots on its own, even while you hold another weapon. Battery recharges while docked' }
 };
 export const GUNS = ['pistol','shotgun','smg','rifle'];
@@ -57,7 +58,9 @@ export const UNIQUES = ['bow','flamer','potion','tesla','gravity','railgun','cry
 // Which gun an ammo find (search or zombie drop) is for: `held` = the gun in your hands, `carried`
 // = your other gun (both skip a full reserve and guns without ammo; with one gun it gets both shares),
 // the rest any standard gun. Fixed shares, so adding weapons doesn't dilute the ammo you actually need.
-export const AMMO_ODDS = { held:0.55, carried:0.25 };
+// unique = chance a find meant for a unique's ammo (arrows, slugs, coolant) really is; otherwise it goes to
+// a standard gun you carry (or any). Keeps unique ammo rare even while you hold one.
+export const AMMO_ODDS = { held:0.55, carried:0.25, unique:0.25 };
 
 // ---------- Weapon rarity ----------
 // A found standard gun rolls a rarity, then `mods` random modifiers (all different). Each modifier is

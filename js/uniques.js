@@ -380,10 +380,14 @@ function fireShard(w){
   const W = WEAPONS.shard, S = weaponStats(w);
   if (w.mag < 1) return false;
   w.mag--; player.fireCd = S.rate;
-  const a = player.angle + mr(-W.jitter, W.jitter), dx = Math.sin(a), dz = Math.cos(a);
-  const m = new THREE.Mesh(SH.shardGeo, SH.shardMat); m.position.set(player.pos.x + dx*0.9, 1.15, player.pos.z + dz*0.9); m.rotation.y = a; scene.add(m);
-  bullets.push({ mesh:m, dx, dz, speed:W.speed, life:W.life, damage:S.dmg, pierce:W.pierce + player.pierce, kb:1, bounce:W.bounce, hit:new Set() });
-  muzzleLight.position.set(player.pos.x + dx*1.1, 1.3, player.pos.z + dz*1.1); muzzleLight.intensity = 1.5;
+  // A fan of shards (plus the Spread shot upgrade's extras), one charge per shot.
+  const n = W.pellets + player.pellets;
+  for (let i=0;i<n;i++){
+    const a = player.angle + (i - (n-1)/2)*W.spread + mr(-W.jitter, W.jitter), dx = Math.sin(a), dz = Math.cos(a);
+    const m = new THREE.Mesh(SH.shardGeo, SH.shardMat); m.position.set(player.pos.x + dx*0.9, 1.15, player.pos.z + dz*0.9); m.rotation.y = a; scene.add(m);
+    bullets.push({ mesh:m, dx, dz, speed:W.speed*mr(0.95,1.05), life:W.life, damage:S.dmg, pierce:W.pierce + player.pierce, kb:1, bounce:W.bounce, hit:new Set() });
+  }
+  muzzleLight.position.set(player.pos.x + Math.sin(player.angle)*1.1, 1.3, player.pos.z + Math.cos(player.angle)*1.1); muzzleLight.intensity = 1.8;
   sfx.shard(); makeNoise(player.pos.x, player.pos.z, S.noise);
   return true;
 }
@@ -402,7 +406,7 @@ export function rechargeShards(){
 let drone = null, droneA = 0, droneShot = 0;
 function toggleDrone(w){
   if (w.latch) return true;
-  if (!w.out && w.mag < 5) return false;
+  if (!w.out && w.mag < WEAPONS.drone.launch) return false;
   w.latch = true; w.out = !w.out; player.fireCd = 0.3;
   floatText(w.out ? 'Drone launched' : 'Drone docked', 'dim'); sfx.drone(w.out);
   return true;

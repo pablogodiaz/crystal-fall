@@ -34,8 +34,9 @@ function wpick(table){
 function ammoType(){
   const r = Math.random();
   const want = [...new Set([curWeapon().id, ...carried()])].filter(w => WEAPONS[w].find && player.ammo[w] < WEAPONS[w].maxAmmo);
-  if (want.length && r < AMMO_ODDS.held + AMMO_ODDS.carried) return r < AMMO_ODDS.held ? want[0] : want[want.length - 1];
-  return mpick(GUNS);
+  let id = want.length && r < AMMO_ODDS.held + AMMO_ODDS.carried ? (r < AMMO_ODDS.held ? want[0] : want[want.length - 1]) : mpick(GUNS);
+  if (WEAPONS[id].unique && Math.random() > AMMO_ODDS.unique){ const std = want.filter(w => !WEAPONS[w].unique); id = std.length ? std[0] : mpick(GUNS); }
+  return id;
 }
 const ammoRoll = (w, f) => ({ ammo:w, n:Math.ceil(mri(WEAPONS[w].find[0], WEAPONS[w].find[1]) * (f || 1)) });
 // A standard gun type you don't carry yet (the pistol only if there's nothing else left).

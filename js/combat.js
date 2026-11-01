@@ -83,7 +83,7 @@ function dryMelee(){
       : w.id === 'tesla' ? 'Recharging. Press Q to swap'
       : w.id === 'gravity' ? 'No gravity wells left. They come back in the next city'
       : w.id === 'shard' ? 'No shards left. Break a city’s Crystal to recharge'
-      : w.id === 'drone' ? 'Drone battery flat. It recharges while docked'
+      : w.id === 'drone' ? `Drone battery too low to launch (needs ${WEAPONS.drone.launch}%). It recharges while docked`
       : `Out of ${W.ammo}. Search the city or press Q to swap`, 'bad');
   }
   melee();

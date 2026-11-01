@@ -78,6 +78,8 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   Each gun has its own noise radius (alerts zombies). Ammo finds (searches, zombie drops) are biased
   by `AMMO_ODDS` (`ammoType` in `loot.js`): 55% the held gun, 25% your other gun (a gun with a full
   reserve or no reserve ammo is skipped; with one gun it gets both shares), 20% any standard gun.
+  A find that lands on a unique's ammo (arrows, slugs, coolant) only stays that with
+  `AMMO_ODDS.unique` (25%); otherwise it goes to a standard gun you carry, so unique ammo stays rare.
   - **Rarity** (`RARITY`, `rollWeapon`/`rollRarity`/`rollMods`): every found standard gun is Common,
     Uncommon, Rare or Legendary with 0/1/2/3 random modifiers from `WMODS` (all different: damage,
     fire rate, magazine, reload, accuracy, range, noise, knockback, ammo use, crits). Each modifier is
@@ -107,11 +109,13 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     `r + 0.35` of the line, through the first wall it meets and stopped by the second, cause `'rail'`
     (ignores riot shields); slugs reload from a reserve like a gun), **cryo sprayer** (`cryo`: shares
     the flamethrower's `spray`/`puff` code; frost calls `chillZombie`; coolant reloads from canisters
-    found like ammo), **Crystal shard** (`shard`: shards are bullets with `bounce`, reflected off walls
+    found like ammo, rarely), **Crystal shard** (`shard`: each shot fans 3 shards (`pellets`, plus the
+    Spread shot upgrade) piercing 5 zombies; shards are bullets with `bounce`, reflected off walls
     in `updateBullets` (their hit set clears on each bounce); `rechargeShards` from `breakCrystal` is the
     only refill) and **guardian drone** (`drone`: click toggles `w.out`; flying, one shared
     `droneModel()` circles you and shoots the nearest visible zombie whatever you hold, draining its
-    battery; recharges docked; dropping or swapping it away docks it).
+    battery in 40 s; recharges docked in about 2 min and needs `launch` (25%) to take off; dropping or
+    swapping it away docks it).
   - **Frozen zombies** (Frozen section of `zombies.js`): `z.chill` 0..1 slows them (up to `slow`) and
     wears off; at 1 `freezeZombie`: an ice block (`SH.iceGeo`, child of `z.g`), blue glow (`setGlow`,
     shared with turned zombies), no moving/attacking/fuses for `freeze` s (the update loop skips them,
