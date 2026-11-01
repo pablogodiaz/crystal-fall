@@ -7,7 +7,7 @@ import { mr } from './utils.js';
 import { scene, fxLight } from './renderer.js';
 import { SH } from './assets.js';
 import { state, world, zombies, throwns, hazards, players } from './state.js';
-import { isBlockedTile } from './grid.js';
+import { isBlockedTile, isOpaqueTile } from './grid.js';
 import { me } from './player.js';
 import { damageZombie, stunZombie, makeNoise } from './zombies.js';
 import { hurtPlayer, hitCrystal, CRYSTAL_R } from './combat.js';
@@ -25,14 +25,18 @@ const FIRE_R = 2.6, FIRE_TIME = 6, FIRE_DPS = 2.4, BOMB_FUSE = 3.5, BOMB_R = 6, 
 let flash = 0;
 
 // Flight path of player p's throw toward their aim point: max 13 units, landing short of the first wall
-// in the way. T = flight time; arcY(k, T) = height at progress k. Shared by the throw and the aim preview.
+// in the way (it flies over fences, barriers and water, but never lands on them). T = flight time; arcY(k, T) = height at progress k. Shared by the throw and the aim preview.
 export function throwPath(p){
   const px = p.pos.x, pz = p.pos.z;
   let dx = p.ctl.aim.x - px, dz = p.ctl.aim.z - pz, d = Math.hypot(dx,dz);
   if (d < 0.5){ dx = Math.sin(p.angle); dz = Math.cos(p.angle); d = 1; }
   const ux = dx/d, uz = dz/d, max = Math.min(13, Math.max(2, d));
   let land = 0;
-  for (let s=0.5;s<=max;s+=0.25){ if (isBlockedTile(Math.floor((px+ux*s)/TILE), Math.floor((pz+uz*s)/TILE))) break; land = s; }
+  for (let s=0.5;s<=max;s+=0.25){
+    const tx = Math.floor((px+ux*s)/TILE), tz = Math.floor((pz+uz*s)/TILE);
+    if (isOpaqueTile(tx, tz)) break;
+    if (!isBlockedTile(tx, tz)) land = s;
+  }
   return { sx:px, sz:pz, ex:px + ux*land, ez:pz + uz*land, T:0.3 + land/24 };
 }
 const arcY = (k, T) => 1.3*(1-k) + Math.sin(k*Math.PI)*(1 + T*3) + 0.12;

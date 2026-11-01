@@ -1,7 +1,7 @@
 // ---------- Game flow ----------
 // Run/city lifecycle (explore -> takeover -> open -> upgrade), spawning, per-frame update.
 import * as THREE from 'three';
-import { TILE, N, T, POP, cityBlocks, walkable } from './config.js';
+import { TILE, N, T, POP, CONDITIONS, cityBlocks, walkable } from './config.js';
 import { LANDMARKS } from './items.js';
 import { $, mr, mpick, fmtTime } from './utils.js';
 import { camFocus, muzzleLight, fxLight } from './renderer.js';
@@ -9,7 +9,7 @@ import { SH } from './assets.js';
 import { CRYSTAL } from './threats.js';
 import { state, world, zombies, mouse, dev, players, net } from './state.js';
 import { generateCity } from './cityGen.js';
-import { buildCityScene, buildExitMarker, teardownCity } from './cityScene.js';
+import { buildCityScene, buildExitMarker, teardownCity, animateCity } from './cityScene.js';
 import { updateFlow, clearFlowCache, blockIndex } from './grid.js';
 import { me, viewed, nearestDist, crowd, residents, zombieCap, resetPlayerStats, refreshGun, updatePlayers } from './player.js';
 import { spawnZombieAt, spawnTurnedPlayer, findSpawnTile, findBlockTile, updateZombies, updateDying } from './zombies.js';
@@ -46,7 +46,8 @@ export function startCity(level, seed){
   if (!client){ updateFlow(); setupThreats(level); populate(city, level); supplyDrops(); }
   $('cityName').textContent = `City ${level}: ${city.name}`;
   if (state.mode !== 'play') return;
-  banner(`City ${level}`, city.name);
+  const Cd = CONDITIONS[city.cond];
+  banner(`City ${level}`, `${city.name} · ${Cd.name}: ${Cd.note}`, 3200);
   // Bigger city or a new kind of landmark: say so after the city banner.
   if (level > 1 && cityBlocks(level) > cityBlocks(level - 1)) queueBanner('The cities are getting bigger', 'More ground to cover, and more of them waiting in it', 3600);
   for (const t in LANDMARKS){ const L = LANDMARKS[t]; if (L.from === level && level > 1) queueBanner(`${L.icon} ${L.name}`, `New landmark. ${L.tip}`, 4200); }
@@ -421,7 +422,7 @@ export function animateWorld(dt, t){
   muzzleLight.intensity = Math.max(0, muzzleLight.intensity - dt*30);
   const flip = Math.floor(t*3) % 2;  // police lightbars
   SH.sirenR.emissiveIntensity = flip ? 1.6 : 0.15; SH.sirenB.emissiveIntensity = flip ? 0.15 : 1.6;
-  animateContainers(t);
+  animateContainers(t); animateCity(dt, t);
   updateThrowPreview();
   updateParticles(dt);
   updateDying(dt);
