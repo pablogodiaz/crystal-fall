@@ -22,8 +22,8 @@ import { updateInteract, updateDrops, updateLandmarks, animateContainers } from 
 import { updateThrowables, updateThrowPreview } from './throwables.js';
 import { setupThreats, shuffleThreats, updateSpecials } from './specials.js';
 import { updateUniques, resetUniques } from './uniques.js';
-import { card, targets, dealCards, validChoice, autoChoice, applyCard } from './upgrades.js';
-import { rollWeapon, weaponTitle, modText } from './weapons.js';
+import { card, targets, modChoices, destChoices, dealCards, validChoice, autoChoice, applyCard } from './upgrades.js';
+import { rollWeapon, weaponTitle, modText, isSpecial } from './weapons.js';
 import { spawnDrop } from './loot.js';
 import { initAudio, sfx } from './audio.js';
 
@@ -206,8 +206,8 @@ export function completeCity(every){
   }
 }
 // ---------- Upgrade screen ----------
-// For player P (this machine's): the cards, then the weapon a card works on, then (Gunsmith) the
-// modifier, then what came of it. choose(choice) plays the choice (here, or sent to the host, which
+// For player P (this machine's): the cards, then the weapon a card works on, then (Gunsmith, Transplant)
+// the modifier, then (Transplant) the weapon it goes to, then what came of it. choose(choice) plays the choice (here, or sent to the host, which
 // answers with showUpgradeResult); ready() is Continue.
 let upg = null;
 export function showUpgrades(P, ids, choose, ready){
@@ -236,19 +236,30 @@ function upgCards(){
   const wrap = upgStep('Pick one upgrade for your weapons. You also recover 40% of your health.', 'cards');
   for (const id of upg.ids){
     const u = card(id);
-    wrap.appendChild(upgButton('upg', `<div class="ic">${u.icon}</div><b>${u.name}</b><span>${u.desc}</span>`, () => u.on ? upgWeapon(u) : upgPlay([u.id, -1, -1])));
+    wrap.appendChild(upgButton('upg', `<div class="ic">${u.icon}</div><b>${u.name}</b><span>${u.desc}</span>`, () => u.on ? upgWeapon(u) : upgPlay([u.id, -1, -1, -1])));
   }
 }
 function upgWeapon(u){
   const P = upg.P, wrap = upgStep(`${u.icon} <b>${u.name}</b>: which weapon?`, 'cards', upgCards);
   for (const i of targets(P, u)){
     const w = P.weapons[i], tag = i === P.cur ? '<span class="wc-held">In hand</span>' : '';
-    wrap.appendChild(upgButton('upg-w', weaponCard(w, tag, '', false, P), () => u.mod ? upgMod(u, i) : upgPlay([u.id, i, -1])));
+    wrap.appendChild(upgButton('upg-w', weaponCard(w, tag, '', false, P), () => u.mod ? upgMod(u, i) : upgPlay([u.id, i, -1, -1])));
   }
 }
 function upgMod(u, i){
-  const w = upg.P.weapons[i], wrap = upgStep(`${u.icon} <b>${u.name}</b>: which modifier of your ${weaponTitle(w)} gets replaced?`, 'cards', () => upgWeapon(u));
-  w.mods.forEach((m, k) => wrap.appendChild(upgButton('upg upg-mod ' + (m.s > 0 ? 'pos' : 'neg'), `<b>${m.s > 0 ? '▲' : '▼'} ${modText(m, w.id)}</b><span>Replace it with a random new one</span>`, () => upgPlay([u.id, i, k]))));
+  const P = upg.P, w = P.weapons[i], wrap = upgStep(`${u.icon} <b>${u.name}</b>: ${u.ask(w)}`, 'cards', () => upgWeapon(u));
+  for (const k of modChoices(P, u, w)){
+    const m = w.mods[k], sp = isSpecial(m.k);
+    wrap.appendChild(upgButton('upg upg-mod ' + (sp ? 'spc' : m.s > 0 ? 'pos' : 'neg'), `<b>${sp ? '✦' : m.s > 0 ? '▲' : '▼'} ${modText(m, w.id)}</b><span>${u.hint}</span>`,
+      () => u.dests ? upgDest(u, i, k) : upgPlay([u.id, i, k, -1])));
+  }
+}
+function upgDest(u, i, k){
+  const P = upg.P, w = P.weapons[i], wrap = upgStep(`${u.icon} <b>${u.name}</b>: which weapon gets <b>${modText(w.mods[k], w.id)}</b>?`, 'cards', () => upgMod(u, i));
+  for (const d of destChoices(P, u, w, k)){
+    const o = P.weapons[d], tag = d === P.cur ? '<span class="wc-held">In hand</span>' : '';
+    wrap.appendChild(upgButton('upg-w', weaponCard(o, tag, '', false, P), () => upgPlay([u.id, i, k, d])));
+  }
 }
 function upgPlay(c){
   upg.busy = true;

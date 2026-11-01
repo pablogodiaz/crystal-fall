@@ -15,10 +15,10 @@ import { dropZombieAmmo } from './loot.js';
 import { queueBlast } from './throwables.js';
 import { rollThreat, updateScreamer, cancelScream, updateSpitter, poseSpecial } from './specials.js';
 import { ZTYPES, ZMODS, SCALE, CRYSTAL, AI } from './threats.js';
-import { WEAPONS } from './items.js';
+import { WEAPONS, SPECIALS } from './items.js';
 import { sfx, playSfx } from './audio.js';
 import { emit, nextId } from './host.js';
-import { isBurning } from './uniques.js';
+import { isBurning, shrapnelBurst } from './uniques.js';
 
 const SHIRTS = [0x6b4a3a,0x4a5a6b,0x5a5a4a,0x7a3a3a,0x3a4a3a,0x6a6a72,0x8a7a5a];
 // Base body plus the visual tell of its type (screamer mouth, spitter sac) and each modifier
@@ -354,8 +354,10 @@ function setGlow(z, hex){
   else if (z.em0){ z.em = z.em0; z.em0 = null; }
   z.mats.forEach((m, j) => m.emissive.setHex(z.em[j]));
 }
-export function turnZombie(z, t){
+// o = the flask's specials: { by (thrower, for kill credit), contagion, poison }.
+export function turnZombie(z, t, o){
   if (z.dead) return;
+  z.turnBy = o && o.by || null; z.contagion = !!(o && o.contagion); z.poison = !!(o && o.poison);
   if (z.frozen > 0) thaw(z);
   if (!(z.turned > 0)) setGlow(z, TURN_EM);
   z.turned = t; z.foe = null; z.foeT = 0; z.fuse = 0; z.spitT = 0; z.stun = 0;
@@ -412,8 +414,11 @@ function foeOf(z, dt){
 function bite(z, foe){
   const dx = foe.pos.x - z.pos.x, dz = foe.pos.z - z.pos.z, l = Math.hypot(dx, dz) || 1;
   z.atkCd = 1;
-  damageZombie(foe, z.dmg*(z.turned > 0 ? WEAPONS.potion.bite : WEAPONS.potion.bite*0.7)*(1 + SCALE.hp*(state.level-1)), dx/l*0.6, dz/l*0.6, 'bite');
-  if (!foe.dead && !(foe.turned > 0) && z.turned > 0){ foe.foe = z; foe.foeT = 4; }
+  damageZombie(foe, z.dmg*(z.turned > 0 ? WEAPONS.potion.bite : WEAPONS.potion.bite*0.7)*(1 + SCALE.hp*(state.level-1)), dx/l*0.6, dz/l*0.6, 'bite', z.turned > 0 ? z.turnBy : null);
+  if (foe.dead || foe.turned > 0 || !(z.turned > 0)) return;
+  // Contagion (a flask special): the bitten turn too, for a while, without passing it on.
+  if (z.contagion) turnZombie(foe, SPECIALS.contagion.turn, { by:z.turnBy, poison:z.poison });
+  else { foe.foe = z; foe.foeT = 4; }
 }
 
 // cause = 'bullet' | 'melee' | 'blast' | 'fire' | 'bite' | 'rail' (railgun: goes through riot shields)
@@ -430,10 +435,12 @@ export function damageZombie(z, dmg, dx, dz, cause, by){
     if (cause === 'fire'){ thaw(z); return false; }
     if (dmg > 0){
       burst(new THREE.Vector3(z.pos.x, 1.1, z.pos.z), 'ice', 22, 6); sfx.shatterIce();
-      killZombie(z, true, 'blast', dx, dz, 99, by); return false;
+      killZombie(z, true, 'blast', dx, dz, 99, by);
+      if (z.shrapnelBy) shrapnelBurst(z);  // frozen by a cryo sprayer with Shrapnel ice
+      return false;
     }
   }
-  const quiet = cause === 'fire';
+  const quiet = cause === 'fire' || cause === 'frost';  // burning and frostbite: no blood or hit sound every tick
   const A = ZMODS.armored, l = Math.hypot(dx,dz);
   const blocked = cause !== 'rail' && z.mods.armored && l > 0 && -(Math.sin(z.g.rotation.y)*dx + Math.cos(z.g.rotation.y)*dz)/l > Math.cos(A.frontArc);
   if (blocked) dmg *= A.frontMul;
@@ -520,7 +527,14 @@ export function updateZombies(dt){
       else { shoveFromPlayers(z, null); resolveCircle(z.pos, z.r); continue; }
     }
     if (z.chill > 0) z.chill = Math.max(0, z.chill - dt*WEAPONS.cryo.thaw);
-    if (z.turned > 0){ z.turned -= dt; if (z.turned <= 0) unturn(z); }
+    if (z.turned > 0){
+      z.turned -= dt;
+      if (z.turned <= 0){
+        unturn(z);
+        // Poisoned brew (a flask special): when the turn wears off, it drops dead.
+        if (z.poison){ burst(new THREE.Vector3(z.pos.x, 1, z.pos.z), 'brew', 10, 3); killZombie(z, true, 'melee', 0, 0, 1, z.turnBy); continue; }
+      }
+    }
     const turned = z.turned > 0, foe = foeOf(z, dt);
     if (turned || foe){}  // busy fighting (or on your side): no senses
     else if (z.tracked && z.tgt && !ignored(z.tgt)){ z.sees = true; z.lx = z.tgt.pos.x; z.lz = z.tgt.pos.z; }

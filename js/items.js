@@ -96,6 +96,30 @@ export const WMODS = {
   pellets:{ good:[1,1.7], int:true, w:0.5 },
   pierce: { good:[1,2.4], int:true, w:0.3 }
 };
+// Special modifiers: an effect only one unique can have (`on`), rolled into its pool alongside its stat kinds
+// (Prototype, or Gunsmith / Tinker on that unique). Always a boon, with no strength; ✦ on the weapon card,
+// and Transplant never moves them. Damage numbers grow with the city like fire's.
+export const SPECIALS = {
+  firearrow:  { on:'bow',     name:'Fire arrows',       desc:'Arrows set what they hit on fire' },
+  retriever:  { on:'bow',     name:'Retriever',         desc:'Every arrow that lands can be picked back up' },
+  napalm:     { on:'flamer',  name:'Napalm',            desc:'Zombies that die burning leave a patch of fire behind', time:3 },
+  sticky:     { on:'flamer',  name:'Sticky fuel',       desc:'What it sets alight burns three times as long', mul:3 },
+  contagion:  { on:'potion',  name:'Contagion',         desc:'Zombies the turned ones bite turn too, for 8 s', turn:8 },
+  poison:     { on:'potion',  name:'Poisoned brew',     desc:'When the turn wears off, they drop dead' },
+  capacitor:  { on:'tesla',   name:'Capacitor',         desc:'Every kill gives back the charge of one shot' },
+  supercool:  { on:'tesla',   name:'Supercooled',       desc:'Bolts chill what they hit: zap a zombie enough and it freezes solid', chill:0.4 },
+  singularity:{ on:'gravity', name:'Singularity',       desc:'The well crushes what it holds', dps:2 },
+  implosion:  { on:'gravity', name:'Implosion',         desc:'The well collapses with a blast that hurts everything in it', dmg:6 },
+  phase:      { on:'railgun', name:'Phase beam',        desc:'The beam goes through every wall' },
+  concussive: { on:'railgun', name:'Concussive',        desc:'Everything the beam hits is stunned for 1.5 s', stun:1.5 },
+  shrapnel:   { on:'cryo',    name:'Shrapnel ice',      desc:'Zombies it froze burst when shattered, hurting the ones around them', dmg:4, r:3 },
+  frostbite:  { on:'cryo',    name:'Frostbite',         desc:'The frost hurts too', dps:2.5 },
+  splinter:   { on:'shard',   name:'Splinter',          desc:'A shard that kills splits into two more' },
+  leech:      { on:'shard',   name:'Crystal leech',     desc:'Kills have a 25% chance to grow a shard back', odds:0.25 },
+  medic:      { on:'drone',   name:'Medic drone',       desc:'Heals you 1 health a second while it flies', hps:1 },
+  incendiary: { on:'drone',   name:'Incendiary rounds', desc:'Its shots set zombies on fire' }
+};
+export const SPECIAL_W = 0.8;  // roll weight of each special, next to the stat kinds' (WMODS[].w, default 1)
 export const CRIT = 2.5;
 
 export const INV_SLOTS = 8;

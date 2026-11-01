@@ -6,9 +6,9 @@
 // control (P() = me()). Add new tools to a section in buildPanel() and list them in CLAUDE.md.
 import * as THREE from 'three';
 import { TILE, N, walkable, DISTRICTS } from './config.js';
-import { WEAPONS, ITEMS, LANDMARKS, GUNS, UNIQUES, RARITY } from './items.js';
+import { WEAPONS, ITEMS, LANDMARKS, GUNS, UNIQUES, RARITY, SPECIALS } from './items.js';
 import { ZTYPES, ZMODS, THREAT_BASE, THREAT_POOL, AI } from './threats.js';
-import { $, clamp, fmtTime } from './utils.js';
+import { $, clamp, fmtTime, mpick } from './utils.js';
 import { camera, camFocus } from './renderer.js';
 import { state, world, zombies, dev, mouse, mouseNDC, players } from './state.js';
 import { me, refreshGun, addPlayer, removePlayer, MAX_PLAYERS } from './player.js';
@@ -21,7 +21,7 @@ import { foundCrystal } from './crystal.js';
 import { updateFlow, reveal, blockIndex } from './grid.js';
 import { startCity, newRun, newSeed, openRoad, completeCity, killPlayer, revivePlayer, spectate } from './game.js';
 import { showScreen, toast } from './hud.js';
-import { UPGRADES, targets as cardTargets, cardFits, applyCard } from './upgrades.js';
+import { UPGRADES, targets as cardTargets, modChoices, destChoices, cardFits, applyCard } from './upgrades.js';
 import { roster } from './host.js';
 
 const P = me;
@@ -117,14 +117,27 @@ function rerollHeld(){
   w.mods = rollMods(n, w.id); w.mag = Math.min(w.mag, magSize(w));
 }
 // Plays upgrade card u right away: on the held weapon if it fits (else the first one it fits), a random
-// modifier for Gunsmith. Shows what it did.
+// modifier (Gunsmith, Transplant) and destination (Transplant). Shows what it did.
 function playCard(u){
   ensureRun();
   const p = P();
   if (!cardFits(p, u)) return toast(`${u.name} doesn’t fit any of your weapons`, 'bad');
-  let slot = -1, mod = -1;
-  if (u.on){ const t = cardTargets(p, u); slot = t.includes(p.cur) ? p.cur : t[0]; if (u.mod) mod = Math.floor(Math.random()*p.weapons[slot].mods.length); }
-  toast(`${u.icon} ${applyCard(p, [u.id, slot, mod]).text}`, 'good');
+  let slot = -1, mod = -1, dest = -1;
+  if (u.on){
+    const t = cardTargets(p, u); slot = t.includes(p.cur) ? p.cur : t[0];
+    if (u.mod) mod = mpick(modChoices(p, u, p.weapons[slot]));
+    if (u.dests) dest = mpick(destChoices(p, u, p.weapons[slot], mod));
+  }
+  toast(`${u.icon} ${applyCard(p, [u.id, slot, mod, dest]).text}`, 'good');
+}
+// Puts special k on its unique (given first, with full ammo, if you don't carry it), past the usual cap of 3.
+function giveSpecial(k){
+  ensureRun();
+  const id = SPECIALS[k].on, p = P();
+  if (!p.weapons.some(w => w && w.id === id)) giveGun(id, 'unique');
+  const w = p.weapons.find(w => w && w.id === id);
+  if (!w.mods.some(m => m.k === k)) w.mods.push({ k, s:1, v:0 });
+  toast(`✦ ${SPECIALS[k].name} on your ${WEAPONS[id].name}`, 'good');
 }
 // A ring of random weapon finds around you (with luck), to try the tooltip and pickups.
 function scatterWeapons(n, luck){
@@ -313,7 +326,9 @@ function buildPanel(){
   r = row(s);
   btn(r, 'Upgrade screen: every card', () => { ensureRun(); closeOverlays(); completeCity(true); }, 'Clear the city and get dealt every card that fits your weapons');
   r = row(s, 'dv-grid');
-  for (const u of UPGRADES) btn(r, `${u.icon} ${u.name}`, () => playCard(u), `${u.desc}. Plays it now on the held weapon (or the first it fits), random modifier for Gunsmith`);
+  for (const u of UPGRADES) btn(r, `${u.icon} ${u.name}`, () => playCard(u), `${u.desc}. Plays it now on the held weapon (or the first it fits), random modifier (and target) where it asks`);
+  r = row(s, 'dv-grid');
+  for (const k in SPECIALS) btn(r, `✦ ${SPECIALS[k].name}`, () => giveSpecial(k), `${WEAPONS[SPECIALS[k].on].name}: ${SPECIALS[k].desc}. Gives the weapon if you don’t carry it`);
 
   s = section(root, 'World');
   r = row(s);

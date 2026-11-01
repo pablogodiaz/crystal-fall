@@ -2,9 +2,10 @@
 // A weapon in a slot or on the ground is { id, rarity, mods:[{ k, s:±1, v }], mag, uid } plus
 // per-kind state: cd (Turncoat flask cooldown), idle (Arc caster recharge delay).
 // Standard guns roll a rarity and one random modifier per step above Common, each good or bad;
-// uniques are found without modifiers (the Prototype upgrade adds them, from WEAPONS[id].mods).
+// uniques are found without modifiers (the Prototype upgrade adds them: the stat kinds in WEAPONS[id].mods
+// plus that unique's own SPECIALS, effects stored as { k, s:1, v:0 }).
 // weaponStats() folds base stats and modifiers together; the upgrades in upgrades.js edit the instance.
-import { WEAPONS, GUNS, UNIQUES, RARITY, WMODS, WEAPON_ODDS, CRIT } from './items.js';
+import { WEAPONS, GUNS, UNIQUES, RARITY, WMODS, SPECIALS, SPECIAL_W, WEAPON_ODDS, CRIT } from './items.js';
 import { mr, mpick } from './utils.js';
 import { state } from './state.js';
 
@@ -26,8 +27,11 @@ export function rollRarity(luck = 0){
   for (const [k, w] of ws){ r -= w; if (r <= 0) return k; }
   return 'common';
 }
-// The modifiers weapon type `id` can roll: every one for standard guns, its own list for a unique.
-export const modPool = id => WEAPONS[id].unique ? WEAPONS[id].mods || [] : Object.keys(WMODS);
+// The modifiers weapon type `id` can roll: every stat kind for standard guns; a unique's own list plus its specials.
+export const modPool = id => WEAPONS[id].unique ? (WEAPONS[id].mods || []).concat(Object.keys(SPECIALS).filter(k => SPECIALS[k].on === id)) : Object.keys(WMODS);
+export const isSpecial = k => !!SPECIALS[k];
+export const hasMod = (w, k) => w.mods.some(m => m.k === k);
+const weight = k => isSpecial(k) ? SPECIAL_W : WMODS[k].w || 1;
 // Modifier kinds weapon w could still get (it never has two of one kind).
 export const freeMods = w => modPool(w.id).filter(k => !w.mods.some(m => m.k === k));
 // A strength for modifier k rolling good (s = 1) or bad (-1); t = where in its range (random if not given).
@@ -35,17 +39,19 @@ export function modValue(k, s, t = Math.random()){
   const M = WMODS[k], [a, b] = M[s > 0 ? 'good' : 'bad'], v = a + (b - a)*t;
   return M.int ? Math.round(v) : Math.round(v*100)/100;
 }
-// One new modifier of kind k: good or bad by WEAPON_ODDS.good (always good for kinds without a bad side).
+// One new modifier of kind k: good or bad by WEAPON_ODDS.good (always good for kinds without a bad side;
+// a special is just there).
 export function rollMod(k){
+  if (isSpecial(k)) return { k, s:1, v:0 };
   const s = !WMODS[k].bad || Math.random() < WEAPON_ODDS.good ? 1 : -1;
   return { k, s, v:modValue(k, s) };
 }
-// Up to n different modifiers for weapon type id, none of the kinds in `have`, picked by their weight (WMODS[].w).
+// Up to n different modifiers for weapon type id, none of the kinds in `have`, picked by their weight.
 export function rollMods(n, id = 'pistol', have = []){
   const pool = modPool(id).filter(k => !have.includes(k)), out = [];
   while (out.length < n && pool.length){
-    let r = Math.random()*pool.reduce((s, k) => s + (WMODS[k].w || 1), 0), i = 0;
-    while (i < pool.length - 1 && (r -= WMODS[pool[i]].w || 1) > 0) i++;
+    let r = Math.random()*pool.reduce((s, k) => s + weight(k), 0), i = 0;
+    while (i < pool.length - 1 && (r -= weight(pool[i])) > 0) i++;
     out.push(rollMod(pool.splice(i, 1)[0]));
   }
   return out;
@@ -102,6 +108,7 @@ const MOD_WORDS = { flamer:{ mag:'fuel tank' }, cryo:{ mag:'coolant tank' }, tes
   drone:{ mag:'battery' }, railgun:{ rate:'charge speed' }, potion:{ rate:'brewing speed', range:'splash radius' } };
 // Modifier m as card text, worded for weapon type id.
 export function modText(m, id){
+  if (isSpecial(m.k)) return `${SPECIALS[m.k].name}: ${SPECIALS[m.k].desc}`;
   const g = m.s > 0, p = pct(m.v), sign = g ? '+' : '−', word = k => (MOD_WORDS[id] || {})[k];
   switch (m.k){
     case 'dmg': return `${sign}${p} damage`;

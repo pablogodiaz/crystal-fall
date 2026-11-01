@@ -3,12 +3,12 @@ import * as THREE from 'three';
 import { TILE, N, T, DISTRICTS } from './config.js';
 import { $, fmtTime } from './utils.js';
 import { camera } from './renderer.js';
-import { WEAPONS, ITEMS, RECIPES, LANDMARKS, INV_SLOTS, RARITY } from './items.js';
+import { WEAPONS, ITEMS, RECIPES, LANDMARKS, INV_SLOTS, RARITY, SPECIALS } from './items.js';
 import { CRYSTAL } from './threats.js';
 import { state, world, zombies, drops, pickups, keys, players } from './state.js';
 import { me, viewed } from './player.js';
 import { craft, countItem, magSize, selectedThrowable, otherWeapons } from './inventory.js';
-import { weaponStats, weaponDps, weaponTitle, modText } from './weapons.js';
+import { weaponStats, weaponDps, weaponTitle, modText, isSpecial } from './weapons.js';
 import { dropName } from './loot.js';
 import { EXIT_WAIT, crafting } from './game.js';
 import { blockIndex } from './grid.js';
@@ -201,7 +201,9 @@ function statCells(w, all, p){
 // p = whose ammo `all` shows (default: the player the HUD follows).
 export function weaponCard(w, tag = '', extra = '', all = false, p = P || me()){
   const W = WEAPONS[w.id];
-  const mods = w.mods.map(m => `<li class="${m.s > 0 ? 'pos' : 'neg'}">${modText(m, w.id)}</li>`).join('');
+  // Specials (✦, a unique's own effects) are listed after its stat modifiers.
+  const mods = w.mods.filter(m => !isSpecial(m.k)).map(m => `<li class="${m.s > 0 ? 'pos' : 'neg'}">${modText(m, w.id)}</li>`).join('')
+    + w.mods.filter(m => isSpecial(m.k)).map(m => `<li class="spc"><b>${SPECIALS[m.k].name}</b>: ${SPECIALS[m.k].desc}</li>`).join('');
   return `<div class="wcard" data-r="${w.rarity}"><div class="wc-top"><b>${W.name}</b>${tag}<span class="wc-rar">${RARITY[w.rarity].name}</span></div>`
     + `<div class="wc-stats">${statCells(w, all, p)}</div>`
     + (mods ? `<ul class="wc-mods">${mods}</ul>` : w.rarity === 'common' ? '<div class="wc-none">No modifiers</div>' : '')

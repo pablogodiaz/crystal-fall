@@ -146,8 +146,9 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
      (each player picks 1 of 3 upgrade cards, the living heal 40% of max HP) → next city with a new seed.
 - **Upgrades** (`UPGRADES` in `js/upgrades.js`; screen in `game.js`): gunsmithing cards, every one about
   your weapons. Only cards that can change something you carry are dealt (`cardFits`/`targets`/`dealCards`).
-  Flow: pick a card → pick the weapon it works on (only the ones it fits) → Gunsmith only: pick the modifier
-  → result screen (what changed + the weapon's card) → Continue. A choice is `[card id, slot, modifier]`
+  Flow: pick a card → pick the weapon it works on (only the ones it fits) → Gunsmith / Transplant: pick the
+  modifier (`modChoices`) → Transplant: pick the weapon that gets it (`destChoices`) → result screen (what
+  changed + the weapon's card) → Continue. A choice is `[card id, slot, modifier, destination]`
   (`validChoice`; clients send it with `act('upgrade', …)`, the host rolls it in `applyCard` and answers with
   an `upgr` event). New modifiers are always random, good or bad by `WEAPON_ODDS.good`.
   - **Gunsmith**: replace a modifier of your choice with a random one the weapon doesn't have (weapons
@@ -155,12 +156,14 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     modifier (not Legendary, not uniques). **Tinker**: reroll every modifier (kinds and strengths), same
     count. **Calibrate**: same modifiers, reroll each strength (`modValue`). **Strip down**: remove a random
     modifier; a gun drops one tier with it. **Wild card**: flip a random modifier that has a bad side, as
-    far up the other side's range as it was. **Prototype**: add a random modifier from the unique's own
-    `mods` list to a unique (up to 3). **Trade-in**: swap a gun for another standard gun type, same rarity,
+    far up the other side's range as it was. **Prototype**: add a random modifier to a unique (up to 3):
+    one of its stat kinds or one of its specials. **Transplant**: move a modifier (never a special) from
+    one weapon to another that suits it and doesn't have it; a gun receiving it goes up a tier (so not a
+    Legendary), a unique holds up to 3; the donor is destroyed (if you held it, you now hold the receiver). **Trade-in**: swap a gun for another standard gun type, same rarity,
     new modifiers, some of its ammo. **Supply drop**: `p.supply`, a weapon find with one city's extra luck
     tossed next to you at the next city start (`supplyDrops`). **Holster**: a third weapon slot.
-  - Rarity always matches the number of modifiers on a standard gun (Masterwork/Strip down move both).
-  - Transplant (moving a modifier from one weapon to another) was considered; not built.
+  - Rarity always matches the number of modifiers on a standard gun (Masterwork, Strip down and
+    Transplant move both). Calibrate and Wild card leave specials alone.
 - **Game modes** (`state.mode`): `menu` (camera orbits a city behind the title card), `play`,
   `paused`, `craft` (workbench overlay, C), `upgrade`, `dead`. Simulation (`update`) only runs in
   `play`; cosmetic animation (`animateWorld`) runs always.
@@ -195,15 +198,28 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     counts as extra cities. `weaponTitle` = "Rare Shotgun" (Commons and uniques: plain name).
     Colours: `--r-*` tokens in `style.css` (`data-r` attribute sets `--rc`), `RARITY[].hex`/`SH.rar*`
     in the world.
-  - **Unique modifiers:** uniques are found without modifiers; only the Prototype upgrade adds them, from
-    the unique's own `mods` list in `WEAPONS` (`modPool`/`freeMods`), where the shared kinds mean what
+  - **Unique modifiers:** uniques are found without modifiers; only the Prototype upgrade adds them (Gunsmith
+    and Tinker then reroll them), from the unique's pool (`modPool`/`freeMods`): its stat kinds (`mods` in
+    `WEAPONS`) plus its **specials**. Specials (`SPECIALS` in `items.js`, `{ k, s:1, v:0 }` on the weapon,
+    `isSpecial`/`hasMod`) are effects only that unique can have, always good, roll weight `SPECIAL_W`; the
+    weapon card lists them last with a ✦ in the unique colour; Transplant never moves them:
+    bow: Fire arrows (`ignite` on hit), Retriever (every arrow lands); flamethrower: Napalm (dying while
+    burning leaves a fire patch, `napalmPatch`), Sticky fuel (×3 burn time); flask: Contagion (the bitten
+    turn for 8 s, without spreading it further; `turnZombie(z, t, { by, contagion, poison })`), Poisoned brew
+    (they die when it wears off, credited to the thrower); Arc caster: Capacitor (a kill refunds a shot),
+    Supercooled (`chillZombie` per hit); gravity well: Singularity (damage over time inside), Implosion (the
+    pop hurts); railgun: Phase beam (through every wall), Concussive (1.5 s stun); cryo: Shrapnel ice (a
+    zombie it froze bursts on shattering, `z.shrapnelBy`/`shrapnelBurst`), Frostbite (the frost hurts, cause
+    `'frost'`, quiet like fire); Crystal shard: Splinter (a killing shard splits in two, once; bullets' `kill`
+    hook), Crystal leech (25% per kill: +1 shard); drone: Medic drone (+1 HP/s while flying), Incendiary
+    rounds. Bullets can carry `ignite`, `keepAll` and `kill(b, z)` (host only). Their stat kinds mean what
     fits it: `mag` = fuel/coolant tank, charge, battery, shard capacity or ±1 gravity well (the code reads
     `magSize(w)` as the cap, the HUD shows fuel/charge/battery as % of it), `rate` = railgun charge time
     (`S.charge`) or flask brew time (`S.cooldown`), `range` = spray/bolt/beam/drone reach or the flask's
     splash (`S.range`; also the throw preview), plus `dmg`, `reload`, `noise`, `kb`, `acc`, `pellets`,
     `pierce` where they apply. `modText(m, id)` words them per weapon.
   - **Uniques** (`unique: true`, rolled instead of a gun with `WEAPON_ODDS.unique` odds, ×2 from
-    lucky sources, only ones you don't carry; no modifiers, `kind` = how they fire, `fireUnique` in
+    lucky sources, only ones you don't carry; found without modifiers, `kind` = how they fire, `fireUnique` in
     `js/uniques.js`): **flamethrower** (`flame`: hold to spray a fire cone, `mag` = fuel, ignites
     zombies (`burning`), hurts the Crystal; refuels only at gas station pumps, hold E, once per
     station (`l.refueled`, pump targets cached on `city.pumps`)), **Turncoat flask** (`potion`:
@@ -428,8 +444,9 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     or lucky odds, for the tooltip); refill ammo (also fuel, charge and the flask); refill every gas
     pump; turn or freeze the zombies near you; fill/empty the pack.
   - Upgrades: "Upgrade screen: every card" (clears the city and deals you every card that fits, to try the
-    whole pick → weapon → modifier → result flow), and each card as a button that plays it at once on
-    the held weapon (or the first it fits; a random modifier for Gunsmith).
+    whole pick → weapon → modifier → result flow), each card as a button that plays it at once on
+    the held weapon (or the first it fits; a random modifier and destination where it asks), and every
+    special (✦) as a button that puts it on its unique (giving you the unique first if needed, past the cap).
   - World: time scale (stopped, 0.25–3×; >1 runs several capped `update` steps per frame), camera
     zoom, hide HUD.
   - Using anything sets `state.cheated` (a violet "Dev" chip under the stamina bar; the best run

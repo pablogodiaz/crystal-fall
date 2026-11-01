@@ -12,7 +12,8 @@ import { viewed, cheats } from './player.js';
 import { damageZombie, makeNoise } from './zombies.js';
 import { curWeapon, magSize } from './inventory.js';
 import { toast, floatText } from './hud.js';
-import { weaponStats } from './weapons.js';
+import { weaponStats, hasMod } from './weapons.js';
+import { ignite } from './uniques.js';
 import { fireUnique } from './uniques.js';
 import { dropArrow } from './loot.js';
 import { burst } from './fx.js';
@@ -51,10 +52,12 @@ export function fire(p, dt){
   p.fireCd = S.rate;
   const crit = S.crit && Math.random() < S.crit;
   const n = S.pellets, spread = S.spread || 0.11;
+  // The bow's specials: fire arrows, and every arrow recoverable.
+  const fx = W.arrow ? { ignite:hasMod(w, 'firearrow'), keepAll:hasMod(w, 'retriever') } : null;
   for (let i=0;i<n;i++){
     const a = p.angle + (n > 1 ? (i-(n-1)/2)*spread : 0) + mr(-S.jitter,S.jitter);
     addBullet(W.arrow ? 'arrow' : crit ? 'crit' : 'bullet', p.pos.x + Math.sin(a)*0.9, 1.15, p.pos.z + Math.cos(a)*0.9, a, S.speed*mr(0.94,1.06), S.life,
-      { damage:S.dmg*(crit ? CRIT : 1), pierce:S.pierce, kb:S.kb, crit, arrow:!!W.arrow, owner:p });
+      Object.assign({ damage:S.dmg*(crit ? CRIT : 1), pierce:S.pierce, kb:S.kb, crit, arrow:!!W.arrow, owner:p }, fx));
   }
   if (!W.arrow) muzzle(p.pos.x + Math.sin(p.angle)*1.1, p.pos.z + Math.cos(p.angle)*1.1, crit ? 4.5 : 3);
   sfx.shot(W.sound);
@@ -63,7 +66,8 @@ export function fire(p, dt){
   if (w.mag === 0) tryReload(p);
 }
 // A bullet (kind: bullet, crit, arrow, shard, drone) from (x,y,z) heading a, with gameplay fields in o
-// (damage, pierce, kb, bounce, owner…). Clients get a look-alike that flies until it hits something
+// (damage, pierce, kb, bounce, owner…; host only: ignite = sets what it hits on fire, keepAll = an arrow that
+// always lands as a pickup, kill(b, z) = called when it kills). Clients get a look-alike that flies until it hits something
 // (ghost: no damage); everything it does happens here on the host.
 const BULLET_LOOK = () => ({ bullet:[SH.bulletGeo, SH.bulletMat], crit:[SH.bulletGeo, SH.critMat], arrow:[SH.arrowGeo, SH.arrowMat], shard:[SH.shardGeo, SH.shardMat], drone:[SH.bulletGeo, SH.droneBulletMat] });
 const r2 = v => Math.round(v*100)/100;
@@ -158,6 +162,7 @@ export function updateBullets(dt){
           // A riot shield stops the bullet outright, piercing or not.
           b.hit.add(z); const blocked = b.ghost ? false : damageZombie(z, b.damage, b.dx*b.kb, b.dz*b.kb, 'bullet', b.owner);
           if (b.crit && !blocked) burst(bp.clone(), 'spark', 6, 4);
+          if (!b.ghost && !blocked){ if (z.dead){ if (b.kill) b.kill(b, z); } else if (b.ignite) ignite(z, b.owner); }
           if (b.pierce > 0 && !blocked) b.pierce--; else dead = true;
           break;
         }
@@ -166,7 +171,7 @@ export function updateBullets(dt){
     if (dead){
       scene.remove(b.mesh); bullets.splice(i,1);
       // Most arrows survive and can be picked back up where they stopped.
-      if (b.arrow && !b.ghost && Math.random() < WEAPONS.bow.keep) dropArrow(b.mesh.position.x, b.mesh.position.z);
+      if (b.arrow && !b.ghost && (b.keepAll || Math.random() < WEAPONS.bow.keep)) dropArrow(b.mesh.position.x, b.mesh.position.z);
     }
   }
 }
