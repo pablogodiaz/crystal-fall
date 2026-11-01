@@ -89,7 +89,7 @@ function land(o){
     g.add(pipe, led); scene.add(g);
     const h = { kind:'bomb', x, z, mesh:g, led, t:BOMB_FUSE, beep:0 };
     hazards.push(h); world.lure = h;
-    makeNoise(x, z, LURE_R);
+    makeNoise(x, z, LURE_R, true);
   }
 }
 // Blast at (x,z): zombies take zDmg (scaled by city) and the player pDmg, both falling off with distance.
@@ -159,7 +159,7 @@ export function updateThrowables(dt){
       }
     } else {
       h.beep -= dt;
-      if (h.beep <= 0){ h.beep = 0.12 + h.t*0.12; sfx.beep(); h.led.visible = true; makeNoise(h.x, h.z, LURE_R*0.6); }
+      if (h.beep <= 0){ h.beep = 0.12 + h.t*0.12; sfx.beep(); h.led.visible = true; makeNoise(h.x, h.z, LURE_R*0.6, true); }
       else if (h.beep < 0.06) h.led.visible = false;
       if (h.t <= 0){
         scene.remove(h.mesh); hazards.splice(i,1);

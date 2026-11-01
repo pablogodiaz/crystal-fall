@@ -9,6 +9,8 @@ import { resolveCircle, reveal } from './grid.js';
 import { fire, drainHp, meleeStrike, MELEE_TIME, MELEE_HIT } from './combat.js';
 import { curWeapon, magSize } from './inventory.js';
 import { burst } from './fx.js';
+import { makeNoise } from './zombies.js';
+import { AI } from './threats.js';
 
 export const player = { pos:new THREE.Vector3(), vel:new THREE.Vector3(), radius:0.45, angle:0, walk:0 };
 (function buildPlayer(){
@@ -46,7 +48,7 @@ export function resetPlayerStats(){
   Object.assign(player, { hp:100, maxHp:100, speed:4.6, stamina:1, staminaDelay:0, staminaRate:1, winded:false, boost:0,
     reloadT:0, fireCd:0, meleeT:0, meleeCd:0, meleeHit:false,
     dmgMul:1, fireMul:1, magMul:1, reloadMul:1, pellets:0, pierce:0, regen:0,
-    bleeding:false, throwSel:'molotov', aiming:false, bleedFx:0,
+    bleeding:false, throwSel:'molotov', aiming:false, bleedFx:0, stepT:0,
     weapons:[{ id:'pistol', mag:12 }, null], cur:0, ammo:{ pistol:36, shotgun:0, smg:0, rifle:0 },
     inv:[{ id:'bandage', n:1 }, { id:'drink', n:1 }].concat(new Array(INV_SLOTS-2).fill(null)) });
 }
@@ -101,6 +103,9 @@ export function updatePlayer(dt){
     spd *= SPRINT_MUL; player.staminaDelay = REGEN_DELAY;
     player.stamina = Math.max(0, player.stamina - dt*SPRINT_DRAIN*player.staminaRate*(player.boost > 0 ? BOOST_DRAIN : 1));
     if (player.stamina <= 0) player.winded = true;
+    // Running footsteps carry; walking is silent (zombies only notice you by sight).
+    player.stepT -= dt;
+    if (player.stepT <= 0){ player.stepT = AI.stepT; makeNoise(player.pos.x, player.pos.z, AI.sprintNoise); }
   } else {
     player.staminaDelay -= dt;
     if (player.staminaDelay <= 0) player.stamina = Math.min(1, player.stamina + dt*REGEN*(moving ? 1 : REGEN_STILL));

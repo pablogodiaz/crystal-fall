@@ -12,7 +12,7 @@ import { craftFromKey } from './hud.js';
 export function initInput(){
   addEventListener('keydown', e => {
     keys[e.code] = true;
-    if (state.mode === 'play' && ['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
+    if (state.mode === 'play' && ['Space','Tab','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
     if (e.repeat) return;
     if (e.code === 'KeyR') tryReload();
     if (e.code === 'KeyQ') swapWeapon();

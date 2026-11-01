@@ -33,16 +33,38 @@ export const RECIPES = [
 
 // Searchable containers. time = seconds holding E; noise = alert radius while searching.
 // rolls = [min,max] draws from the weighted table; empty = chance of finding nothing.
+// shelf/locker/desk/armory/medcab stand inside the walk-in landmarks, milcrate at the army outpost;
+// cruiser/ambulance/humvee = the trunks of landmark vehicles.
 export const LOOT = {
-  trunk:    { name:'car trunk', time:1.5, noise:10, rolls:[1,2], empty:0.2,  table:[['ammo',4],['scrap',3],['drink',1],['bandage',1.5],['molotov',0.3]] },
-  dumpster: { name:'dumpster',  time:1.5, noise:9,  rolls:[1,2], empty:0.25, table:[['scrap',4],['drink',2],['ammo',1.5],['bandage',1]] },
-  crate:    { name:'crate',     time:1.5, noise:8,  rolls:[2,3], empty:0,    table:[['ammo',5],['scrap',4],['weapon',0.5],['molotov',0.4],['pipebomb',0.4]] },
-  door:     { name:'house',     time:1.5, noise:8,  rolls:[1,2], empty:0.2,  table:[['drink',1.5],['bandage',2],['ammo',3],['scrap',1.5],['medkit',0.4]] }
+  trunk:    { name:'car trunk',  time:1.5, noise:10, rolls:[1,2], empty:0.2,  table:[['ammo',4],['scrap',3],['drink',1],['bandage',1.5],['molotov',0.3]] },
+  dumpster: { name:'dumpster',   time:1.5, noise:9,  rolls:[1,2], empty:0.25, table:[['scrap',4],['drink',2],['ammo',1.5],['bandage',1]] },
+  crate:    { name:'crate',      time:1.5, noise:8,  rolls:[2,3], empty:0,    table:[['ammo',5],['scrap',4],['weapon',0.5],['molotov',0.4],['pipebomb',0.4]] },
+  door:     { name:'house',      time:1.5, noise:8,  rolls:[1,2], empty:0.2,  table:[['drink',1.5],['bandage',2],['ammo',3],['scrap',1.5],['medkit',0.4]] },
+  shelf:    { name:'shelf',      time:1.2, noise:6,  rolls:[1,2], empty:0.15, table:[['drink',4],['bandage',1.5],['scrap',1.5],['molotov',0.3]] },
+  locker:   { name:'locker',     time:1.5, noise:8,  rolls:[1,2], empty:0.1,  table:[['ammo',6],['bandage',1.5],['pipebomb',0.5],['medkit',0.3]] },
+  desk:     { name:'desk',       time:1.2, noise:5,  rolls:[1,1], empty:0.3,  table:[['ammo',3],['bandage',1],['drink',1],['scrap',1]] },
+  armory:   { name:'armory',     time:2.5, noise:12 },
+  cruiser:  { name:'police car', time:1.5, noise:10, rolls:[1,2], empty:0.15, table:[['ammo',6],['bandage',1],['pipebomb',0.3],['scrap',1]] },
+  medcab:   { name:'medicine cabinet', time:1.5, noise:6, rolls:[1,2], empty:0.15, table:[['bandage',4],['medkit',1.5],['drink',0.6]] },
+  ambulance:{ name:'ambulance',  time:1.5, noise:10, rolls:[1,2], empty:0.1,  table:[['bandage',3],['medkit',1.2],['drink',1]] },
+  milcrate: { name:'military crate', time:2,  noise:10, rolls:[2,3], empty:0, table:[['ammo',7],['pipebomb',1],['weapon',0.5],['molotov',0.4],['medkit',0.4]] },
+  humvee:   { name:'army truck', time:1.5, noise:10, rolls:[1,2], empty:0.1,  table:[['ammo',6],['pipebomb',0.8],['bandage',1],['scrap',1.5]] }
 };
-// Landmark buildings (3-5 per city), searched through their front door. Loot is in loot.js.
+// Landmarks. Every city has a police station, a supermarket and a hardware store, plus 1-2 each of
+// pharmacies and gas stations; from = the city where a kind first appears (with a "New landmark"
+// banner, tip). Walk-in ones (enter) are looted from the shelves/cabinets inside, open ones (open)
+// from the crates in their yard, the rest through their front door. wall/band/floor are building
+// colours (checker = tiled floor, grille = bars over the windows). Loot is in loot.js.
 export const LANDMARKS = {
-  police:      { name:'Police station', icon:'🚔', color:0x2f6fd8, css:'#2f6fd8', time:2.5, noise:12 },
-  pharmacy:    { name:'Pharmacy',       icon:'💊', color:0x2f9e5a, css:'#2f9e5a', time:2.5, noise:10 },
-  supermarket: { name:'Supermarket',    icon:'🛒', color:0xd9822b, css:'#d9822b', time:2.5, noise:10 },
-  hardware:    { name:'Hardware store', icon:'🔧', color:0xb8961a, css:'#b8961a', time:2.5, noise:10 }
+  police:      { name:'Police station', icon:'🚔', color:0x2f6fd8, css:'#2f6fd8', time:2.5, noise:12, from:1, enter:true, wall:0xc9ccd2, band:0x1d3f7a, floor:0x8a929c },
+  supermarket: { name:'Supermarket',    icon:'🛒', color:0xd9822b, css:'#d9822b', time:2.5, noise:10, from:1, enter:true, wall:0xcdbf9e, band:0xc8521f, floor:0xd8d4c8, checker:true },
+  pharmacy:    { name:'Pharmacy',       icon:'💊', color:0x2f9e5a, css:'#2f9e5a', time:2.5, noise:10, from:1, wall:0xd9d9d2, band:0x2f9e5a },
+  hardware:    { name:'Hardware store', icon:'🔧', color:0xb8961a, css:'#b8961a', time:2.5, noise:10, from:1, wall:0x8c7a5e, band:0xd9822b },
+  gas:         { name:'Gas station',    icon:'⛽', color:0xd33b2c, css:'#d33b2c', time:2.5, noise:10, from:1, wall:0xe6e3dc, band:0xd33b2c },
+  hospital:    { name:'Hospital',       icon:'🏥', color:0xc8102e, css:'#c8102e', time:2.5, noise:10, from:3, enter:true, wall:0xe8ecef, band:0xc8102e, floor:0xb9c8cf,
+                 tip:'Medicine cabinets and ambulances full of supplies. The patients never left' },
+  gunshop:     { name:'Gun shop',       icon:'🎯', color:0x8a1c1c, css:'#8a1c1c', time:2.5, noise:12, from:4, wall:0x3d3b3a, band:0x8a1c1c, grille:true,
+                 tip:'Barred windows, a counter full of ammo, maybe a gun' },
+  outpost:     { name:'Army outpost',   icon:'🪖', color:0x5b6b2e, css:'#5b6b2e', time:2.5, noise:12, from:6, open:true,
+                 tip:'Military crates behind sandbags. The soldiers who held it are still on guard' }
 };

@@ -18,6 +18,7 @@
 <div id="hud" class="hidden">
   <div id="topLeft" class="panel">
     <div id="cityName" class="display">City 1</div>
+    <div id="district"></div>
     <div class="bar"><div class="fill hp" id="hpFill"></div><span id="hpText">100</span></div>
     <div class="meter"><small>Stamina</small><div class="bar thin"><div class="fill st" id="stFill"></div></div></div>
     <div id="status"></div>
@@ -30,6 +31,7 @@
     <div id="crystalBar" class="bar thin hidden"><div class="fill cr" id="crFill"></div></div>
   </div>
   <div id="minimapWrap"><canvas id="minimap" width="184" height="184"></canvas></div>
+  <div id="bigmapWrap" class="hidden"><canvas id="bigmap" width="444" height="444"></canvas><div class="caption">Explored map · release Tab to close</div></div>
   <div id="ammo" class="panel">
     <div id="wpnName">Pistol</div>
     <div class="ammoRow"><span id="ammoText" class="display">12</span><small id="ammoSub">/ 36</small></div>
@@ -43,7 +45,7 @@
     <svg viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="18" class="track"/><circle cx="22" cy="22" r="18" class="prog" id="interactRing"/></svg>
     <div class="label"><kbd>E</kbd><span id="interactLabel"></span></div>
   </div>
-  <div id="hint">Hold E to search. F melee, Q swaps guns, hold right click to aim a throw (wheel picks), C crafts. 1–8 use items.</div>
+  <div id="hint">Hold E to search. F melee, Q swaps guns, hold right click to aim a throw (wheel picks), C crafts. 1–8 use items. Hold Tab for the map.</div>
 </div>
 
 <div id="banner"><div id="bannerTitle" class="display"></div><div id="bannerSub"></div></div>
@@ -51,18 +53,19 @@
 <div class="screen" id="menuScreen">
   <div class="card">
     <h1 class="title display">Crystal Fall</h1>
-    <p class="lead">Every quarantined city hides a Crystal. Find it, shatter it, survive while it holds the city, and take the road to the next city. Scavenge for ammo and supplies on the way, and keep your breath for running. One life per run.</p>
+    <p class="lead">Every quarantined city hides a Crystal. Find it, shatter it, survive while it holds the city, and take the road to the next city. Downtown is crowded and well stocked, the outskirts quiet and bare. The dead hear gunshots and running feet, but lose you if you slip away. One life per run.</p>
     <div class="controls">
       <kbd>W A S D</kbd><span>Move</span>
       <kbd>Mouse</kbd><span>Aim, hold click to shoot</span>
       <kbd>Shift</kbd><span>Sprint (uses stamina)</span>
       <kbd>R</kbd><span>Reload (ammo is limited, scavenge for more)</span>
-      <kbd>Hold E</kbd><span>Search cars, dumpsters, crates and doors (it’s noisy)</span>
+      <kbd>Hold E</kbd><span>Search cars, dumpsters, crates, doors and shelves (it’s noisy)</span>
       <kbd>F</kbd><span>Melee: hit with the back of your gun (also left click when out of ammo)</span>
       <kbd>Q</kbd><span>Swap between your two guns</span>
       <kbd>Hold right click</kbd><span>Aim a molotov or pipe bomb, release to throw, left click cancels (mouse wheel or T picks which)</span>
       <kbd>1 – 8</kbd><span>Use an item (right-click a slot to drop it)</span>
       <kbd>C</kbd><span>Craft molotovs and pipe bombs from scrap</span>
+      <kbd>Hold Tab</kbd><span>Map of what you’ve explored</span>
       <kbd>Esc</kbd><span>Pause</span>
     </div>
     <button class="btn" id="startBtn">Start run</button>

@@ -76,6 +76,9 @@ export function updatePickups(dt){
 // Rays run from the camera to the player and to sample points on a disc around them. A building
 // they hit fades out, but (apart from ones hiding the player) only if its center is on the camera
 // side of the player, so buildings beyond you stay solid. Opacity eases in and out.
+// A building made of several meshes (walk-in landmarks) names one of them userData.fadeKey, which
+// holds the materials (userData.mats) and stands for all of them; userData.center overrides its
+// position for the camera-side test. A cut-away landmark (you're inside) doesn't fade.
 export const faded = new Map();  // mesh -> current opacity
 const FADE_R = 7, FADE_MIN = 0.2, FADE_SPEED = 5;
 const SAMPLES = [];
@@ -89,8 +92,9 @@ function castFade(x, y, z, cameraSideOnly){
   fadeOrigin.set(x, y, z).addScaledVector(camDir, -120);
   fadeRay.set(fadeOrigin, camDir); fadeRay.far = 119.5;
   for (const h of fadeRay.intersectObjects(world.buildingMeshes, false)){
-    const p = h.object.position;
-    if (!cameraSideOnly || (p.x - player.pos.x)*-camDir.x + (p.z - player.pos.z)*-camDir.z > 0) want.add(h.object);
+    const o = h.object.userData.fadeKey || h.object, p = o.userData.center || o.position;
+    if (o.userData.cut) continue;
+    if (!cameraSideOnly || (p.x - player.pos.x)*-camDir.x + (p.z - player.pos.z)*-camDir.z > 0) want.add(o);
   }
 }
 export function updateFade(dt){
@@ -105,4 +109,18 @@ export function updateFade(dt){
     setOpacity(m, n);
     if (n >= 1) faded.delete(m); else faded.set(m, n);
   }
+}
+
+// ---------- Walk-in landmarks ----------
+// While you're inside one, its roof lifts off and its walls sink to knee height (they still block).
+export function updateInteriors(dt){
+  if (!world.interiorAt) return;
+  const tx = Math.floor(player.pos.x/TILE), tz = Math.floor(player.pos.z/TILE);
+  const inside = tx >= 0 && tz >= 0 && tx < N && tz < N ? world.interiorAt[tz*N+tx] - 1 : -1;
+  world.interiors.forEach((it, i) => {
+    const want = i === inside ? 1 : 0;
+    if (it.k === want) return;
+    it.k = want > it.k ? Math.min(1, it.k + dt*4) : Math.max(0, it.k - dt*4);
+    it.shell.scale.y = 1 - 0.8*it.k; it.roof.visible = it.k < 0.35; it.key.userData.cut = it.k > 0.1;
+  });
 }

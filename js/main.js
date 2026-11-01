@@ -3,7 +3,7 @@ import { $ } from './utils.js';
 import { renderer, scene, camera, updateCamera } from './renderer.js';
 import { state } from './state.js';
 import { player } from './player.js';
-import { updateFade } from './fx.js';
+import { updateFade, updateInteriors } from './fx.js';
 import { updateHUD } from './hud.js';
 import { initInput } from './input.js';
 import { startCity, newSeed, update, animateWorld, loadBest, bestLine } from './game.js';
@@ -22,7 +22,7 @@ function loop(now){
   if (state.mode === 'play') update(dt);
   animateWorld(dt, t);
   updateCamera(dt, player.pos);
-  if (state.mode !== 'menu'){ updateFade(dt); updateHUD(dt, t); }
+  if (state.mode !== 'menu'){ updateFade(dt); updateInteriors(dt); updateHUD(dt, t); }
   renderer.render(scene, camera);
 }
 requestAnimationFrame(loop);
