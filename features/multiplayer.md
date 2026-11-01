@@ -2,8 +2,32 @@
 
 Co-op over a local network or Tailscale, 2–4 players. Stage 1 (players array, per-player controls,
 co-op rules, dev-tools companions) is done on `feature/multiplayer-core`; see CLAUDE.md, "Players".
-This file covers what's left. Build it on a new branch on top of that one, e.g.
-`feature/multiplayer-net`.
+Stage 2 (networking, steps 1–10 below) is done on `feature/multiplayer-net`; see CLAUDE.md,
+"Networking", for how it works now.
+
+## Status
+
+Done (`feature/multiplayer-net`): relay server, `net.js`, lobby, remote players, stable ids, client mode,
+own-player prediction, client HUD, session rules, README hosting/joining guide. Tested headless with two
+and three Playwright pages on one server.
+
+Changed from the plan:
+- **Own movement is client-authoritative.** The client moves its player with the same `movePlayer` code
+  and reports its position in `c`; the host accepts it while it's within 4 units and the client has seen
+  the latest teleport (`p.tp`). Otherwise the host bumps `p.tp` and the client snaps back. Knockback and
+  recoil reach the client as `kick` events. This avoids replaying inputs and keeps movement instant.
+- **Effects are sent where they're made**, not through a new `fx(…)` helper: `burst`, `addDecal`,
+  `addRing`/`shockwave`, `shake` and every `sfx.*` call are sent unless marked `local`.
+- Snapshots are per client (zombies within 64 units of the player they watch) and carry full HUD state
+  only when it changed.
+
+Still to do:
+- A real check on two machines over LAN and Tailscale, with bandwidth in DevTools (Network → WS) at
+  City 6+ with four players.
+- Clients see their own shots only after a round trip (no shot prediction); fine on a LAN, maybe
+  noticeable over DERP-relayed Tailscale.
+- The dev tools' "reveal map" and other host-only cheats aren't mirrored to clients.
+- Binary snapshots, message rate caps in the relay, and the public-hosting options below.
 
 ## Decisions
 

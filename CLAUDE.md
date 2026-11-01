@@ -12,7 +12,8 @@ ES modules don't load from `file://`, so serve the folder:
 python3 -m http.server 8000
 ```
 
-Then open http://localhost:8000. Three.js **r128** comes from cdnjs through the import map
+Then open http://localhost:8000. For co-op, run `python3 server/serve.py` instead (same port, also
+serves the game, plus the WebSocket relay; see "Networking"). Three.js **r128** comes from cdnjs through the import map
 in `index.html` (`"three"` → `three.js/r128/three.module.js`). Don't bump the version casually:
 lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
 
@@ -20,15 +21,16 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
 
 - **Run structure:** one life per run. Each run is a sequence of procedurally generated
   quarantined cities (City 1, 2, 3…). Difficulty scales with `state.level`.
-- **Players (co-op groundwork):** a session has 1–4 players (`players` in `state.js`, `MAX_PLAYERS`),
+- **Players:** a session has 1–4 players (`players` in `state.js`, `MAX_PLAYERS`),
   each a full player object (`addPlayer`/`removePlayer` in `player.js`; slot colours `LOOKS`: jacket,
   ring, HUD css). `state.me` = the index this machine controls (`me()`), `state.view` = the one the
   camera/HUD follow (`viewed()`: you, or whoever you spectate), `state.host` = this machine runs the
-  simulation (always true until networking). Every player moves from its control state
-  `p.ctl = { mx, mz, sprint, fire, use, aim }`: `readLocal` (keyboard/mouse) fills it for `me()`, `bots.js`
-  for everyone else (dev-tools companions; networking will fill it for remote players). One-shot actions
-  (reload, swap, items, throws, crafting) are calls that take the player. Until there's networking the
-  extra players are **companions** (bots) added from the dev tools: they follow you (or the nearest
+  simulation (false on a networked client). Every player moves from its control state
+  `p.ctl = { mx, mz, sprint, fire, use, aim }`: `readLocal` (keyboard/mouse) fills it for `me()`, host.js for
+  remote players (`p.remote` = their connection id), `bots.js` for everyone else. One-shot actions (reload,
+  swap, items, throws, crafting) are calls that take the player; input goes through `act(name, arg)`
+  (client.js), which calls `ACTS` (host.js) here or sends it to the host. Players can be people on other
+  machines (see "Networking") or **companions** (bots) added from the dev tools: they follow you (or the nearest
   living player), shoot the nearest zombie in sight, back off, swap to a loaded weapon, bandage/medkit
   themselves and follow you into the exit; they never search, craft or throw.
   - **Death:** `killPlayer(p)` (game.js): the player's body vanishes and they get back up as a zombie
@@ -56,6 +58,39 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     players (`updatePlayerTags`), other players as coloured dots on the maps. Toasts are only for you
     (`toast(msg, kind, p)` ignores other players'); pickup floaters only for the watched player
     (`floatText(msg, kind, p)`). One lamp follows the watched player (`updateLamp`).
+- **Networking** (co-op over LAN/Tailscale; `features/multiplayer.md` has the plan and what's left):
+  **host-authoritative.** `server/serve.py` (stdlib Python) serves the files and a game-agnostic WebSocket
+  relay at `/ws/<room>`; `net.js` is the only code that knows about sockets (`connect`, `send(to, msg)`,
+  `onNet({ message, join, leave, close, ready })`, URL from `location`, `VERSION` checked in `hello`; bump
+  it when `cityGen.js`, `config.js` layout data or messages change). `net.role`: `solo` | `host` | `client`.
+  - **Host** (`host.js`): runs `update()` as always. Clients' `hello` → `addPlayer()` with `p.remote`
+    (a player who dropped out within `LOST` = 30 s and comes back with the same name gets theirs back;
+    meanwhile a bot plays them). Their `c` messages (30 Hz) fill `p.ctl` and `p.net` (the position their
+    machine moved them to: `movePlayer` accepts it while it's within 4 units and their `tp` matches;
+    otherwise `p.tp++` snaps them back); `a` messages call `ACTS`. Every 50 ms (`hostTick` → `flushNow`)
+    each client gets one `k` message: `e` (events for everyone, `emit`), `pe` (for that player, `emitTo`),
+    `s` (run state), `p` (every player: position, angle, hp, flags, held weapon, melee, stamina, `tp`,
+    drone, rail charge), `z` (zombies within 64 units of the player they watch: nid, position, facing,
+    flags from `zombieFlags`, hp %) and `f` (full HUD state for their player and the one they watch, only
+    when it changed). Joining mid-run gets `syncEvents()` (the world as events) in the `w` welcome.
+  - **Client** (`client.js`): never calls `update()`. `startCity(level, seed)` builds the same city
+    (skipping `populate`); everything else is mirrored: events spawn/kill zombies (`mirrorSpawn`/
+    `mirrorKill`, corpses play out locally), drops (`dropMesh`), health crosses, hazards, throws, acid,
+    wells and orbs as **ghosts** (same meshes, no gameplay), ghost bullets (`addBullet(…, { ghost })`, fly
+    and stop at walls/zombies in `updateBullets`), searched containers, landmarks, Crystal steps
+    (`crystalFx`), the road (`roadFx`), upgrades (`showUpgrades`), game over (`showGameOver`). Snapshots
+    move other players and zombies (eased over one tick); `animateMirror` drives zombie looks from flags.
+    Its own player is predicted with `movePlayer` and reported; knockback arrives as `kick`.
+  - **Effects reach clients by themselves:** `burst`, `addDecal`, `addRing`/`shockwave`, `shake` (fx.js) and
+    every `sfx.*` call (wrapped in `initHost`) are emitted unless passed `local` (ambient effects of things
+    clients mirror, corpses, gibs, rising dirt, menu). Sounds and messages for one player: `sfxFor(p, name)`,
+    `toast(msg, kind, p)`, `floatText(…, p)`, `shake(a, p)`; for everyone: `toastAll`, `bannerAll`.
+  - **Session rules:** pause and dev tools are host-only (clients see the pause screen without Resume).
+    Mid-run joiners spawn next to a living player with a fresh kit (between cities: counted as picked).
+    The host leaving sends every client back to the menu ("The host left"). Best runs are saved on every
+    machine from the host's result (`over` event).
+  - **Lobby** (`lobby.js`): menu buttons Host co-op / Join co-op, a name field
+    (`localStorage['crystal-fall-name']`), the lobby card (address to share, players, host's Start run).
 - **Map:** a city is `b` × `b` blocks of 5×5 tiles between 2-tile roads, `n = 7b + 4` tiles across
   (`city.b`, `city.n`). It grows with the run (`CITY_BLOCKS` in `config.js`): 10×10 blocks
   (74 tiles) in Cities 1–2, 12×12 (88) from City 3, 14×14 (102) from City 6, with a "The cities are
@@ -365,6 +400,7 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
 ## Folder structure
 
 ```
+server/serve.py   Co-op server: static files + WebSocket relay (/ws/<room>), Python standard library only
 index.html        Markup (HUD, overlay screens), import map, loads css + js/main.js
 css/style.css     All styles; light/dark theme tokens on :root
 js/
@@ -421,7 +457,13 @@ js/
   game.js         Game flow: startCity/newRun, placing/reviving/killing players, spectating, populate(),
                   takeover countdown + spawning, exit wait, per-player upgrades, game over, pause/craft,
                   resident respawns, update() and animateWorld()
-  input.js        Keyboard/mouse/focus listeners
+  input.js        Keyboard/mouse/focus listeners (one-shot actions go through act())
+  net.js          Transport: WebSocket to the relay, send/onNet, reconnect, VERSION
+  host.js         Host session: remote players, ACTS, emit/emitTo/sfxFor, ticks (snapshots, full state),
+                  mid-run sync, disconnects; nextId() network ids
+  client.js       Client session: mirrors the host's world (events, snapshots, interpolation), predicts its
+                  own player, act()
+  lobby.js        Host co-op / Join co-op buttons and the lobby card
   devtools.js     Dev tools panel (` key): cheats, city/phase jumps, teleport, spawning, items, time scale
 features/
   multiplayer.md  Plan for the rest of co-op (networking: relay server, host/client split, messages)
@@ -453,6 +495,11 @@ features/
   Exception: `utils.js` owns `rng`, which only it reassigns via `seedRng()`.
   Weapons are instances on `p.weapons` and on ground drops (`d.w`); mutate them in place. Bullets,
   burning, fire zones and thrown items carry their player (`owner`/`by`) for kill credit.
+- **Networked entities:** anything the host creates that clients must see gets a network id (`nid` from
+  `nextId()`), an event when it appears and goes (`emit([...])`), and a way to build it without its
+  gameplay (a `…Mesh(…, ghost)` function or `mirror…`), so host and client share the look. Code that
+  clients also run (corpses, rising, `animate…` functions) must only make `local` effects. Keep event
+  arrays short and numbers rounded (`r2`). Personal sounds/messages take the player (`sfxFor`, `toast(…, p)`).
 - **Flow-field cache:** `flowTo()` fields are keyed by tile; call `clearFlowCache()` whenever the
   grid changes (`startCity`, `openRoad`). Zombies hold their own reference, so evicted fields are
   never recycled.
@@ -527,6 +574,12 @@ dying turns into a zombie, dying yourself spectates (click/Q cycles), the exit w
 each player gets different upgrade cards, the dead come back next city, and zombie counts go up.
 Headless, `addPlayer()` from `player.js` plus `startCity()` places everyone; `killPlayer(p)` and
 `spectate(1)` are in `game.js`.
+For networking, run `python3 server/serve.py` and open two windows side by side (background tabs
+throttle `requestAnimationFrame`): one clicks Host co-op, the other Join co-op. Check the client sees the
+same city and zombies, its moves, shots, throws, searches and item use happen on the host, upgrades, the
+next city, death/spectating and pause reach it, a third window can join mid-run, closing a client leaves a
+bot for 30 s, and closing the host sends clients back to the menu. Headless, open two Playwright contexts
+on the server; drive the host with `update(0.05)` plus `hostTick(0.05)` (host.js) in a loop.
 Watch the browser console for errors. A headless check with Playwright works if you serve the
 folder and (when the CDN is unreachable) route `**/three.module.js` to a local copy of r128.
 Headless WebGL runs at ~5 fps and `dt` is capped at 0.05 s, so drive timing-sensitive checks by

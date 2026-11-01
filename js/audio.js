@@ -85,3 +85,7 @@ export const sfx = {
   jam: () => sTone(900, 820, 0.04, 'square', 0.08),
   alarm: () => { for (let i=0;i<8;i++) setTimeout(() => sTone(i%2 ? 700 : 950, i%2 ? 700 : 950, 0.26, 'square', 0.07), i*280); }
 };
+// The unwrapped sounds: host.js wraps every sfx.* call so clients hear it too; playSfx(k, …) plays one
+// here only (sounds for one player, sounds the client makes itself).
+const RAW = Object.assign({}, sfx);
+export const playSfx = (k, ...a) => RAW[k] ? RAW[k](...a) : undefined;

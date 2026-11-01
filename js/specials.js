@@ -7,13 +7,14 @@ import { mr, mri } from './utils.js';
 import { scene } from './renderer.js';
 import { SH } from './assets.js';
 import { ZTYPES, ZMODS, THREAT_BASE, THREAT_POOL, SHUFFLE_INTRO, INTRO_FORCED, SPOT_RANGE } from './threats.js';
-import { state, zombies, spits, puddles, rings, dev, players } from './state.js';
+import { state, zombies, spits, puddles, dev, players } from './state.js';
 import { isBlockedTile, lineOfSight } from './grid.js';
 import { viewed, crowd, cheats } from './player.js';
 import { spawnZombieAt, findSpawnNear, alertZombie, alertNear } from './zombies.js';
 import { hurtPlayer } from './combat.js';
-import { burst } from './fx.js';
-import { queueBanner, toast } from './hud.js';
+import { burst, addRing, animateRings, shake } from './fx.js';
+import { queueBanner, toastAll } from './hud.js';
+import { emit, nextId } from './host.js';
 import { sfx } from './audio.js';
 
 // ---------- Unlocks ----------
@@ -77,10 +78,8 @@ function scream(z, p){
   const S = ZTYPES.screamer;
   z.screamed = true; z.windup = 0; z.windSnd = null; resetPose(z);
   alertNear(z.pos.x, z.pos.z, S.alertR, p);  // they all learn where that player is
-  const mat = new THREE.MeshBasicMaterial({ color:0xffd0d0, transparent:true, opacity:0.7, depthWrite:false, side:THREE.DoubleSide });
-  const ring = new THREE.Mesh(SH.markGeo, mat); ring.rotation.x = -Math.PI/2; ring.position.set(z.pos.x, 1.6, z.pos.z);
-  scene.add(ring); rings.push({ mesh:ring, t:0, T:0.6, r0:1, r1:15.4, op:0.7 });
-  sfx.scream(); state.shake = Math.max(state.shake, 0.35);
+  addRing('mark', 0xffd0d0, z.pos.x, 1.6, z.pos.z, 1, 15.4, 0.6, 0.7);
+  sfx.scream(); shake(0.35);
   // During the takeover its spawns count as the takeover's (always alert, never despawn).
   const horde = state.phase === 'takeover', n = Math.round(mri(S.spawn[0], S.spawn[1])*crowd(true));
   for (let i=0;i<n;i++){
@@ -88,7 +87,7 @@ function scream(z, p){
     spawnZombieAt(s.x, s.z, horde, true, false, 'screamer');
     burst(new THREE.Vector3(s.x, 0.3, s.z), 'dust', 6, 2.5);
   }
-  if (Math.hypot(z.pos.x - viewed().pos.x, z.pos.z - viewed().pos.z) < 40) toast('A screamer called more of them', 'bad');
+  if (Math.hypot(z.pos.x - viewed().pos.x, z.pos.z - viewed().pos.z) < 40) toastAll('A screamer called more of them', 'bad');
 }
 export function cancelScream(z){ if (z.windSnd){ z.windSnd(); z.windSnd = null; } z.windup = 0; resetPose(z); }
 function resetPose(z){
@@ -98,7 +97,7 @@ function resetPose(z){
 }
 
 // ---------- Spitter ----------
-const HOLD = [0, 0, 0];
+const HOLD = [0, 0, 0], r2 = v => Math.round(v*100)/100;
 // Returns [dirX, dirZ, speedMul] while it handles its own spacing, or null to chase normally.
 // p = the player it's working against (dx/dz/dist toward them).
 export function updateSpitter(z, dt, dist, dx, dz, p){
@@ -118,21 +117,48 @@ function lob(z, p){
   z.spitCd = mr(S.cooldown[0], S.cooldown[1]);
   let ex = p.pos.x + p.vel.x*T*S.lead + mr(-S.spread, S.spread), ez = p.pos.z + p.vel.z*T*S.lead + mr(-S.spread, S.spread);
   if (isBlockedTile(Math.floor(ex/TILE), Math.floor(ez/TILE))){ ex = p.pos.x; ez = p.pos.z; }
-  const g = new THREE.Group(); scene.add(g);
+  const a = z.g.rotation.y, sx = z.pos.x + Math.sin(a)*0.5, sz = z.pos.z + Math.cos(a)*0.5;
+  spitMesh(sx, sz, ex, ez, T);
+  emit(['spit', r2(sx), r2(sz), r2(ex), r2(ez), T]);
+  sfx.spit();
+}
+// The acid ball in flight plus its landing marker (ghost = a client's copy: it doesn't splash).
+export function spitMesh(sx, sz, ex, ez, T, ghost){
+  const S = ZTYPES.spitter, g = new THREE.Group(); scene.add(g);
   const ball = new THREE.Mesh(SH.acidGeo, SH.acidMat);
   const ring = new THREE.Mesh(SH.markGeo, SH.markMat), fill = new THREE.Mesh(SH.fireGeo, SH.markFillMat);
   for (const m of [ring, fill]){ m.rotation.x = -Math.PI/2; m.position.set(ex, 0.13, ez); }
   ring.scale.setScalar(S.puddleR); fill.scale.setScalar(0.01);
   g.add(ball, ring, fill);
-  const a = z.g.rotation.y, sx = z.pos.x + Math.sin(a)*0.5, sz = z.pos.z + Math.cos(a)*0.5;
-  spits.push({ mesh:g, ball, ring, fill, sx, sz, ex, ez, t:0, T });
-  sfx.spit();
+  spits.push({ mesh:g, ball, ring, fill, sx, sz, ex, ez, t:0, T, ghost });
 }
 function splash(o){
-  const S = ZTYPES.spitter;
-  const m = new THREE.Mesh(SH.fireGeo, SH.acidPoolMat); m.rotation.x = -Math.PI/2; m.position.set(o.ex, 0.11, o.ez); m.scale.setScalar(S.puddleR);  // above slabs and decals, below fire
-  scene.add(m); puddles.push({ mesh:m, x:o.ex, z:o.ez, t:S.puddleTime, tick:0 });
+  const S = ZTYPES.spitter, nid = nextId();
+  puddleMesh(o.ex, o.ez, S.puddleTime, nid);
+  emit(['hz+', nid, 'acid', r2(o.ex), r2(o.ez), S.puddleTime]);
   burst(new THREE.Vector3(o.ex, 0.3, o.ez), 'acid', 12, 3.5); sfx.splash();
+}
+export function puddleMesh(x, z, t, nid, ghost){
+  const S = ZTYPES.spitter;
+  const m = new THREE.Mesh(SH.fireGeo, SH.acidPoolMat); m.rotation.x = -Math.PI/2; m.position.set(x, 0.11, z); m.scale.setScalar(S.puddleR);  // above slabs and decals, below fire
+  scene.add(m); const h = { mesh:m, x, z, t, tick:0, nid, ghost }; puddles.push(h); return h;
+}
+// Acid in flight and puddles, looks only: clients run this on their copies (ghosts).
+export function animateAcid(dt){
+  const S = ZTYPES.spitter;
+  for (let i=spits.length-1;i>=0;i--){
+    const o = spits[i]; o.t += dt;
+    const k = Math.min(1, o.t/o.T);
+    o.ball.position.set(o.sx + (o.ex-o.sx)*k, 1.5*(1-k) + Math.sin(k*Math.PI)*(2.5 + o.T*2) + 0.15, o.sz + (o.ez-o.sz)*k);
+    o.fill.scale.setScalar(Math.max(0.01, k*S.puddleR));
+    if (k >= 1){ scene.remove(o.mesh); spits.splice(i,1); if (!o.ghost) splash(o); }
+  }
+  for (let i=puddles.length-1;i>=0;i--){
+    const h = puddles[i]; h.t -= dt;
+    h.mesh.scale.setScalar(S.puddleR*Math.max(0.01, Math.min(1, h.t/0.6)) + Math.sin(h.t*7)*0.04);
+    if (Math.random() < dt*6) burst(new THREE.Vector3(h.x + mr(-1,1), 0.15, h.z + mr(-1,1)), 'acid', 1, 0.5, true);
+    if (h.t <= 0 && h.ghost){ scene.remove(h.mesh); puddles.splice(i,1); }
+  }
 }
 
 // ---------- Poses ----------
@@ -158,17 +184,9 @@ export function poseSpecial(z){
 let spotT = 0;
 export function updateSpecials(dt){
   const S = ZTYPES.spitter;
-  for (let i=spits.length-1;i>=0;i--){
-    const o = spits[i]; o.t += dt;
-    const k = Math.min(1, o.t/o.T);
-    o.ball.position.set(o.sx + (o.ex-o.sx)*k, 1.5*(1-k) + Math.sin(k*Math.PI)*(2.5 + o.T*2) + 0.15, o.sz + (o.ez-o.sz)*k);
-    o.fill.scale.setScalar(Math.max(0.01, k*S.puddleR));
-    if (k >= 1){ scene.remove(o.mesh); spits.splice(i,1); splash(o); }
-  }
+  animateAcid(dt);
   for (let i=puddles.length-1;i>=0;i--){
-    const h = puddles[i]; h.t -= dt; h.tick -= dt;
-    h.mesh.scale.setScalar(S.puddleR*Math.min(1, h.t/0.6) + Math.sin(h.t*7)*0.04);
-    if (Math.random() < dt*6) burst(new THREE.Vector3(h.x + mr(-1,1), 0.15, h.z + mr(-1,1)), 'acid', 1, 0.5);
+    const h = puddles[i]; h.tick -= dt;
     if (h.tick <= 0){
       h.tick = 0.25;
       for (const p of players){
@@ -176,15 +194,14 @@ export function updateSpecials(dt){
         hurtPlayer(p, S.puddleDps*0.25, null); if (state.mode !== 'play') return;
       }
     }
-    if (h.t <= 0){ scene.remove(h.mesh); puddles.splice(i,1); }
+    if (h.t <= 0){ scene.remove(h.mesh); puddles.splice(i,1); emit(['hz-', h.nid]); }
   }
-  for (let i=rings.length-1;i>=0;i--){
-    // Expanding rings (screams, shockwaves): ease out from r0 to r1 over T s while fading.
-    const r = rings[i]; r.t += dt; const k = Math.min(1, r.t/r.T);
-    r.mesh.scale.setScalar(r.r0 + (r.r1 - r.r0)*(1 - (1-k)**3)); r.mesh.material.opacity = r.op*(1 - k*k);
-    if (r.t >= r.T){ scene.remove(r.mesh); r.mesh.material.dispose(); rings.splice(i,1); }
-  }
-  // "New threat" banner the first time each type/modifier with a tip comes near the player being watched.
+  animateRings(dt);
+  spotThreats(dt);
+}
+// "New threat" banner the first time each type/modifier with a tip comes near the player being watched
+// (clients run this themselves, for their own screen).
+export function spotThreats(dt){
   spotT -= dt; if (spotT > 0) return; spotT = 0.25;
   const v = viewed();
   for (const z of zombies){

@@ -13,8 +13,10 @@ import { rollWeapon, weaponTitle } from './weapons.js';
 import { refuel } from './uniques.js';
 import { makeNoise } from './zombies.js';
 import { burst } from './fx.js';
-import { toast, floatText } from './hud.js';
+import { toast, toastAll, floatText } from './hud.js';
 import { sfx } from './audio.js';
+import { emit, sfxFor, nextId } from './host.js';
+const r2 = v => Math.round(v*100)/100;
 
 // What E would act on right now is per player, p.interact = { target, p, label, noiseT, lock }; the
 // HUD reads the watched player's for the prompt and progress ring. target is a container, a ground
@@ -89,7 +91,7 @@ function grantLoot(p, raw, from){
       if (k) floatText(`+${k} ${WEAPONS[e.ammo].ammo}`, 'good', p); else notes.push(`${WEAPONS[e.ammo].ammo} full`);
     } else if (e.weapon){
       const w = e.weapon, name = weaponTitle(w);
-      spawnDrop('weapon', w, 0, x, z, null, from); sfx.weapon();
+      spawnDrop('weapon', w, 0, x, z, null, from); sfxFor(p, 'weapon');
       floatText(`Found: ${name}!`, 'r-' + w.rarity, p); notes.push(`${name} found. It’s on the ground: hold E to pick it up`);
     } else {
       const k = addItem(p, e.item, e.n), I = ITEMS[e.item];
@@ -120,7 +122,15 @@ export function freeSpot(x, z){
   return [x + mr(-0.3,0.3), z + mr(-0.3,0.3)];
 }
 export function spawnDrop(kind, id, n, x, z, held, from){
-  const w = kind === 'weapon' ? id : null, [sx, sz] = freeSpot(x, z);
+  const [sx, sz] = freeSpot(x, z), d = dropMesh(kind, id, n, sx, sz, held, from, nextId());
+  emit(dropEvent(d));
+  return d;
+}
+// What a client needs for its copy (dropMesh); a weapon goes over whole (rarity, mods, ammo…).
+export const dropEvent = d => ['d+', d.nid, d.kind, d.w || d.id, d.n, r2(d.px), r2(d.pz), d.fly > 0 ? r2(d.fx) : null, d.fly > 0 ? r2(d.fz) : null, d.held ? d.held.slot : -1];
+// The drop itself at its spot (sx,sz), tossed in from `from` if given.
+export function dropMesh(kind, id, n, sx, sz, held, from, nid){
+  const w = kind === 'weapon' ? id : null;
   const g = new THREE.Group(); g.position.set(sx, 0, sz);
   const box = new THREE.Group(); box.position.y = 0.45;
   if (w){ const m = gunModel(w.id, w.rarity); m.scale.setScalar(1.8); m.position.z = -0.7; m.rotation.z = 0.25; box.add(m); }
@@ -130,14 +140,14 @@ export function spawnDrop(kind, id, n, x, z, held, from){
   g.add(box, ring);
   if (w && w.rarity !== 'common' && w.rarity !== 'uncommon') g.add(new THREE.Mesh(SH.beamGeo, SH.rarBeam[w.rarity]));
   scene.add(g);
-  const d = { kind, id:w ? w.id : id, w, n, g, box, t:Math.random()*6, held:held || null, px:sx, pz:sz, fly:0 };
+  const d = { kind, id:w ? w.id : id, w, n, g, box, t:Math.random()*6, held:held || null, px:sx, pz:sz, fly:0, nid };
   if (from && Math.hypot(from.x - sx, from.z - sz) > 0.3){ d.fly = TOSS; d.fx = from.x; d.fz = from.z; g.position.set(from.x, 0, from.z); }
   drops.push(d); return d;
 }
 // A spent arrow: joins one already lying close by, otherwise lands as its own pickup.
 export function dropArrow(x, z){
   const d = drops.find(d => d.kind === 'ammo' && d.id === 'bow' && Math.hypot(d.px - x, d.pz - z) < 1.2);
-  if (d) d.n++; else spawnDrop('ammo', 'bow', 1, x, z);
+  if (d){ d.n++; emit(['dn', d.nid, d.n]); } else spawnDrop('ammo', 'bow', 1, x, z);
 }
 // Ammo off a dead zombie, suited to player p's guns.
 export function dropZombieAmmo(x, z, p){ const a = ammoRoll(ammoType(p), 0.5); spawnDrop('ammo', a.ammo, a.n, x, z); }
@@ -147,34 +157,41 @@ export function dropName(d){
   if (d.kind === 'ammo') return `${WEAPONS[d.id].ammo} ×${d.n}`;
   return weaponTitle(d.w);
 }
-function removeDrop(d){ scene.remove(d.g); drops.splice(drops.indexOf(d), 1); }
+export function removeDrop(d){ scene.remove(d.g); drops.splice(drops.indexOf(d), 1); emit(['d-', d.nid]); }
 // Walk-over pickup of items and ammo by player p. Weapons are only ever taken with E (updateInteract).
 // Returns true once the drop is used up.
 function tryCollect(p, d){
   if (d.kind === 'item'){
     const k = addItem(p, d.id, d.n); if (!k) return false;
-    d.n -= k; floatText(`+${k} ${ITEMS[d.id].icon} ${ITEMS[d.id].name}`, 'good', p); sfx.pickup();
+    d.n -= k; floatText(`+${k} ${ITEMS[d.id].icon} ${ITEMS[d.id].name}`, 'good', p); sfxFor(p, 'pickup');
   } else if (d.kind === 'ammo'){
     const k = addAmmo(p, d.id, d.n); if (!k) return false;
-    d.n -= k; floatText(`+${k} ${WEAPONS[d.id].ammo}`, 'good', p); sfx.pickup();
+    d.n -= k; floatText(`+${k} ${WEAPONS[d.id].ammo}`, 'good', p); sfxFor(p, 'pickup');
   } else return false;
   if (!d.n){ removeDrop(d); return true; }
+  emit(['dn', d.nid, d.n]);
   return false;
+}
+// Spinning, bobbing, the toss arc, and letting go of `held` (also run by clients on their copies).
+// Returns false while it's in the air.
+export function animateDrop(d, dt){
+  d.t += dt;
+  d.box.rotation.y += dt*1.6; d.box.position.y = 0.45 + Math.sin(d.t*3)*0.08;
+  if (d.fly > 0){
+    // Tossed: an arc from where it came from to its spot. Can't be picked up mid-air.
+    d.fly = Math.max(0, d.fly - dt);
+    const k = 1 - d.fly/TOSS;
+    d.g.position.set(d.fx + (d.px - d.fx)*k, 0, d.fz + (d.pz - d.fz)*k); d.box.position.y += Math.sin(k*Math.PI)*1.5;
+    if (!d.fly) burst(new THREE.Vector3(d.px, 0.3, d.pz), 'dust', 4, 1.5, true);
+    return false;
+  }
+  if (d.held && (d.held.dead || Math.hypot(d.px - d.held.pos.x, d.pz - d.held.pos.z) > 1.8)) d.held = null;
+  return true;
 }
 export function updateDrops(dt){
   for (let i=drops.length-1;i>=0;i--){
-    const d = drops[i]; d.t += dt;
-    d.box.rotation.y += dt*1.6; d.box.position.y = 0.45 + Math.sin(d.t*3)*0.08;
-    if (d.fly > 0){
-      // Tossed: an arc from where it came from to its spot. Can't be picked up mid-air.
-      d.fly = Math.max(0, d.fly - dt);
-      const k = 1 - d.fly/TOSS;
-      d.g.position.set(d.fx + (d.px - d.fx)*k, 0, d.fz + (d.pz - d.fz)*k); d.box.position.y += Math.sin(k*Math.PI)*1.5;
-      if (!d.fly) burst(new THREE.Vector3(d.px, 0.3, d.pz), 'dust', 4, 1.5);
-      continue;
-    }
-    if (d.held && (d.held.dead || Math.hypot(d.px - d.held.pos.x, d.pz - d.held.pos.z) > 1.8)) d.held = null;
-    if (d.kind === 'weapon') continue;
+    const d = drops[i];
+    if (!animateDrop(d, dt) || d.kind === 'weapon') continue;
     for (const p of players){
       if (p.dead || p === d.held || Math.hypot(d.px - p.pos.x, d.pz - p.pos.z) >= 1.2) continue;
       if (tryCollect(p, d)) break;
@@ -227,17 +244,17 @@ export function updateInteract(p, dt){
     if (interact.p >= 1){
       const name = weaponTitle(best.w);
       removeDrop(best);
-      if (free){ giveWeapon(p, best.w); sfx.pickup(); toast(`${name}! Press Q to swap to it`, 'good', p); }
-      else { spawnDrop('weapon', replaceWeapon(p, best.w), 0, px, pz, p); sfx.swap(); }
+      if (free){ giveWeapon(p, best.w); sfxFor(p, 'pickup'); toast(`${name}! Press Q to swap to it`, 'good', p); }
+      else { spawnDrop('weapon', replaceWeapon(p, best.w), 0, px, pz, p); sfxFor(p, 'swap'); }
       floatText(`+ ${name}`, 'r-' + best.w.rarity, p);
       interact.target = null; interact.p = 0; interact.lock = true;
     }
     return;
   }
   // Rummaging is loud: zombies nearby may hear it.
-  if (interact.p === 0){ makeNoise(best.px, best.pz, best.noise*0.6); sfx.search(); interact.noiseT = 0.5; }
+  if (interact.p === 0){ makeNoise(best.px, best.pz, best.noise*0.6); sfxFor(p, 'search'); interact.noiseT = 0.5; }
   interact.noiseT -= dt;
-  if (interact.noiseT <= 0){ interact.noiseT = 0.5; sfx.search(); if (Math.random() < 0.5) makeNoise(best.px, best.pz, best.noise); }
+  if (interact.noiseT <= 0){ interact.noiseT = 0.5; sfxFor(p, 'search'); if (Math.random() < 0.5) makeNoise(best.px, best.pz, best.noise); }
   interact.p += dt/best.time;
   if (interact.p < 1) return;
   interact.lock = true;
@@ -246,13 +263,14 @@ export function updateInteract(p, dt){
 }
 function finishSearch(p, c){
   c.searched = true; c.open(); c.glint.visible = false;
+  emit(['open', world.city.containers.indexOf(c)]);
   p.interact.target = null; p.interact.p = 0;
   burst(new THREE.Vector3(c.px, 0.8, c.pz), 'dust', 6, 2);
   const { notes, found } = grantLoot(p, rollLoot(c, p), { x:c.px, z:c.pz });
-  if (found) sfx.loot(); else floatText(`Nothing useful in this ${c.name}`, 'dim', p);
+  if (found) sfxFor(p, 'loot'); else floatText(`Nothing useful in this ${c.name}`, 'dim', p);
   if (notes.length) toast(notes.join('. '), 'info', p);
   if (c.kind === 'trunk' && Math.random() < 0.12){
-    sfx.alarm(); makeNoise(c.px, c.pz, 32); toast('Car alarm! Everything nearby heard that', 'bad');
+    sfx.alarm(); makeNoise(c.px, c.pz, 32); toastAll('Car alarm! Everything nearby heard that', 'bad');
   }
 }
 
@@ -262,8 +280,9 @@ export function updateLandmarks(){
   for (const l of world.city.landmarks){
     if (l.found || !world.explored[l.oz*N + l.ox]) continue;
     l.found = true; world.mmDirty = true;
+    emit(['lm', world.city.landmarks.indexOf(l)]);
     const L = LANDMARKS[l.type];
-    toast(`Discovered: ${L.icon} ${L.name}` + (l.type === 'police' ? ' (guarded)' : '') + (L.enter ? '. Walk in to search it' : ''), 'info');
+    toastAll(`Discovered: ${L.icon} ${L.name}` + (l.type === 'police' ? ' (guarded)' : '') + (L.enter ? '. Walk in to search it' : ''), 'info');
   }
 }
 export function animateContainers(t){

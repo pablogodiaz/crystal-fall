@@ -7,11 +7,13 @@ import { WEAPONS, ITEMS, RECIPES, LANDMARKS, INV_SLOTS, RARITY } from './items.j
 import { CRYSTAL } from './threats.js';
 import { state, world, zombies, drops, pickups, keys, players } from './state.js';
 import { me, viewed } from './player.js';
-import { useSlot, dropSlot, craft, countItem, magSize, selectedThrowable } from './inventory.js';
+import { craft, countItem, magSize, selectedThrowable } from './inventory.js';
 import { weaponStats, weaponDps, weaponTitle, modText } from './weapons.js';
 import { dropName } from './loot.js';
 import { EXIT_WAIT, crafting } from './game.js';
 import { blockIndex } from './grid.js';
+import { emit, emitTo } from './host.js';
+import { act } from './client.js';
 
 const mm = $('minimap'), mctx = mm.getContext('2d'), bm = $('bigmap'), bctx = bm.getContext('2d');
 // Explored tiles are cached on an offscreen layer (MS px per tile), redrawn only when world.mmDirty.
@@ -242,8 +244,8 @@ const slotEls = [];
 for (let i=0;i<INV_SLOTS;i++){
   const b = document.createElement('button'); b.className = 'slot empty'; b.tabIndex = -1;
   b.innerHTML = `<kbd>${i+1}</kbd><span class="ic"></span><small></small>`;
-  b.addEventListener('click', () => { b.blur(); useSlot(me(), i); });
-  b.addEventListener('contextmenu', e => { e.preventDefault(); dropSlot(me(), i); });
+  b.addEventListener('click', () => { b.blur(); act('use', i); });
+  b.addEventListener('contextmenu', e => { e.preventDefault(); act('dropSlot', i); });
   $('inventory').appendChild(b); slotEls.push(b);
 }
 let invSig = '';
@@ -278,6 +280,7 @@ function updateInteractPrompt(){
 const floaters = [], tags = [], fpos = new THREE.Vector3(), FLOAT_T = 1.6;
 const toScreen = (x, y, z) => { fpos.set(x, y, z).project(camera); return [(fpos.x+1)/2*innerWidth, (1-fpos.y)/2*innerHeight]; };
 export function floatText(msg, kind, p){
+  if (p && p.remote) emitTo(p, ['ft', msg, kind]);
   if (p && p !== viewed()) return;
   const el = document.createElement('div');
   el.className = 'floater' + (kind ? ' ' + kind : ''); el.textContent = msg; el.style.opacity = 0;
@@ -336,8 +339,11 @@ function updatePlayerTags(){
 }
 
 // ---------- Toasts ----------
-// kind: '' | 'good' | 'bad' | 'info'. p = the player it's for: shown only if that's you.
+// kind: '' | 'good' | 'bad' | 'info'. p = the player it's for: shown only if that's you (and sent to
+// their screen if they play on another machine). toastAll = everyone in the session.
+export function toastAll(msg, kind){ emit(['t', msg, kind]); toast(msg, kind); }
 export function toast(msg, kind, p){
+  if (p && p.remote) emitTo(p, ['t', msg, kind]);
   if (p && p !== me()) return;
   const wrap = $('toasts'), el = document.createElement('div');
   el.className = 'toast' + (kind ? ' ' + kind : ''); el.textContent = msg;
@@ -362,14 +368,19 @@ export function renderCraft(){
 }
 export function craftFromKey(i){
   const r = RECIPES[i]; if (!r || !crafting()) return;
-  const err = craft(me(), r.id);
-  toast(err || `Crafted a ${ITEMS[r.id].name}`, err ? 'bad' : 'good');
+  act('craft', r.id);
   renderCraft();
+}
+// Player p crafts recipe id (host side; clients send it as an action).
+export function craftFor(p, id){
+  const r = RECIPES.find(r => r.id === id); if (!r) return;
+  const err = craft(p, id);
+  toast(err || `Crafted a ${ITEMS[r.id].name}`, err ? 'bad' : 'good', p);
 }
 
 // Shows one overlay screen by id (or none with null).
 export function showScreen(id){
-  for (const s of ['menuScreen','pauseScreen','craftScreen','upgradeScreen','deathScreen']) $(s).classList.toggle('hidden', s !== id);
+  for (const s of ['menuScreen','lobbyScreen','pauseScreen','craftScreen','upgradeScreen','deathScreen']) $(s).classList.toggle('hidden', s !== id);
 }
 let bannerTimer = null;
 const bannerQueue = [];
@@ -379,6 +390,8 @@ export function banner(t, s, dur){
   clearTimeout(bannerTimer);
   bannerTimer = setTimeout(() => { $('banner').classList.remove('show'); bannerTimer = null; setTimeout(nextBanner, 450); }, dur || 2800);
 }
+// A banner on everyone's screen.
+export function bannerAll(t, s, dur){ emit(['bn', t, s, dur]); banner(t, s, dur); }
 // Waits for the current banner (e.g. "City 2") to finish instead of cutting it off.
 export function queueBanner(t, s, dur){ bannerQueue.push([t, s, dur]); if (!bannerTimer) nextBanner(); }
 function nextBanner(){ if (!bannerTimer && bannerQueue.length) banner(...bannerQueue.shift()); }

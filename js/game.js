@@ -7,7 +7,7 @@ import { $, mr, mpick, fmtTime } from './utils.js';
 import { camFocus, muzzleLight, fxLight } from './renderer.js';
 import { SH } from './assets.js';
 import { CRYSTAL } from './threats.js';
-import { state, world, zombies, mouse, dev, players } from './state.js';
+import { state, world, zombies, mouse, dev, players, net } from './state.js';
 import { generateCity } from './cityGen.js';
 import { buildCityScene, buildExitMarker, teardownCity } from './cityScene.js';
 import { updateFlow, clearFlowCache, blockIndex } from './grid.js';
@@ -16,7 +16,8 @@ import { spawnZombieAt, spawnTurnedPlayer, findSpawnTile, findBlockTile, updateZ
 import { updateBullets } from './combat.js';
 import { burst, updateParticles, updatePickups } from './fx.js';
 import { foundCrystal, endTakeover, resetTakeover, animateCrystal } from './crystal.js';
-import { showScreen, banner, queueBanner, renderCraft, toast } from './hud.js';
+import { showScreen, banner, bannerAll, queueBanner, renderCraft, toast, toastAll } from './hud.js';
+import { emit, emitTo } from './host.js';
 import { updateInteract, updateDrops, updateLandmarks, animateContainers } from './loot.js';
 import { updateThrowables, updateThrowPreview } from './throwables.js';
 import { setupThreats, shuffleThreats, updateSpecials } from './specials.js';
@@ -25,7 +26,11 @@ import { UPGRADES } from './upgrades.js';
 import { initAudio, sfx } from './audio.js';
 
 export const newSeed = () => Math.floor(Math.random()*1e9);
+// Clients run this too when the host's city event arrives: same seed, same city; their zombies, drops
+// and everything else then come from the host (client.js), so they skip populating it.
 export function startCity(level, seed){
+  const client = net.role === 'client';
+  if (!client) emit(['city', level, seed]);
   teardownCity();
   state.level = level; state.seed = seed;
   const city = world.city = generateCity(level, seed);
@@ -35,10 +40,8 @@ export function startCity(level, seed){
   placePlayers(city);
   state.view = state.me; camFocus.copy(viewed().pos);
   Object.assign(state, { phase:'explore', crystalFound:false, takeover:0, surge:0, hordeAlive:0, cityKills:0, cityTime:0, spawnTimer:3, flowTimer:0, exitT:0, exitIn:0 });
-  updateFlow();
   fxLight.intensity = 0; resetTakeover(); resetUniques();
-  setupThreats(level);
-  populate(city, level);
+  if (!client){ updateFlow(); setupThreats(level); populate(city, level); }
   $('cityName').textContent = `City ${level}: ${city.name}`;
   if (state.mode !== 'play') return;
   banner(`City ${level}`, city.name);
@@ -59,7 +62,7 @@ function placePlayers(city){
       const [ox, oz] = START_SPOTS[k++];
       if (walkable(city.grid[(city.start.z + oz)*N + city.start.x + ox])){ x = city.start.x + ox; z = city.start.z + oz; break; }
     }
-    p.pos.set((x+0.5)*TILE, 0, (z+0.5)*TILE); p.vel.set(0,0,0); p.g.position.copy(p.pos);
+    p.pos.set((x+0.5)*TILE, 0, (z+0.5)*TILE); p.vel.set(0,0,0); p.g.position.copy(p.pos); p.tp++;
     p.lastTile = -1; p.crafting = false; p.aiming = false; p.interact.target = null; p.interact.p = 0;
   }
 }
@@ -85,7 +88,7 @@ export function killPlayer(p){
     spectate(1);
     banner('You turned', `Watching ${viewed().name}. You come back in the next city`, 3600);
   } else {
-    toast(`${p.name} turned. They come back in the next city`, 'bad');
+    toastAll(`${p.name} turned. They come back in the next city`, 'bad');
     if (viewed() === p) spectate(1);
   }
 }
@@ -120,29 +123,40 @@ function populate(city, level){
   }
 }
 export function newRun(level = 1, seed = newSeed()){
+  if (net.role === 'client') return;  // the host starts runs
   initAudio();
   for (const p of players){ resetPlayerStats(p); refreshGun(p); }
   state.kills = 0; state.runTime = 0; state.cheated = false;
   shuffleThreats();
-  state.mode = 'play';
+  enterRun();
+  emit(['run']);
+  startCity(level, seed);
+}
+// Into the game screen (host: newRun; clients: the host's run event).
+export function enterRun(){
+  state.mode = 'play'; state.seenThreats = new Set();
   showScreen(null);
   $('hud').classList.remove('hidden');
-  startCity(level, seed);
 }
 export function openRoad(){
   const city = world.city;
   endTakeover();
   state.phase = 'open';
+  roadFx(); emit(['road']);
+  state.spawnTimer = 4;
+  sfx.open();
+  bannerAll('The road is open', 'Follow the green light to leave ' + city.name);
+}
+// The barricade comes down and the exit tiles open (clients run this on the road event).
+export function roadFx(){
+  const city = world.city;
   for (const z of [city.exitZ, city.exitZ+1]){ city.grid[z*N + city.n-1] = T.EXIT; world.explored[z*N + city.n-1] = 1; }
   world.mmDirty = true; clearFlowCache();
   if (world.barricade){
-    world.barricade.children.forEach(c => burst(c.getWorldPosition(new THREE.Vector3()), 'dust', 4, 3));
+    world.barricade.children.forEach(c => burst(c.getWorldPosition(new THREE.Vector3()), 'dust', 4, 3, true));
     world.cityGroup.remove(world.barricade); world.barricade = null;
   }
-  world.exitMarker = buildExitMarker();
-  state.spawnTimer = 4;
-  sfx.open();
-  banner('The road is open', 'Follow the green light to leave ' + city.name);
+  if (!world.exitMarker) world.exitMarker = buildExitMarker();
 }
 // ---------- Leaving a city ----------
 // The road out only counts once every living player stands in the exit column, for EXIT_WAIT s
@@ -162,8 +176,8 @@ function updateExit(dt){
 }
 // Every player gets their own three upgrades to pick from (different cards for each while there are
 // enough to go round); the living heal 40%, the dead pick too and come back next city. The next city
-// starts once everyone has picked. Players this machine doesn't control (dev-tools companions) pick
-// at random right away.
+// starts once everyone has picked. Remote players get their cards on their own screen (host.js);
+// dev-tools companions pick at random right away.
 export function completeCity(){
   state.mode = 'upgrade'; mouse.down = false;
   let pool = [];
@@ -173,32 +187,47 @@ export function completeCity(){
     if (pool.length < 3) pool = UPGRADES.slice().sort(() => Math.random() - 0.5);
     p.offer = pool.splice(0, 3);
   }
+  emit(['mode', 'upgrade']);
   const P = me();
+  showUpgrades(P, P.offer.map(u => u.name), (P0, u) => pickUpgrade(P0, UPGRADES.find(o => o.name === u)));
+  for (const p of players){
+    if (p.remote) emitTo(p, ['upg', p.offer.map(u => u.name), state.cityKills, state.cityTime]);
+    else if (p !== P) pickUpgrade(p, mpick(p.offer));
+  }
+}
+// The upgrade screen for player P (this machine's) with the named offers; pick(P, name) takes one.
+export function showUpgrades(P, names, pick){
   $('clearTitle').textContent = `${world.city.name} cleared`;
   $('clearStats').innerHTML = statHTML([[`City ${state.level}`, 'Cleared'], [state.cityKills, 'Kills here'], [fmtTime(state.cityTime), 'Time here'],
     P.dead ? ['Turned', `Back with ${REVIVE*100}% health`] : [Math.ceil(P.hp)+' / '+P.maxHp, 'Health']]);
   $('upgradeNote').textContent = '';
   const wrap = $('upgradeCards'); wrap.innerHTML = '';
-  for (const u of P.offer){
-    const b = document.createElement('button'); b.className = 'upg';
+  let done = false;
+  for (const name of names){
+    const u = UPGRADES.find(o => o.name === name), b = document.createElement('button'); b.className = 'upg';
     b.innerHTML = `<div class="ic">${u.icon}</div><b>${u.name}</b><span>${u.desc}</span>`;
     b.addEventListener('click', () => {
-      if (P.picked) return;
+      if (done) return;
+      done = true;
       for (const c of wrap.children) c.disabled = c !== b;
       b.classList.add('picked');
-      pickUpgrade(P, u);
+      pick(P, name);
     });
     wrap.appendChild(b);
   }
   showScreen('upgradeScreen');
   setTimeout(() => { const f = wrap.querySelector('button'); if (f) f.focus(); }, 50);
-  for (const p of players) if (p !== P) pickUpgrade(p, mpick(p.offer));
 }
 export function pickUpgrade(p, u){
-  if (state.mode !== 'upgrade' || p.picked) return;
+  if (state.mode !== 'upgrade' || p.picked || !u) return;
   p.picked = u; u.apply(p); p.reloadT = 0;
   const waiting = players.filter(o => !o.picked);
-  if (waiting.length){ if (me().picked) $('upgradeNote').textContent = `Waiting for ${waiting.map(o => o.name).join(', ')}…`; return; }
+  if (waiting.length){
+    const note = `Waiting for ${waiting.map(o => o.name).join(', ')}…`;
+    if (me().picked) $('upgradeNote').textContent = note;
+    emit(['wait', note]);
+    return;
+  }
   state.mode = 'play'; showScreen(null);
   startCity(state.level + 1, newSeed());
 }
@@ -209,17 +238,23 @@ export function loadBest(){ try { const v = localStorage.getItem('crystal-fall-b
 function saveBest(r){ try { localStorage.setItem('crystal-fall-best', JSON.stringify(r)); } catch(e){} }
 export function bestLine(b){ return b ? `Best run: reached city ${b.city} with ${b.kills} kills.` : ''; }
 
-// Everyone is dead: the run is over.
+// Everyone is dead: the run is over (clients show the same screen from the host's event).
 function gameOver(){
-  state.mode = 'dead'; mouse.down = false;
   const p = me(); burst(new THREE.Vector3(p.pos.x, 1, p.pos.z), 'blood', 20, 4);
-  const rec = { city:state.level, kills:state.kills };
+  emit(['over', state.level, state.kills, state.runTime, state.cheated]);
+  showGameOver(state.level, state.kills, state.runTime, state.cheated);
+}
+export function showGameOver(level, kills, runTime, cheated){
+  state.mode = 'dead'; mouse.down = false;
+  const rec = { city:level, kills };
   const best = loadBest();
   let isBest = false;
-  if (!state.cheated && (!best || rec.city > best.city || (rec.city === best.city && rec.kills > best.kills))){ saveBest(rec); isBest = true; }
+  if (!cheated && (!best || rec.city > best.city || (rec.city === best.city && rec.kills > best.kills))){ saveBest(rec); isBest = true; }
   $('deathTitle').textContent = players.length > 1 ? 'Everyone turned' : 'You didn’t make it';
-  $('deathStats').innerHTML = statHTML([[`City ${state.level}`, 'Reached'], [state.kills, players.length > 1 ? 'Team kills' : 'Total kills'], [fmtTime(state.runTime), 'Survived']]);
-  $('deathBest').textContent = isBest ? 'New best run.' : (state.cheated ? 'Dev tools were used, so this run doesn’t count. ' : '') + bestLine(best);
+  $('deathStats').innerHTML = statHTML([[`City ${level}`, 'Reached'], [kills, players.length > 1 ? 'Team kills' : 'Total kills'], [fmtTime(runTime), 'Survived']]);
+  $('deathBest').textContent = (isBest ? 'New best run.' : (cheated ? 'Dev tools were used, so this run doesn’t count. ' : '') + bestLine(best))
+    + (net.role === 'client' ? ' Waiting for the host to start a new run.' : '');
+  $('retryBtn').classList.toggle('hidden', net.role === 'client');
   setTimeout(() => { if (state.mode === 'dead'){ showScreen('deathScreen'); $('retryBtn').focus(); } }, 900);
 }
 // Alone, the workbench pauses the game. With others in it the world keeps going (only the host can
@@ -238,8 +273,8 @@ export const crafting = () => state.mode === 'craft' || !!(me() && me().crafting
 // Pauses everyone; only the host may (it runs the simulation).
 export function togglePause(){
   if (!state.host) return toast('Only the host can pause');
-  if (state.mode === 'play'){ me().crafting = false; state.mode = 'paused'; mouse.down = false; showScreen('pauseScreen'); $('resumeBtn').focus(); }
-  else if (state.mode === 'paused'){ state.mode = 'play'; showScreen(null); }
+  if (state.mode === 'play'){ me().crafting = false; state.mode = 'paused'; mouse.down = false; showScreen('pauseScreen'); $('resumeBtn').focus(); emit(['mode', 'paused']); }
+  else if (state.mode === 'paused'){ state.mode = 'play'; showScreen(null); emit(['mode', 'play']); }
 }
 
 // ---------- Update ----------

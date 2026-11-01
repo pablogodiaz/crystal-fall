@@ -9,7 +9,7 @@ import { spawnDrop } from './loot.js';
 import { throwItem } from './throwables.js';
 import { toast, floatText } from './hud.js';
 import { weaponStats, weaponTitle } from './weapons.js';
-import { sfx } from './audio.js';
+import { sfxFor } from './host.js';
 
 export const curWeapon = p => p.weapons[p.cur];
 export const magSize = (w, p) => weaponStats(w, p).mag;
@@ -59,12 +59,12 @@ export function dropWeapon(p){
   const w = curWeapon(p); w.out = false; w.charge = 0;
   p.weapons[p.cur] = null; p.cur = o; p.reloadT = 0; p.fireCd = 0.3; p.aiming = false; refreshGun(p);
   spawnDrop('weapon', w, 0, p.pos.x, p.pos.z, p);
-  sfx.swap(); floatText(`Dropped ${weaponTitle(w)}`, 'dim', p);
+  sfxFor(p, 'swap'); floatText(`Dropped ${weaponTitle(w)}`, 'dim', p);
 }
 export function swapWeapon(p){
   if (!canAct(p)) return;
   const o = 1 - p.cur; if (!p.weapons[o]) return;
-  p.cur = o; p.reloadT = 0; p.fireCd = 0.3; refreshGun(p); sfx.swap();
+  p.cur = o; p.reloadT = 0; p.fireCd = 0.3; refreshGun(p); sfxFor(p, 'swap');
 }
 
 const heal = (p, n) => { p.hp = Math.min(p.maxHp, p.hp + n); };
@@ -75,14 +75,14 @@ export function useSlot(p, i){
   switch (s.id){
     case 'bandage':
       if (!p.bleeding && p.hp >= p.maxHp) return toast('You don’t need a bandage', '', p);
-      consume(p, i); heal(p, 10); sfx.use();
+      consume(p, i); heal(p, 10); sfxFor(p, 'use');
       toast(p.bleeding ? 'Bleeding stopped' : 'Bandaged up', 'good', p); p.bleeding = false; return;
     case 'medkit':
       if (!p.bleeding && p.hp >= p.maxHp) return toast('Already at full health', '', p);
-      consume(p, i); heal(p, 50); p.bleeding = false; sfx.use(); return toast('+50 health', 'good', p);
+      consume(p, i); heal(p, 50); p.bleeding = false; sfxFor(p, 'use'); return toast('+50 health', 'good', p);
     case 'drink':
       if (p.boost > 2 && p.stamina > 0.95) return toast('Already wired', '', p);
-      consume(p, i); p.stamina = 1; p.winded = false; p.boost = 20; sfx.use(); return toast('Energized: sprinting is cheap for 20 s', 'good', p);
+      consume(p, i); p.stamina = 1; p.winded = false; p.boost = 20; sfxFor(p, 'use'); return toast('Energized: sprinting is cheap for 20 s', 'good', p);
     case 'scrap': return toast('Press C to craft with scrap', '', p);
     case 'molotov': case 'pipebomb':
       if (throwItem(p, s.id)) consume(p, i); return;
@@ -114,7 +114,7 @@ export function cycleThrowable(p, dir){
   const n = THROWABLES.length, cur = THROWABLES.indexOf(selectedThrowable(p));
   const order = Array.from({ length:n-1 }, (_, i) => THROWABLES[((cur + dir*(i+1)) % n + n) % n]);
   const next = order.find(id => countItem(p, id));
-  if (next){ p.throwSel = next; sfx.swap(); }
+  if (next){ p.throwSel = next; sfxFor(p, 'swap'); }
   else if (countItem(p, THROWABLES[cur])) toast(`Only ${ITEMS[THROWABLES[cur]].name.toLowerCase()}s in your pack`, '', p);
   else p.throwSel = order[0];
 }
@@ -132,6 +132,6 @@ export function craft(p, id){
   if (countItem(p, 'scrap') < r.scrap) return `Needs ${r.scrap} scrap`;
   removeItem(p, 'scrap', r.scrap);
   if (!addItem(p, id, 1)){ addItem(p, 'scrap', r.scrap); return 'No room in your pack'; }
-  sfx.craft();
+  sfxFor(p, 'craft');
   return null;
 }

@@ -18,6 +18,7 @@ import { burst } from './fx.js';
 import { makeNoise } from './zombies.js';
 import { updateBot } from './bots.js';
 import { AI, COOP } from './threats.js';
+import { emitTo } from './host.js';
 
 export const MAX_PLAYERS = 4;
 export const me = () => players[state.me];
@@ -81,21 +82,23 @@ export function updateLamp(){ const v = viewed(); if (v) lamp.position.set(v.pos
 
 // A new player in the first free slot (null when the session is full). Spawned next to the player
 // you control, or placed at the start by the next startCity().
-export function addPlayer(){
+// slot/name: a given slot colour and name (clients mirror the host's players). remote = the relay
+// connection id of the machine playing it (host side, host.js); tp counts teleports (clients snap).
+export function addPlayer(slot, name){
   if (players.length >= MAX_PLAYERS) return null;
-  let slot = 0; while (players.some(o => o.slot === slot)) slot++;
-  const p = { slot, name:'P' + (slot+1), css:LOOKS[slot][2], pos:new THREE.Vector3(), vel:new THREE.Vector3(), radius:0.45, angle:0, walk:0,
-    dead:false, lastTile:-1, dist:new Int16Array(N*N).fill(-1), shownGun:null,
+  if (slot === undefined){ slot = 0; while (players.some(o => o.slot === slot)) slot++; }
+  const p = { slot, name:name || 'P' + (slot+1), css:LOOKS[slot][2], pos:new THREE.Vector3(), vel:new THREE.Vector3(), radius:0.45, angle:0, walk:0,
+    dead:false, lastTile:-1, dist:new Int16Array(N*N).fill(-1), shownGun:null, remote:0, tp:0,
     ctl:{ mx:0, mz:0, sprint:false, fire:false, use:false, aim:new THREE.Vector3() },
     interact:{ target:null, p:0, label:'', noiseT:0, lock:false } };
   buildMesh(p); resetPlayerStats(p); refreshGun(p);
   players.push(p);
   return p;
 }
-// Takes a player out of the session (never the one you control).
-export function removePlayer(p){
+// Takes a player out of the session (never the one you control, unless forced: client.js mirroring).
+export function removePlayer(p, force){
   const i = players.indexOf(p);
-  if (i < 0 || i === state.me) return;
+  if (i < 0 || (i === state.me && !force)) return;
   p.dead = true; p.gone = true;
   for (const w of p.weapons) if (w) w.out = false;
   scene.remove(p.g); if (p.drone) scene.remove(p.drone); for (const m of p.mats) m.dispose();
@@ -126,7 +129,7 @@ export function refreshGun(p){
 // Melee pose for swing progress k (0 = rest): wind up with the gun turned across the chest and
 // pulled back, then drive it forward stock-first with a body twist, then recover.
 const ease = x => x*x*(3 - 2*x);
-function poseMelee(p, k){
+export function poseMelee(p, k){
   let a = 0, b = 0;  // a = wind-up amount, b = thrust amount
   if (k > 0 && k < 0.35) a = ease(k/0.35);
   else if (k >= 0.35 && k < 0.55){ b = ease((k-0.35)/0.2); a = 1 - b; }
@@ -147,7 +150,7 @@ function poseMelee(p, k){
 // horizontal plane at gun height. Nothing moves or fires while the workbench is open.
 const raycaster = new THREE.Raycaster();
 const aimPlane = new THREE.Plane(new THREE.Vector3(0,1,0), -1.1), aimHit = new THREE.Vector3();
-function readLocal(p){
+export function readLocal(p){
   const c = p.ctl, busy = p.crafting;
   let ix = 0, iz = 0;
   if (!busy){
@@ -166,7 +169,7 @@ function readLocal(p){
 export function updatePlayers(dt){
   for (const p of players.slice()){
     if (p.dead) continue;
-    if (p === me()) readLocal(p); else updateBot(p, dt);
+    if (p === me()) readLocal(p); else if (!p.remote) updateBot(p, dt);  // remote players' controls come from host.js
     updatePlayer(p, dt);
     if (state.mode !== 'play') return;
   }
@@ -178,7 +181,15 @@ export function updatePlayers(dt){
 // stamina is back to WINDED_OK.
 const SPRINT_MUL = 1.75, SPRINT_DRAIN = 0.28, REGEN = 0.24, REGEN_STILL = 1.7, REGEN_DELAY = 1, WINDED_OK = 0.4, WINDED_MUL = 0.8, BOOST_DRAIN = 0.4;
 
-function updatePlayer(p, dt){
+// Knockback (and recoil) on player p; a remote player's machine moves them, so it gets told.
+export function pushPlayer(p, vx, vz){
+  p.vel.x += vx; p.vel.z += vz;
+  if (p.remote) emitTo(p, ['kick', Math.round(vx*100)/100, Math.round(vz*100)/100]);
+}
+// Moving, stamina, facing and the walk cycle from p.ctl. A client predicts its own player with this;
+// on the host, a remote player's position is the one their machine reports (p.net, see host.js),
+// accepted while it's close to where the host thinks they are.
+export function movePlayer(p, dt){
   const c = p.ctl, cheat = cheats(p);
   let ix = c.mx, iz = c.mz;
   const l = Math.hypot(ix,iz), moving = l > 0;
@@ -204,15 +215,26 @@ function updatePlayer(p, dt){
   p.pos.x += p.vel.x*dt; p.pos.z += p.vel.z*dt;
   if (!(cheat && dev.noclip)){ resolveCircle(p.pos, p.radius); resolveCircle(p.pos, p.radius); }
   else { const m = world.city.n*TILE; p.pos.x = Math.min(m - 0.1, Math.max(TILE, p.pos.x)); p.pos.z = Math.min(m - TILE, Math.max(TILE, p.pos.z)); }
+  const n = p.net;
+  if (p.remote && n){
+    if (n.tp === p.tp && Math.hypot(n.x - p.pos.x, n.z - p.pos.z) < 4){ p.pos.x = n.x; p.pos.z = n.z; p.vel.x = n.vx; p.vel.z = n.vz; }
+    else if (n.tp === p.tp) p.tp++;  // too far off: their machine snaps back to the host's position
+  }
   const ax = c.aim.x - p.pos.x, az = c.aim.z - p.pos.z;
   if (ax*ax + az*az > 0.04) p.angle = Math.atan2(ax, az);
   p.g.position.copy(p.pos);
   p.g.rotation.y = p.angle;
-  const v = Math.hypot(p.vel.x, p.vel.z);
+  animateLegs(p, dt, Math.hypot(p.vel.x, p.vel.z));
+}
+export function animateLegs(p, dt, v){
   p.walk += dt*v*2.2;
   const sw = Math.sin(p.walk)*0.6*Math.min(1, v/2);
   p.legs[0].rotation.x = sw; p.legs[1].rotation.x = -sw;
   p.inner.position.y = Math.abs(Math.sin(p.walk))*0.05*Math.min(1, v/2);
+}
+function updatePlayer(p, dt){
+  const c = p.ctl;
+  movePlayer(p, dt);
   if (p.reloadT > 0){
     p.reloadT -= dt;
     if (p.reloadT <= 0){
@@ -231,7 +253,7 @@ function updatePlayer(p, dt){
   if (p.regen > 0 && p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + p.regen*1.2*dt);
   if (p.bleeding){
     p.bleedFx -= dt;
-    if (p.bleedFx <= 0){ p.bleedFx = 0.35; burst(new THREE.Vector3(p.pos.x, 0.9, p.pos.z), 'blood', 1, 1); }
+    if (p.bleedFx <= 0){ p.bleedFx = 0.35; burst(new THREE.Vector3(p.pos.x, 0.9, p.pos.z), 'blood', 1, 1, true); }
   }
   if (p.bleeding && drainHp(p, 1.1*dt)) return;
   // The explored map is shared: everyone uncovers it.

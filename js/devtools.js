@@ -22,6 +22,7 @@ import { updateFlow, reveal, blockIndex } from './grid.js';
 import { startCity, newRun, newSeed, openRoad, completeCity, killPlayer, revivePlayer, spectate } from './game.js';
 import { showScreen, toast } from './hud.js';
 import { UPGRADES } from './upgrades.js';
+import { roster } from './host.js';
 
 const P = me;
 const PREFS = 'crystal-fall-dev', SAVED = ['god','ammo','stamina','noclip','ignored','oneHit','speed'];
@@ -215,8 +216,8 @@ function buildPanel(){
   s = section(root, 'Players');
   s.appendChild(h('small', 'dv-note', 'Companions stand in for other players until there’s networking: they follow you, shoot and heal themselves. Zombie numbers scale with the session.'));
   r = row(s);
-  btn(r, '+ Companion', () => { ensureRun(); const p = addPlayer(); if (!p) return toast(`At most ${MAX_PLAYERS} players`); const m = P(); p.pos.copy(m.pos).add(new THREE.Vector3(0.8, 0, 0.8)); p.g.position.copy(p.pos); p.ctl.aim.copy(m.ctl.aim); updateFlow(); }, 'Adds a bot player next to you');
-  btn(r, '− Companion', () => { const p = players.slice().reverse().find(o => o !== P()); if (p) removePlayer(p); }, 'Removes the last companion');
+  btn(r, '+ Companion', () => { ensureRun(); const p = addPlayer(); if (!p) return toast(`At most ${MAX_PLAYERS} players`); const m = P(); p.pos.copy(m.pos).add(new THREE.Vector3(0.8, 0, 0.8)); p.g.position.copy(p.pos); p.ctl.aim.copy(m.ctl.aim); updateFlow(); roster(); }, 'Adds a bot player next to you');
+  btn(r, '− Companion', () => { const p = players.slice().reverse().find(o => o !== P() && !o.remote); if (p) removePlayer(p); roster(); }, 'Removes the last companion (never someone playing on another machine)');
   btn(r, 'Kill one', () => { const p = players.find(o => o !== P() && !o.dead); if (p && state.mode === 'play') killPlayer(p); }, 'A living companion turns into a zombie');
   btn(r, 'Revive all', () => { for (const p of players) revivePlayer(p, p.maxHp); }, 'Everyone dead stands up again where they fell');
   refs.players = row(s, 'dv-grid');
@@ -332,7 +333,7 @@ function syncPanel(){
   // Which player you control: the others become companions (bots).
   const pr = refs.players; pr.innerHTML = '';
   if (players.length > 1) players.forEach((p, i) => {
-    const b = btn(pr, `${i === state.me ? '● ' : ''}Play as ${p.name}${p.dead ? ' †' : ''}`, () => { state.me = i; state.view = i; mouse.down = false; if (p.dead) spectate(1); }, 'Take control of this player');
+    const b = btn(pr, `${i === state.me ? '● ' : ''}Play as ${p.name}${p.dead ? ' †' : ''}`, () => { if (p.remote) return toast(`${p.name} plays on another machine`); state.me = i; state.view = i; mouse.down = false; if (p.dead) spectate(1); }, 'Take control of this player');
     b.style.color = p.css;
   });
   refs.order.textContent = state.threatOrder.length ? 'Run order: ' + state.threatOrder.map((id, i) => `${i + 2} ${threatName(id).toLowerCase()}`).join(', ') : '';
