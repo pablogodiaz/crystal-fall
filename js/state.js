@@ -4,12 +4,13 @@
 import * as THREE from 'three';
 import { N } from './config.js';
 
-export const state = { mode:'menu', level:1, phase:'explore', crystalFound:false, spawnTimer:0, flowTimer:0,
+export const state = { mode:'menu', level:1, seed:0, phase:'explore', crystalFound:false, spawnTimer:0, flowTimer:0,
   // Takeover (after the Crystal breaks): seconds left, surge spawns still to come, alive takeover zombies, next countdown beep.
   takeover:0, surge:0, hordeAlive:0, tick:0,
   kills:0, cityKills:0, runTime:0, cityTime:0, shake:0, menuT:0,
   // Threat unlocks (specials.js): run's intro order, id -> city it appeared in, banners already shown.
-  threatOrder:[], threatIntro:{}, seenThreats:new Set(), forceThreat:null };
+  threatOrder:[], threatIntro:{}, seenThreats:new Set(), forceThreat:null,
+  cheated:false };  // dev tools touched this run: shows a Dev chip, best run isn't saved
 
 // Per-city references, replaced by startCity() / teardownCity().
 export const world = {
@@ -26,6 +27,11 @@ export const zombies = [], dying = [], bullets = [], particles = [], pickups = [
 export const drops = [], throwns = [], hazards = [];
 // Spitter acid in flight, acid puddles, and scream shockwave rings.
 export const spits = [], puddles = [], rings = [];
+
+// Dev tools (` key, devtools.js). Cheat flags read by gameplay code; timeScale (0 = frozen) and
+// zoom are applied in main.js. spawn = { type, mods } overrides the next rollThreat().
+export const dev = { open:false, god:false, ammo:false, stamina:false, noclip:false, ignored:false, freeze:false,
+  oneHit:false, clickTp:false, speed:1, timeScale:1, zoom:1, spawn:null };
 
 // Raw input state, written by input.js.
 export const keys = {};

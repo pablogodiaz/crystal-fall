@@ -7,7 +7,7 @@ import { mr, mri } from './utils.js';
 import { scene } from './renderer.js';
 import { SH } from './assets.js';
 import { ZTYPES, ZMODS, THREAT_BASE, THREAT_POOL, SHUFFLE_INTRO, INTRO_FORCED, SPOT_RANGE } from './threats.js';
-import { state, zombies, spits, puddles, rings } from './state.js';
+import { state, zombies, spits, puddles, rings, dev } from './state.js';
 import { isBlockedTile, lineOfSight } from './grid.js';
 import { player } from './player.js';
 import { spawnZombieAt, findSpawnNear, alertZombie, alertNear } from './zombies.js';
@@ -36,6 +36,7 @@ const odds = (c, id) => { const l = state.threatIntro[id]; return l ? Math.min(c
 const countType = id => { let n = 0; for (const z of zombies) if (z.type === id) n++; return n; };
 // One type (walker fills whatever odds are left), then each modifier rolls on its own.
 export function rollThreat(guard, exclude){
+  if (dev.spawn) return { type:dev.spawn.type, mods:Object.assign({}, dev.spawn.mods) };  // dev tools spawn
   let type = 'walker', acc = 0;
   const r = Math.random(), mods = {};
   for (const id in ZTYPES){

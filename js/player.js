@@ -4,7 +4,7 @@ import { TILE, N } from './config.js';
 import { scene, camera } from './renderer.js';
 import { SH } from './assets.js';
 import { WEAPONS, INV_SLOTS } from './items.js';
-import { world, keys, mouse, mouseNDC } from './state.js';
+import { world, keys, mouse, mouseNDC, dev } from './state.js';
 import { resolveCircle, reveal } from './grid.js';
 import { fire, drainHp, meleeStrike, MELEE_TIME, MELEE_HIT } from './combat.js';
 import { curWeapon, magSize } from './inventory.js';
@@ -96,7 +96,7 @@ export function updatePlayer(dt){
   if (keys.KeyA || keys.ArrowLeft){ ix -= 1; iz += 1; }
   const l = Math.hypot(ix,iz), moving = l > 0;
   if (moving){ ix /= l; iz /= l; }
-  let spd = player.speed;
+  let spd = player.speed*dev.speed;
   const sprint = (keys.ShiftLeft || keys.ShiftRight) && moving && !player.winded;
   if (player.boost > 0) player.boost = Math.max(0, player.boost - dt);
   if (sprint){
@@ -115,7 +115,8 @@ export function updatePlayer(dt){
   const k = Math.min(1, dt*14);
   player.vel.x += (ix*spd - player.vel.x)*k; player.vel.z += (iz*spd - player.vel.z)*k;
   player.pos.x += player.vel.x*dt; player.pos.z += player.vel.z*dt;
-  resolveCircle(player.pos, player.radius); resolveCircle(player.pos, player.radius);
+  if (!dev.noclip){ resolveCircle(player.pos, player.radius); resolveCircle(player.pos, player.radius); }
+  else { const m = world.city.n*TILE; player.pos.x = Math.min(m - 0.1, Math.max(TILE, player.pos.x)); player.pos.z = Math.min(m - TILE, Math.max(TILE, player.pos.z)); }
   raycaster.setFromCamera(mouseNDC, camera);
   if (raycaster.ray.intersectPlane(aimPlane, aimPoint)){
     const ax = aimPoint.x - player.pos.x, az = aimPoint.z - player.pos.z;

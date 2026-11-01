@@ -6,7 +6,7 @@ import { $, mr } from './utils.js';
 import { scene, muzzleLight } from './renderer.js';
 import { SH } from './assets.js';
 import { WEAPONS } from './items.js';
-import { state, world, zombies, bullets } from './state.js';
+import { state, world, zombies, bullets, dev } from './state.js';
 import { isOpaqueTile } from './grid.js';
 import { player } from './player.js';
 import { damageZombie, makeNoise } from './zombies.js';
@@ -107,7 +107,7 @@ export function updateBullets(dt){
   }
 }
 export function hurtPlayer(dmg, z){
-  if (state.mode !== 'play') return;
+  if (state.mode !== 'play' || dev.god) return;
   player.hp -= dmg; state.shake = Math.max(state.shake, 0.25);
   $('vignette').style.opacity = 0.7; sfx.hurt();
   if (z){
@@ -118,6 +118,7 @@ export function hurtPlayer(dmg, z){
 }
 // Silent health loss (bleeding). Returns true if it killed the player.
 export function drainHp(n){
+  if (dev.god) return false;
   player.hp -= n;
   if (player.hp <= 0){ player.hp = 0; die(); return true; }
   return false;

@@ -213,10 +213,39 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   (`dropName` in `loot.js`). Toasts are kept for notes (full pack, new gun hint, alarms).
 - **Maps:** the minimap follows the player (46 tiles across, the Crystal/exit pinned to its edge
   when off it); hold Tab for the whole explored city (scaled to the city's size). Both draw from one cached tile layer.
-- **Meta:** best run (`{ city, kills }`) stored in `localStorage['crystal-fall-best']`.
+- **Meta:** best run (`{ city, kills }`) stored in `localStorage['crystal-fall-best']`. Runs where dev
+  tools were used (`state.cheated`) aren't saved.
+- **Dev tools** (`js/devtools.js`, the `` ` `` key = `Backquote`, the key left of 1 on any layout; works in
+  every mode, including the menu): a panel on the right for trying anything out. **Whenever you add a
+  feature that's awkward to reach in normal play (a new city phase, item, weapon, threat, landmark,
+  upgrade, tunable), add a way to trigger or test it here and list it below.**
+  - Readout: fps, mode, city/size/seed, zombie count (takeover ones), kills, tile, district, Crystal HP
+    or takeover time.
+  - Player: god mode (`hurtPlayer`/`drainHp` do nothing, no bleeding), infinite ammo (mags and
+    reserves refilled every frame), infinite stamina, noclip (no `resolveCircle`, clamped to the
+    city), ignored by zombies (they can't see or attack you; noise still draws them; turning it on
+    calms everyone), one-hit kills (`damageZombie`), click to teleport (left click on the ground
+    teleports instead of shooting), move speed ×0.5–3; heal/revive (also from the death screen), cure
+    or cause bleeding, +25 max HP, hurt 25, die.
+  - City: go to any city number with an optional seed (from the menu this starts a run there), prev /
+    next / restart (same seed), clear city (upgrade screen); find the Crystal, take it to 50% (pulse),
+    break it, takeover → 10 s, open the road; reveal the map. Inventory, guns and upgrades carry over.
+  - Threats this city: tick/untick which types and modifiers roll (`state.threatIntro`, reset by
+    the next city), plus the run's unlock order.
+  - Teleport: start, Crystal, exit, every landmark of the city (snapped to the nearest open tile).
+  - Zombies: spawn ×1–50 of any type with any modifiers near you (`dev.spawn` overrides
+    `rollThreat`), hunting or not, rising or standing; kill all (no kills/drops; exploders still
+    blow), calm all, alert all; freeze zombies (skips `updateZombies`).
+  - Items & weapons: +1 of any item (shift-click: a full stack), any gun (replaces the held one when
+    both slots are full) with full ammo, refill ammo, fill/empty the pack. Upgrades: apply any.
+  - World: time scale (stopped, 0.25–3×; >1 runs several capped `update` steps per frame), camera
+    zoom, hide HUD.
+  - Using anything sets `state.cheated` (a violet "Dev" chip under the stamina bar; the best run
+    isn't saved). The player cheats in `SAVED` are remembered in `localStorage['crystal-fall-dev']`;
+    time scale, zoom, freeze and click-teleport reset on reload.
 - **Controls:** WASD/arrows move, mouse aims, hold left click to fire, Shift sprints, R reloads,
   F melee, Q swaps guns, hold right click to aim + release to throw (wheel/T picks molotov or pipe bomb, left click cancels), hold E searches, 1–8 use items (right-click a slot drops it), C crafts, hold Tab for the map, Esc/P pauses,
-  M mutes.
+  M mutes, `` ` `` opens the dev tools.
 
 ## Folder structure
 
@@ -231,7 +260,7 @@ js/
   threats.js      Pure data: zombie types (ZTYPES), modifiers (ZMODS), unlock pool/order, banner tips,
                   Crystal pulse and takeover tuning (CRYSTAL), zombie senses (AI)
   utils.js        Seeded RNG (rng/rand/randi/pick), mr/mri/mpick (Math.random), clamp, lerpAngle, fmtTime, $
-  state.js        Shared mutable state: `state`, `world`, entity arrays, input state
+  state.js        Shared mutable state: `state`, `world`, `dev` (dev tools flags), entity arrays, input state
   renderer.js     WebGLRenderer, scene, orthographic camera, lights (incl. pooled muzzle/fx lights), updateCamera(),
                   setTint() (takeover violet)
   assets.js       Shared geometries/materials (SH, incl. landmark props and ?/! marks), window, corrugated
@@ -263,6 +292,7 @@ js/
   game.js         Game flow: startCity/newRun, populate(), takeover countdown + spawning, exit, death,
                   pause, resident respawns, update() and animateWorld()
   input.js        Keyboard/mouse/focus listeners
+  devtools.js     Dev tools panel (` key): cheats, city/phase jumps, teleport, spawning, items, time scale
 ```
 
 ## Conventions
@@ -279,7 +309,8 @@ js/
 - **Shared mutable state lives on objects, not exported `let`s.** Importers can't reassign
   module bindings, so per-city references (`city`, `cityGroup`, `crystal`, `barricade`,
   `exitMarker`, `buildingMeshes`, `interiors`, `interiorAt`, `explored`, `mmDirty`, `lastTile`, `lure`) live on `world` in
-  `state.js`; run/game state lives on `state`. Entity arrays (`zombies`, `bullets`, `drops`,
+  `state.js`; run/game state lives on `state` (incl. `seed` of the current city and `cheated`); dev tools flags
+  live on `dev`, so gameplay code reads them without importing `devtools.js`. Entity arrays (`zombies`, `bullets`, `drops`,
   `throwns`, `hazards`, `spits`, `puddles`, `rings`, …) are
   mutated in place (`push`/`splice`/`length = 0`), never reassigned.
   Exception: `utils.js` owns `rng`, which only it reassigns via `seedRng()`.
@@ -338,7 +369,8 @@ js/
 
 ## Testing
 
-No automated test suite. To verify changes, serve locally and play a city through:
+No automated test suite. The dev tools (`` ` ``) shortcut most of this: jump to a city, teleport to a
+landmark, spawn the threat you changed, skip the takeover. To verify changes, serve locally and play a city through:
 explore (check districts feel different, walk into the police station and supermarket; from City
 3/4/6 the hospital, gun shop and army outpost) → search
 containers/landmarks → lose a hunting zombie by breaking line of sight, check it walks home →

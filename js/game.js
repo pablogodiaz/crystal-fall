@@ -7,7 +7,7 @@ import { $, mr, fmtTime } from './utils.js';
 import { camFocus, muzzleLight, fxLight } from './renderer.js';
 import { SH } from './assets.js';
 import { CRYSTAL } from './threats.js';
-import { state, world, zombies, mouse } from './state.js';
+import { state, world, zombies, mouse, dev } from './state.js';
 import { generateCity } from './cityGen.js';
 import { buildCityScene, buildExitMarker, teardownCity } from './cityScene.js';
 import { updateFlow, clearFlowCache, blockIndex } from './grid.js';
@@ -26,7 +26,7 @@ import { initAudio, sfx } from './audio.js';
 export const newSeed = () => Math.floor(Math.random()*1e9);
 export function startCity(level, seed){
   teardownCity();
-  state.level = level;
+  state.level = level; state.seed = seed;
   const city = world.city = generateCity(level, seed);
   clearFlowCache();
   buildCityScene(city);
@@ -64,17 +64,17 @@ function populate(city, level){
     else if (l.type === 'outpost') some(l.floor, 3 + Math.ceil(level/2), 'police');  // soldiers: riot gear odds like police guards
   }
 }
-export function newRun(){
+export function newRun(level = 1, seed = newSeed()){
   initAudio();
   resetPlayerStats(); refreshGun();
-  state.kills = 0; state.runTime = 0;
+  state.kills = 0; state.runTime = 0; state.cheated = false;
   shuffleThreats();
   state.mode = 'play';
   showScreen(null);
   $('hud').classList.remove('hidden');
-  startCity(1, newSeed());
+  startCity(level, seed);
 }
-function openRoad(){
+export function openRoad(){
   const city = world.city;
   endTakeover();
   state.phase = 'open';
@@ -89,7 +89,7 @@ function openRoad(){
   sfx.open();
   banner('The road is open', 'Follow the green light to leave ' + city.name);
 }
-function completeCity(){
+export function completeCity(){
   state.mode = 'upgrade'; mouse.down = false;
   player.hp = Math.min(player.maxHp, player.hp + player.maxHp*0.4);
   $('clearTitle').textContent = `${world.city.name} cleared`;
@@ -123,9 +123,9 @@ export function die(){
   const rec = { city:state.level, kills:state.kills };
   const best = loadBest();
   let isBest = false;
-  if (!best || rec.city > best.city || (rec.city === best.city && rec.kills > best.kills)){ saveBest(rec); isBest = true; }
+  if (!state.cheated && (!best || rec.city > best.city || (rec.city === best.city && rec.kills > best.kills))){ saveBest(rec); isBest = true; }
   $('deathStats').innerHTML = statHTML([[`City ${state.level}`, 'Reached'], [state.kills, 'Total kills'], [fmtTime(state.runTime), 'Survived']]);
-  $('deathBest').textContent = isBest ? 'New best run.' : bestLine(best);
+  $('deathBest').textContent = isBest ? 'New best run.' : (state.cheated ? 'Dev tools were used, so this run doesn’t count. ' : '') + bestLine(best);
   setTimeout(() => { if (state.mode === 'dead'){ showScreen('deathScreen'); $('retryBtn').focus(); } }, 900);
 }
 export function toggleCraft(){
@@ -185,7 +185,7 @@ export function update(dt){
   if (state.flowTimer <= 0){ state.flowTimer = 0.25; updateFlow(); }
   if (crystal && crystal.alive && !state.crystalFound && Math.hypot(player.pos.x - crystal.pos.x, player.pos.z - crystal.pos.z) < 19) foundCrystal();
   updateSpawning(dt);
-  updateZombies(dt);
+  if (!dev.freeze) updateZombies(dt);
   if (state.mode !== 'play') return;
   updateBullets(dt);
   updateThrowables(dt);

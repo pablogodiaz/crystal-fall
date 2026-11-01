@@ -6,7 +6,7 @@ import { TILE, N, DIRS8, walkable } from './config.js';
 import { mr, lerpAngle } from './utils.js';
 import { scene } from './renderer.js';
 import { SH } from './assets.js';
-import { state, world, zombies, dying } from './state.js';
+import { state, world, zombies, dying, dev } from './state.js';
 import { distField, isBlockedTile, resolveCircle, lineOfSight, flowTo } from './grid.js';
 import { player } from './player.js';
 import { hurtPlayer } from './combat.js';
@@ -232,7 +232,7 @@ function perceive(z, dist, dx, dz){
   let see = false;
   if (dist < range){
     const off = Math.abs(((Math.atan2(dx, dz) - z.g.rotation.y) % (Math.PI*2) + Math.PI*3) % (Math.PI*2) - Math.PI);
-    see = (hunt || dist < AI.feel || off < AI.cone) && lineOfSight(z.pos.x, z.pos.z, player.pos.x, player.pos.z);
+    see = !dev.ignored && (hunt || dist < AI.feel || off < AI.cone) && lineOfSight(z.pos.x, z.pos.z, player.pos.x, player.pos.z);
   }
   z.sees = see;
   if (see && !hunt) alertZombie(z);
@@ -309,6 +309,7 @@ export function damageZombie(z, dmg, dx, dz, cause){
   const A = ZMODS.armored, l = Math.hypot(dx,dz);
   const blocked = z.mods.armored && l > 0 && -(Math.sin(z.g.rotation.y)*dx + Math.cos(z.g.rotation.y)*dz)/l > Math.cos(A.frontArc);
   if (blocked) dmg *= A.frontMul;
+  if (dev.oneHit) dmg = Math.max(dmg, z.hp);
   z.hp -= dmg; z.flash = 0.08;
   if (cause === 'bullet' || cause === 'melee') alertZombie(z);
   for (const m of z.mats) m.emissive.setHex(quiet ? 0x804010 : blocked ? 0x2a3a55 : 0x663333);
@@ -328,7 +329,7 @@ export function stunZombie(z, t){
 }
 // credit = false for an exploder's own detonation: no kill counted, no drops.
 // cause/dx/dz/dmg describe the killing blow (see damageZombie) and shape the corpse.
-function killZombie(z, credit = true, cause, dx = 0, dz = 0, dmg = 0){
+export function killZombie(z, credit = true, cause, dx = 0, dz = 0, dmg = 0){
   z.dead = true; z.mark.visible = false;
   if (z.warn) z.warn.visible = false;
   const i = zombies.indexOf(z); if (i >= 0) zombies.splice(i,1);
@@ -360,7 +361,7 @@ export function updateZombies(dt){
     z.g.visible = dist < 50;  // well off-screen (and out of the shadow camera): skip rendering it
     updateMark(z, dt);
     if (z.rise > 0){ updateRise(z, dt); continue; }
-    if (z.tracked){ z.sees = true; z.lx = p.x; z.lz = p.z; }
+    if (z.tracked && !dev.ignored){ z.sees = true; z.lx = p.x; z.lz = p.z; }
     else {
       z.percT -= dt;
       if (z.percT <= 0){ z.percT = mr(0.2, 0.3); perceive(z, dist, dx, dz); }
@@ -424,7 +425,7 @@ export function updateZombies(dt){
     z.arms[0].rotation.x = -0.1 + Math.sin(z.phase*0.5)*0.15; z.arms[1].rotation.x = -0.1 - Math.sin(z.phase*0.5+1)*0.15;
     z.b.rotation.z = Math.sin(z.phase*0.5)*0.06;
     z.atkCd -= dt;
-    if (nd < minD + 0.35 && z.atkCd <= 0 && !stunned){ z.atkCd = 1.0; hurtPlayer(z.dmg, z); if (state.mode !== 'play') return; }
+    if (nd < minD + 0.35 && z.atkCd <= 0 && !stunned && !dev.ignored){ z.atkCd = 1.0; hurtPlayer(z.dmg, z); if (state.mode !== 'play') return; }
     if (z.flash > 0){ z.flash -= dt; if (z.flash <= 0) z.mats.forEach((m,j) => m.emissive.setHex(z.em[j])); }
     if (z.mods.explosive){
       // Arms a short fuse next to the player, blinking white, then detonates.
