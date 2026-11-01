@@ -423,6 +423,8 @@ js/
                   resident respawns, update() and animateWorld()
   input.js        Keyboard/mouse/focus listeners
   devtools.js     Dev tools panel (` key): cheats, city/phase jumps, teleport, spawning, items, time scale
+features/
+  multiplayer.md  Plan for the rest of co-op (networking: relay server, host/client split, messages)
 ```
 
 ## Conventions
