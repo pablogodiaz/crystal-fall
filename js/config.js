@@ -16,11 +16,11 @@ export const seeThrough = t => walkable(t) || t === 11 || t === 12 || t === 13 |
 // 2 raised (RAISE units up). Anyone can step up one level (onto a ramp, off a ramp onto the top) or
 // drop down any amount; nobody climbs straight from the ground onto raised tiles.
 export const RAISE = 1.1;
-// Breakable fences and barricades (T.FENCE, breakables.js), by style: hp, wood (molotov fire burns it;
-// planks repair it), name for prompts. Zombie AI tuning for them is in AI (threats.js).
+// Breakable fences and barricades (T.FENCE, breakables.js), by style: hp, wood (planks repair it),
+// vault (low enough for players, and runners, to climb over: VAULT in threats.js), name for prompts. Zombie AI tuning for them is in AI (threats.js).
 export const BREAKABLES = {
-  picket: { hp:8,  wood:true, name:'picket fence' },
-  rail:   { hp:9,  wood:true, name:'farm fence' },
+  picket: { hp:8,  wood:true, vault:true, name:'picket fence' },
+  rail:   { hp:9,  wood:true, vault:true, name:'farm fence' },
   chain:  { hp:20, name:'chain-link fence' },
   iron:   { hp:28, name:'iron fence' },
   planks: { hp:24, wood:true, name:'barricade' }

@@ -7,7 +7,7 @@
 import * as THREE from 'three';
 import { TILE, N, walkable, DISTRICTS, CONDITIONS, BREAKABLES } from './config.js';
 import { WEAPONS, ITEMS, LANDMARKS, GUNS, UNIQUES, RARITY, SPECIALS } from './items.js';
-import { ZTYPES, ZMODS, THREAT_BASE, THREAT_POOL, AI } from './threats.js';
+import { ZTYPES, ZMODS, THREAT_BASE, THREAT_POOL, AI, VAULT } from './threats.js';
 import { $, clamp, fmtTime, mpick } from './utils.js';
 import { camera, camFocus } from './renderer.js';
 import { state, world, zombies, dev, mouse, mouseNDC, players } from './state.js';
@@ -365,7 +365,12 @@ function buildPanel(){
   btn(r, 'Put up barricade', () => { ensureRun(); closeOverlays(); placeBarricade(P()); }, 'Boards up the tile in front of you (no item needed)');
   btn(r, 'Hit fences 50%', () => nearBreaks(b => hitBreak(b, b.max/2, b.x*TILE - P().pos.x, b.z*TILE - P().pos.z)), 'Every fence and barricade within 12 units loses half its health');
   btn(r, 'Break fences', () => nearBreaks(b => hitBreak(b, 999, b.x*TILE - P().pos.x, b.z*TILE - P().pos.z)), 'Knocks down every fence and barricade within 12 units');
-  s.appendChild(h('small', 'dv-note', 'Zombies bang on a fence when their way to you goes through it. “+1 of any item” has planks and barricades.'));
+  r = row(s, 'dv-checks');
+  check(r, 'noVault', 'No vaulting', 'Players can’t climb over low fences (picket, rail)');
+  check(r, 'noClimb', 'Runners don’t climb', 'Runners bang on low fences like everyone else instead of climbing over');
+  r = row(s);
+  btn(r, 'Stun me', () => { ensureRun(); const p = P(); p.stun = VAULT.stun; }, 'What a hit mid-vault does: dazed, can’t move or act');
+  s.appendChild(h('small', 'dv-note', 'Walk into a picket or rail fence to vault it; a hit on the way over knocks you off, stunned. Zombies bang on a fence when their way to you goes through it. “+1 of any item” has planks and barricades.'));
 
   s = section(root, 'World');
   r = row(s);

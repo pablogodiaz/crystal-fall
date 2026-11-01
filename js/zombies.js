@@ -2,7 +2,7 @@
 // Spawning, senses (sight, hearing, memory, home leash), steering, damage and death.
 // Type/modifier/AI numbers live in threats.js; screamer and spitter behaviour in specials.js.
 import * as THREE from 'three';
-import { TILE, N, DIRS8, walkable } from './config.js';
+import { TILE, N, DIRS8, walkable, BREAKABLES } from './config.js';
 import { mr, lerpAngle } from './utils.js';
 import { scene } from './renderer.js';
 import { SH } from './assets.js';
@@ -15,7 +15,7 @@ import { burst, addDecal, spawnPickup } from './fx.js';
 import { dropZombieAmmo } from './loot.js';
 import { queueBlast } from './throwables.js';
 import { rollThreat, updateScreamer, cancelScream, updateSpitter, poseSpecial } from './specials.js';
-import { ZTYPES, ZMODS, SCALE, CRYSTAL, AI } from './threats.js';
+import { ZTYPES, ZMODS, SCALE, CRYSTAL, AI, VAULT } from './threats.js';
 import { WEAPONS, SPECIALS } from './items.js';
 import { sfx, playSfx } from './audio.js';
 import { emit, nextId } from './host.js';
@@ -503,7 +503,7 @@ function shoveFromPlayers(z, tp){
     if (p.dead) continue;
     const minD = z.r + p.radius, ndx = p.pos.x - z.pos.x, ndz = p.pos.z - z.pos.z, nd = Math.hypot(ndx, ndz);
     // Up on a ledge (or a ramp's top) above it, a player is out of its reach.
-    if (Math.abs(p.pos.y - z.pos.y) > 0.6) continue;
+    if (Math.abs(p.pos.y - z.pos.y) > 0.6 && !p.vault && !p.netVault) continue;
     if (nd < minD + 0.35 && (!reach || p === tp)) reach = p;
     if (nd < minD && nd > 1e-4){ z.pos.x = p.pos.x - ndx/nd*minD; z.pos.z = p.pos.z - ndz/nd*minD; }
   }
@@ -532,6 +532,7 @@ export function updateZombies(dt){
       if (z.frozen <= 0) thaw(z);
       else { shoveFromPlayers(z, null); resolveCircle(z.pos, z.r); continue; }
     }
+    if (z.climb){ climbStep(z, dt); continue; }
     if (z.chill > 0) z.chill = Math.max(0, z.chill - dt*WEAPONS.cryo.thaw);
     if (z.turned > 0){
       z.turned -= dt;
@@ -593,6 +594,8 @@ export function updateZombies(dt){
     // behind it): it stands there banging on it until it gives.
     const bang = !stunned && !turned && !foe && z.mode !== 'idle' && (desX || desZ) ? breakAhead(z.pos.x, z.pos.z, desX, desZ, z.r + 0.5) : null;
     z.banging = !!bang;
+    // Runners go over low fences instead.
+    if (bang && z.type === 'runner' && VAULT.runners && !dev.noClimb && BREAKABLES[bang.kind].vault && startClimb(z, bang)){ z.banging = false; continue; }
     if (bang){
       const bx = desX, bz = desZ; desX = desZ = 0;
       z.g.rotation.y = lerpAngle(z.g.rotation.y, Math.atan2(bx, bz), Math.min(1, dt*10));
@@ -650,6 +653,31 @@ export function updateZombies(dt){
     if (z.flash <= 0 && turned && Math.random() < dt*3) burst(new THREE.Vector3(z.pos.x, 1.9*z.g.scale.y, z.pos.z), 'brew', 1, 0.6, true);
     if (z.alert){ z.groan -= dt; if (z.groan <= 0){ z.groan = mr(5,11); if (vd < 14) playSfx('groan'); } }
   }
+}
+
+// ---------- Climbing (runners over low fences) ----------
+// Over fence b to the tile beyond it, in VAULT.climb s (it can still be shot; the update loop skips it).
+function startClimb(z, b){
+  const fx = (b.x + 0.5)*TILE - z.pos.x, fz = (b.z + 0.5)*TILE - z.pos.z;
+  const ax = Math.abs(fx) >= Math.abs(fz) ? Math.sign(fx) : 0, az = ax ? 0 : Math.sign(fz), lx = b.x + ax, lz = b.z + az;
+  const L = world.city.level, r = z.r;
+  if (!walkable(world.city.grid[lz*N + lx]) || (L && L[lz*N + lx] > levelOf(z.pos.y) + 1)) return false;
+  const ex = ax ? (ax > 0 ? lx*TILE + r + 0.15 : (lx + 1)*TILE - r - 0.15) : Math.min((b.x + 1)*TILE - r, Math.max(b.x*TILE + r, z.pos.x));
+  const ez = az ? (az > 0 ? lz*TILE + r + 0.15 : (lz + 1)*TILE - r - 0.15) : Math.min((b.z + 1)*TILE - r, Math.max(b.z*TILE + r, z.pos.z));
+  z.climb = { t:0, sx:z.pos.x, sz:z.pos.z, sy:z.pos.y, ex, ez, ey:groundAt(ex, ez) };
+  z.vel.set(0, 0, 0); z.g.rotation.y = Math.atan2(ex - z.pos.x, ez - z.pos.z);
+  return true;
+}
+function climbStep(z, dt){
+  const c = z.climb; c.t += dt;
+  const k = Math.min(1, c.t/VAULT.climb), up = Math.sin(k*Math.PI);
+  z.pos.x = c.sx + (c.ex - c.sx)*k; z.pos.z = c.sz + (c.ez - c.sz)*k; z.pos.y = c.sy + (c.ey - c.sy)*k + up*VAULT.height;
+  poseClimb(z, up);
+  if (k >= 1){ z.climb = null; poseClimb(z, 0); resolveCircle(z.pos, z.r); }
+}
+// Hauling itself over: arms reaching up and over, legs dangling behind.
+function poseClimb(z, up){
+  z.arms[0].rotation.x = z.arms[1].rotation.x = -2.2*up; z.legs[0].rotation.x = 0.8*up; z.legs[1].rotation.x = 0.4*up; z.b.rotation.x = 0.4*up;
 }
 
 // A blow on a fence or barricade: both arms come up and hammer down, the body lunging into it.
@@ -775,10 +803,10 @@ export function updateDying(dt){
 // snapshots, and animated here from the flags the host sends (zombieFlags). It never thinks or
 // fights; its death is the host's kill event, played out with the same corpse code.
 const MODES = ['idle', 'search', 'hunt', 'return'];
-export const F = { stun:4, frozen:8, turned:16, fuse:32, windup:64, spit:128, burning:256, rising:512, bang:1024 };
+export const F = { stun:4, frozen:8, turned:16, fuse:32, windup:64, spit:128, burning:256, rising:512, bang:1024, climb:2048 };
 export function zombieFlags(z){
   return MODES.indexOf(z.mode) | (z.stun > 0 ? F.stun : 0) | (z.frozen > 0 ? F.frozen : 0) | (z.turned > 0 ? F.turned : 0)
-    | (z.fuse > 0 ? F.fuse : 0) | (z.windup > 0 ? F.windup : 0) | (z.spitT > 0 ? F.spit : 0) | (isBurning(z) ? F.burning : 0) | (z.rise > 0 ? F.rising : 0) | (z.banging ? F.bang : 0);
+    | (z.fuse > 0 ? F.fuse : 0) | (z.windup > 0 ? F.windup : 0) | (z.spitT > 0 ? F.spit : 0) | (isBurning(z) ? F.burning : 0) | (z.rise > 0 ? F.rising : 0) | (z.banging ? F.bang : 0) | (z.climb ? F.climb : 0);
 }
 export function mirrorSpawn(nid, type, modList, x, z, ry, rise, riseT, look){
   const mods = {}; for (const k of modList) mods[k] = true;
@@ -839,6 +867,9 @@ export function animateMirror(z, dt, t, vd, vl){
     z.arms[0].rotation.x = -0.1 + Math.sin(z.phase*0.5)*0.15; z.arms[1].rotation.x = -0.1 - Math.sin(z.phase*0.5+1)*0.15;
     z.b.rotation.z = Math.sin(z.phase*0.5)*0.06;
   }
+  // Climbing a fence: the arc and pose on our own clock while the flag is on.
+  if (f & F.climb){ z.climbT = Math.min(VAULT.climb, (z.climbT || 0) + dt); const up = Math.sin(z.climbT/VAULT.climb*Math.PI); z.pos.y += up*VAULT.height; poseClimb(z, up); return; }
+  else if (z.climbT){ z.climbT = 0; poseClimb(z, 0); }
   // Banging on a fence: swing on the host's rhythm while the flag is on.
   if (f & F.bang){ z.bangT = (z.bangT || 0) - dt; if (z.bangT <= 0){ z.bangT = AI.bang; z.bangA = BANG_T; } }
   poseBang(z, dt);

@@ -178,6 +178,16 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   at a damaged wooden one to repair it (+12 hp, a plank), or at your own barricade to take it down (a plank
   back) (`breakJobs`/`finishJob` through `updateInteract`). Melee kicks a fence for `AI.kick`; explosions
   hit them (`blastBreaks`). A breakable leans more with each hit and topples when broken (`animateBreaks`).
+  - **Vaulting:** low fences (picket, rail: `BREAKABLES[].vault`) can be climbed over. Walk straight into
+    one for `VAULT.push` s and you go over to the tile beyond in a `VAULT.time` s arc (`tryVault`/`vaultStep`
+    in `player.js`), for `VAULT.stamina` and a small noise; not while winded, stunned, or walking along it.
+    Chain-link, iron and barricades can't be vaulted. While vaulting you can't shoot, swing or use items
+    (`busy(p)`, checked by `canAct`), and zombies can reach you whatever the heights. A hit mid-vault knocks
+    you off to the nearer side, **stunned** for `VAULT.stun` s (`knockOff`; no moving or acting, a dazed sway,
+    `poseStun`). A client vaults its own player and says so in its controls (`vt` → `p.netVault`); the host
+    snaps it back (`tp`) and sends `stun`; player snapshot flags 64 stunned, 128 vaulting. **Runners** climb
+    low fences in `VAULT.climb` s instead of banging (`startClimb`/`climbStep` in `zombies.js`, `F.climb`);
+    everything else still has to break them.
   - **Zombies and fences:** path fields treat a fence as passable at a cost of `breakCost` = 1 + hp ×
     `AI.breakCost` tiles (`bfs` in `grid.js`, a BFS that holds the dearer steps back), so a zombie's way
     leads through one only when going round is longer. When the tile it wants to step into is a breakable
@@ -501,7 +511,8 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     the nearest construction site / cemetery / camp / pond / crater, a broken building, the nearest hill /
     loading dock / terrace and fence of each kind (snapped to the nearest open tile).
   - Fences & barricades: put up a barricade in front of you (no item needed), hit every fence within 12
-    units for half its health, break them all. Planks and barricades are in "+1 of any item".
+    units for half its health, break them all; turn off player vaulting (`dev.noVault`) or runners climbing
+    (`dev.noClimb`); stun yourself. Planks and barricades are in "+1 of any item".
   - Zombies: spawn ×1–50 of any type with any modifiers near you (`dev.spawn` overrides
     `rollThreat`), hunting or not, rising or standing; kill all (no kills/drops; exploders still
     blow), calm all, alert all; freeze zombies (skips `updateZombies`).
@@ -519,7 +530,7 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   - Using anything sets `state.cheated` (a violet "Dev" chip under the stamina bar; the best run
     isn't saved). The player cheats in `SAVED` are remembered in `localStorage['crystal-fall-dev']`;
     time scale, zoom, freeze and click-teleport reset on reload.
-- **Controls:** WASD/arrows move, mouse aims, hold left click to fire, Shift sprints, R reloads,
+- **Controls:** WASD/arrows move (walk into a low fence to vault it), mouse aims, hold left click to fire, Shift sprints, R reloads,
   F melee, Q swaps guns, G drops the held one, hold right click to aim + release to throw (wheel/T picks molotov or pipe bomb, left click cancels), hold E searches, 1–8 use items (right-click a slot drops it), C crafts, hold Tab for the map, Esc/P pauses (host only), click / Q / Space switch who you watch while dead,
   M mutes, `` ` `` opens the dev tools.
 
@@ -538,7 +549,7 @@ js/
   weapons.js      Weapon instances: makeWeapon, rarity/modifier/unique rolls, weaponStats, titles,
                   modifier text
   threats.js      Pure data: zombie types (ZTYPES), modifiers (ZMODS), unlock pool/order, banner tips,
-                  Crystal pulse and takeover tuning (CRYSTAL), zombie senses (AI)
+                  Crystal pulse and takeover tuning (CRYSTAL), zombie senses (AI), fence vaulting (VAULT)
   utils.js        Seeded RNG (rng/rand/randi/pick), mr/mri/mpick (Math.random), clamp, lerpAngle, fmtTime, $
   state.js        Shared mutable state: `state`, `world`, `dev` (dev tools flags), entity arrays, input state
   renderer.js     WebGLRenderer, scene, orthographic camera, lights (incl. pooled muzzle/fx lights), updateCamera(),
@@ -558,7 +569,7 @@ js/
                   cached flowTo), line of sight, blockIndex, fog-of-war reveal
   player.js       Players: add/remove (meshes per slot colour), me()/viewed()/nearestPlayer(), co-op scaling
                   (residents/crowd/zombieCap), base stats + starting kit, local controls (readLocal), movement/
-                  sprint/stamina, aim/reload, melee pose, bleeding, the lamp
+                  sprint/stamina, vaulting low fences and stun, aim/reload, melee pose, bleeding, the lamp
   bots.js         Companions: fill a non-local player's controls (follow, shoot, back off, heal, exit)
   zombies.js      Zombie meshes (incl. type/modifier tells, ?/! mark), spawning + rising from the ground,
                   senses (sight, hearing via makeNoise/alertNear, memory, leash), steering (flow fields,
@@ -705,7 +716,8 @@ landmark, spawn the threat you changed, skip the takeover. To verify changes, se
 explore (check districts feel different and each city condition looks like itself (dev tools: City → Condition):
 dead ends, pileups, checkpoints, buses, collapses, crashes, broken/burnt buildings, smoke, the construction
 site crane, cemetery, camp, pond, crater; stand on a hill / dock / terrace and check zombies come up the
-ramp and can't hit you from below; craft and place a barricade, watch zombies bang through it (or a fence)
+ramp and can't hit you from below; vault a picket fence, get hit on the way over (stunned, back where you
+started), watch a runner climb one and a walker bang it; craft and place a barricade, watch zombies bang through it (or a fence)
 when the way round is long, repair it, take it down; walk into the police station and supermarket; from City
 3/4/6 the hospital, gun shop and army outpost) → search
 containers/landmarks (weapon finds: rarity colours, the ground tooltip, Tab loadout; "Scatter 6 guns" in the dev

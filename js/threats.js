@@ -84,3 +84,8 @@ export const AI = { sight:13, sightHunt:26, feel:3.5, cone:1.9, memory:6, leash:
   // zombie bangs one down only when going round is longer); bang = seconds between blows, a blow
   // deals the zombie's dmg × bangDmg, banging makes bangNoise. Players kick fences for kick.
   breakCost:0.6, bang:1.1, bangDmg:0.1, bangNoise:12, kick:2 };
+// Climbing over a low fence (BREAKABLES[].vault). Players: walk into it for `push` s, then `time` s over
+// the top (no shooting, swinging or items), costs `stamina` (never while winded), a `noise`; a hit
+// mid-vault knocks them off to the nearer side, stunned for `stun` s. Runners climb over in `climb` s
+// instead of banging (when `runners`); everything else still has to break it. `height` = the arc.
+export const VAULT = { push:0.2, time:0.6, stamina:0.15, noise:7, stun:1.0, height:0.75, climb:1.5, runners:true };
