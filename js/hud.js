@@ -197,7 +197,7 @@ function updateWeaponTip(){
     tipSig = sig;
     const a = weaponDps(best.w), b = weaponDps(held), diff = a !== null && b !== null ? a - b : null;
     const cmp = diff === null ? '' : `<div class="wc-cmp">DPS <b>${f1(a)}</b> <span class="${diff >= 0 ? 'pos' : 'neg'}">${diff >= 0 ? '▲' : '▼'} ${f1(Math.abs(diff))}</span> vs your ${weaponTitle(held)}</div>`;
-    const act = best.held ? 'Step off it and back on to take it' : free ? 'Walk over it to pick it up' : `Hold <kbd>E</kbd> to swap for your ${weaponTitle(held)}`;
+    const act = best.held ? 'Step away, then hold <kbd>E</kbd> to take it back' : free ? 'Hold <kbd>E</kbd> to pick it up' : `Hold <kbd>E</kbd> to swap for your ${weaponTitle(held)}`;
     el.innerHTML = weaponCard(best.w, '', cmp + `<div class="wc-act">${act}</div>`);
     el.classList.remove('hidden');
   }

@@ -5,7 +5,8 @@ import { N, TILE } from './config.js';
 import { mr, mri, mpick } from './utils.js';
 import { scene } from './renderer.js';
 import { SH, gunModel } from './assets.js';
-import { world, keys, drops } from './state.js';
+import { world, keys, drops, pickups } from './state.js';
+import { isBlockedTile, lineOfSight } from './grid.js';
 import { player } from './player.js';
 import { WEAPONS, ITEMS, LOOT, LANDMARKS, GUNS, AMMO_ODDS, LUCK_SHOP } from './items.js';
 import { addItem, addAmmo, giveWeapon, replaceWeapon, carried, curWeapon } from './inventory.js';
@@ -18,7 +19,8 @@ import { sfx } from './audio.js';
 
 // What E would act on right now; read by the HUD for the prompt and progress ring.
 // target is a container, a ground weapon drop or a gas pump (flamethrower refuel); all carry px/pz.
-export const interact = { target:null, p:0, label:'', noiseT:0 };
+// lock = E must be let go before the next interaction starts (no chaining by holding it down).
+export const interact = { target:null, p:0, label:'', noiseT:0, lock:false };
 
 // ---------- Loot rolls ----------
 function wpick(table){
@@ -70,9 +72,10 @@ export function rollLoot(c){
   for (let i=0;i<n;i++) out.push(rollEntry(wpick(L.table), L.luck || 0));
   return out;
 }
-// Hands loot to the player: each gain floats up over them; anything that doesn't fit lands on the
-// ground. Returns notes worth a toast (full pack, new gun) and whether anything was found.
-function grantLoot(raw){
+// Hands loot to the player: each gain floats up over them. Weapons always land on the ground (tossed
+// out of the container `from`), so a find is never missed; so does anything that doesn't fit in the
+// pack. Returns notes worth a toast (full pack, new gun) and whether anything was found.
+function grantLoot(raw, from){
   const notes = [], x = player.pos.x, z = player.pos.z, list = [];
   for (const e of raw){  // merge repeated finds so "+2 scrap" reads as one line
     const same = list.find(o => !e.weapon && o.item === e.item && o.ammo === e.ammo);
@@ -84,12 +87,12 @@ function grantLoot(raw){
       if (k) floatText(`+${k} ${WEAPONS[e.ammo].ammo}`, 'good'); else notes.push(`${WEAPONS[e.ammo].ammo} full`);
     } else if (e.weapon){
       const w = e.weapon, name = weaponTitle(w);
-      if (giveWeapon(w)){ floatText(`+ ${name}`, 'r-' + w.rarity); notes.push(`${name}! Press Q to swap`); }
-      else { spawnDrop('weapon', w, 0, x, z, true); notes.push(`${name} found, hands full: dropped at your feet`); }
+      spawnDrop('weapon', w, 0, x, z, false, from); sfx.weapon();
+      floatText(`Found: ${name}!`, 'r-' + w.rarity); notes.push(`${name} found. It’s on the ground: hold E to pick it up`);
     } else {
       const k = addItem(e.item, e.n), I = ITEMS[e.item];
       if (k) floatText(`+${k} ${I.icon} ${I.name}`, 'good');
-      if (k < e.n){ spawnDrop('item', e.item, e.n - k, x, z, true); notes.push(`Pack full: ${e.n - k} ${I.name} dropped`); }
+      if (k < e.n){ spawnDrop('item', e.item, e.n - k, x, z, true, from); notes.push(`Pack full: ${e.n - k} ${I.name} dropped`); }
     }
   }
   return { notes, found:list.length > 0 };
@@ -98,9 +101,24 @@ function grantLoot(raw){
 // kind: 'item' (id = item id, n = count), 'ammo' (id = weapon id, n = rounds), 'weapon' (id = the weapon
 // instance, stored as d.w; d.id = its type). Weapons show their model, a ring in their rarity colour and,
 // from Rare up, a beam of light. held = spawned under the player; not picked up again until they step away.
-export function spawnDrop(kind, id, n, x, z, held){
-  const w = kind === 'weapon' ? id : null;
-  const g = new THREE.Group(); g.position.set(x + mr(-0.3,0.3), 0, z + mr(-0.3,0.3));
+// Every drop lands on a free spot near (x,z) (freeSpot), so piles spread out; with `from` ({ x, z }) it is
+// tossed there in an arc from that point (a searched container).
+const SPREAD = 1, TOSS = 0.45;
+export function freeSpot(x, z){
+  const ok = (sx, sz) => !isBlockedTile(Math.floor(sx/TILE), Math.floor(sz/TILE))
+    && drops.every(d => Math.hypot(d.px - sx, d.pz - sz) >= SPREAD)
+    && pickups.every(p => Math.hypot(p.g.position.x - sx, p.g.position.z - sz) >= SPREAD);
+  if (ok(x, z)) return [x, z];
+  const a0 = Math.random()*Math.PI*2;
+  for (let r=0.9;r<=3.6;r+=0.6) for (let i=0;i<8;i++){
+    const a = a0 + i*Math.PI/4 + r, sx = x + Math.sin(a)*r, sz = z + Math.cos(a)*r;
+    if (ok(sx, sz) && lineOfSight(x, z, sx, sz)) return [sx, sz];
+  }
+  return [x + mr(-0.3,0.3), z + mr(-0.3,0.3)];
+}
+export function spawnDrop(kind, id, n, x, z, held, from){
+  const w = kind === 'weapon' ? id : null, [sx, sz] = freeSpot(x, z);
+  const g = new THREE.Group(); g.position.set(sx, 0, sz);
   const box = new THREE.Group(); box.position.y = 0.45;
   if (w){ const m = gunModel(w.id, w.rarity); m.scale.setScalar(1.8); m.position.z = -0.7; m.rotation.z = 0.25; box.add(m); }
   else if (kind === 'ammo' && id === 'bow'){ const m = new THREE.Mesh(SH.arrowGeo, SH.arrowMat); m.rotation.set(0.15, 0, 0.6); m.castShadow = true; box.add(m); box.position.y = 0.25; }
@@ -109,7 +127,8 @@ export function spawnDrop(kind, id, n, x, z, held){
   g.add(box, ring);
   if (w && w.rarity !== 'common' && w.rarity !== 'uncommon') g.add(new THREE.Mesh(SH.beamGeo, SH.rarBeam[w.rarity]));
   scene.add(g);
-  const d = { kind, id:w ? w.id : id, w, n, g, box, t:Math.random()*6, held:!!held, px:g.position.x, pz:g.position.z };
+  const d = { kind, id:w ? w.id : id, w, n, g, box, t:Math.random()*6, held:!!held, px:sx, pz:sz, fly:0 };
+  if (from && Math.hypot(from.x - sx, from.z - sz) > 0.3){ d.fly = TOSS; d.fx = from.x; d.fz = from.z; g.position.set(from.x, 0, from.z); }
   drops.push(d); return d;
 }
 // A spent arrow: joins one already lying close by, otherwise lands as its own pickup.
@@ -125,7 +144,7 @@ export function dropName(d){
   return weaponTitle(d.w);
 }
 function removeDrop(d){ scene.remove(d.g); drops.splice(drops.indexOf(d), 1); }
-// Walk-over pickup. Weapons only auto-pick when there's a free slot or you already carry one.
+// Walk-over pickup of items and ammo. Weapons are only ever taken with E (updateInteract).
 function tryCollect(d){
   if (d.kind === 'item'){
     const k = addItem(d.id, d.n); if (!k) return;
@@ -135,20 +154,23 @@ function tryCollect(d){
     const k = addAmmo(d.id, d.n); if (!k) return;
     d.n -= k; floatText(`+${k} ${WEAPONS[d.id].ammo}`, 'good'); sfx.pickup();
     if (!d.n) removeDrop(d);
-  } else if (giveWeapon(d.w)){
-    const name = weaponTitle(d.w);
-    floatText(`+ ${name}`, 'r-' + d.w.rarity); toast(`${name}! Press Q to swap`, 'good');
-    sfx.pickup();
-    removeDrop(d);
   }
 }
 export function updateDrops(dt){
   for (let i=drops.length-1;i>=0;i--){
     const d = drops[i]; d.t += dt;
     d.box.rotation.y += dt*1.6; d.box.position.y = 0.45 + Math.sin(d.t*3)*0.08;
+    if (d.fly > 0){
+      // Tossed: an arc from where it came from to its spot. Can't be picked up mid-air.
+      d.fly = Math.max(0, d.fly - dt);
+      const k = 1 - d.fly/TOSS;
+      d.g.position.set(d.fx + (d.px - d.fx)*k, 0, d.fz + (d.pz - d.fz)*k); d.box.position.y += Math.sin(k*Math.PI)*1.5;
+      if (!d.fly) burst(new THREE.Vector3(d.px, 0.3, d.pz), 'dust', 4, 1.5);
+      continue;
+    }
     const dist = Math.hypot(d.px - player.pos.x, d.pz - player.pos.z);
     if (d.held){ if (dist > 1.8) d.held = false; continue; }
-    if (dist < 1.2) tryCollect(d);
+    if (dist < 1.2 && d.kind !== 'weapon') tryCollect(d);
   }
 }
 
@@ -171,11 +193,11 @@ export function updateInteract(dt){
     const d = Math.hypot(c.px - px, c.pz - pz);
     if (d < c.range && d < bd){ best = c; bd = d; }
   }
-  // A weapon on the ground you can't auto-pick (both slots full): hold E to swap it for the one in hand.
-  if (!player.weapons.includes(null)) for (const d of drops){
-    if (d.kind !== 'weapon' || d.held) continue;
+  // A weapon on the ground: hold E to pick it up (free slot) or swap it for the one in your hands.
+  for (const d of drops){
+    if (d.kind !== 'weapon' || d.held || d.fly > 0) continue;
     const dd = Math.hypot(d.px - px, d.pz - pz);
-    if (dd < 1.5 && dd < bd){ best = d; bd = dd; }
+    if (dd < 1.6 && dd < bd){ best = d; bd = dd; }
   }
   // Carrying a flamethrower that isn't full: a station's pumps fill it once.
   const fl = player.weapons.find(w => w && w.id === 'flamer');
@@ -186,16 +208,20 @@ export function updateInteract(dt){
   }
   if (best !== interact.target){ interact.target = best; interact.p = 0; }
   if (!best) return;
-  const drop = isDrop(best);
-  interact.label = drop ? `Swap ${weaponTitle(player.weapons[player.cur])} for ${weaponTitle(best.w)}` : best.kind === 'refuel' ? 'Refuel the flamethrower' : `Search ${best.name}`;
-  if (!keys.KeyE){ interact.p = 0; return; }
+  const drop = isDrop(best), free = player.weapons.includes(null);
+  interact.label = drop ? (free ? `Pick up ${weaponTitle(best.w)}` : `Swap ${weaponTitle(player.weapons[player.cur])} for ${weaponTitle(best.w)}`)
+    : best.kind === 'refuel' ? 'Refuel the flamethrower' : `Search ${best.name}`;
+  if (!keys.KeyE) interact.lock = false;
+  if (!keys.KeyE || interact.lock){ interact.p = 0; return; }
   if (drop){
     interact.p += dt/0.35;
     if (interact.p >= 1){
-      const old = replaceWeapon(best.w);
-      removeDrop(best); spawnDrop('weapon', old, 0, px, pz, true);
-      sfx.swap(); floatText(`+ ${weaponTitle(best.w)}`, 'r-' + best.w.rarity);
-      interact.target = null; interact.p = 0;
+      const name = weaponTitle(best.w);
+      removeDrop(best);
+      if (free){ giveWeapon(best.w); sfx.pickup(); toast(`${name}! Press Q to swap to it`, 'good'); }
+      else { spawnDrop('weapon', replaceWeapon(best.w), 0, px, pz, true); sfx.swap(); }
+      floatText(`+ ${name}`, 'r-' + best.w.rarity);
+      interact.target = null; interact.p = 0; interact.lock = true;
     }
     return;
   }
@@ -205,6 +231,7 @@ export function updateInteract(dt){
   if (interact.noiseT <= 0){ interact.noiseT = 0.5; sfx.search(); if (Math.random() < 0.5) makeNoise(best.px, best.pz, best.noise); }
   interact.p += dt/best.time;
   if (interact.p < 1) return;
+  interact.lock = true;
   if (best.kind === 'refuel'){ refuel(fl, best.l); interact.target = null; interact.p = 0; }
   else finishSearch(best);
 }
@@ -212,7 +239,7 @@ function finishSearch(c){
   c.searched = true; c.open(); c.glint.visible = false;
   interact.target = null; interact.p = 0;
   burst(new THREE.Vector3(c.px, 0.8, c.pz), 'dust', 6, 2);
-  const { notes, found } = grantLoot(rollLoot(c));
+  const { notes, found } = grantLoot(rollLoot(c), { x:c.px, z:c.pz });
   if (found) sfx.loot(); else floatText(`Nothing useful in this ${c.name}`, 'dim');
   if (notes.length) toast(notes.join('. '), 'info');
   if (c.kind === 'trunk' && Math.random() < 0.12){

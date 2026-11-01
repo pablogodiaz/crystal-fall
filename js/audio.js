@@ -80,6 +80,8 @@ export const sfx = {
   shard: () => { sTone(1800, 2600, 0.08, 'sine', 0.1); sTone(2700, 1900, 0.1, 'triangle', 0.05); },
   ping: () => sTone(2200, 1600, 0.07, 'sine', 0.06),
   drone: up => sTone(up ? 300 : 700, up ? 700 : 250, 0.3, 'square', 0.05),
+  // A weapon find: a bright two-note sting so it's not missed.
+  weapon: () => { sTone(440, 660, 0.12, 'square', 0.07); setTimeout(() => sTone(660, 990, 0.2, 'square', 0.07), 110); },
   jam: () => sTone(900, 820, 0.04, 'square', 0.08),
   alarm: () => { for (let i=0;i<8;i++) setTimeout(() => sTone(i%2 ? 700 : 950, i%2 ? 700 : 950, 0.26, 'square', 0.07), i*280); }
 };

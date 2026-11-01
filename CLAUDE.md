@@ -128,9 +128,10 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   - **Tooltip / loadout** (`hud.js`): the nearest weapon on the ground within 3.2 units gets a card
     (`weaponCard`: stats, modifiers green/red, unique description, DPS against your held gun, how
     to take it). Holding Tab shows both slots' cards bottom right of the full map (`#loadout`).
-  - **Pickups:** a weapon on the ground goes into a free slot when you walk over it; with both
-    slots full, hold E to swap it for the one in your hands. Weapons from searches that don't fit
-    land at your feet.
+  - **Pickups:** weapons are never picked up by walking over them. Every weapon find is tossed out
+    of the container onto the ground (with a sting sound and a "Found: …" floater) so it can't go
+    unnoticed; hold E next to it to pick it up into a free slot, or to swap it for the one in your
+    hands. After any E action, E must be released before the next one starts (`interact.lock`).
 - **Melee:** F any time (left click falls back to it when the held gun has no mag or reserve, or
   a unique can't fire: no fuel, brewing, recharging): a
   0.4 s butt-stroke animation (`poseMelee` in `player.js`); the blow lands 42% in (`meleeStrike`),
@@ -267,6 +268,10 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   brutes (`heal` in `ZTYPES`) or when below 40% HP), otherwise ~7% a small ammo box (14% during
   the takeover, `CRYSTAL.ammoDrop`, so the takeover's nonstop fighting stays possible). An
   exploder's own detonation gives no kill and no drop.
+- **Ground drops spread out** (`freeSpot` in `loot.js`): every drop (and health cross) lands on the
+  nearest spot at least 1 unit from other drops/crosses, on an open tile in sight of where it fell,
+  so piles fan out instead of stacking. Drops given a `from` point (search results) are tossed there
+  in a short arc (`d.fly`) and can't be picked up mid-air.
 - **Pickup feedback:** everything you collect (ground drops, search results, health crosses) floats
   up over the player as "+1 🩹 Bandage" (`floatText` in `hud.js`; several at once rise one after
   another). Ground drops and health crosses within 2.8 units get a small name tag below them

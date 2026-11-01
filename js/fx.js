@@ -9,6 +9,7 @@ import { world, particles, decals, pickups, rings } from './state.js';
 import { player } from './player.js';
 import { sfx } from './audio.js';
 import { floatText } from './hud.js';
+import { freeSpot } from './loot.js';
 
 export function burst(pos, kind, n, spd){
   for (let i=0;i<n;i++){
@@ -49,6 +50,7 @@ export function shockwave(x, z, r, color){
   }
 }
 export function spawnPickup(x,z){
+  [x, z] = freeSpot(x, z);  // not on top of other drops
   const g = new THREE.Group(); g.position.set(x,0,z);
   const c = new THREE.Group(); c.position.y = 0.8;
   c.add(new THREE.Mesh(SH.crossA, SH.crossMat), new THREE.Mesh(SH.crossB, SH.crossMat));
