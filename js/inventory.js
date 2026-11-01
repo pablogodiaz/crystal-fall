@@ -46,7 +46,7 @@ export function giveWeapon(w){
 }
 // Swaps the held weapon for one on the ground; returns the weapon put down.
 export function replaceWeapon(w){
-  const old = curWeapon();
+  const old = curWeapon(); old.out = false; old.charge = 0;  // a drone docks, a railgun charge drops
   player.weapons[player.cur] = w; player.reloadT = 0; player.fireCd = 0.3; refreshGun();
   const W = WEAPONS[w.id]; if (W.start && !w.started){ w.started = true; addAmmo(w.id, W.start); }
   return old;
@@ -56,7 +56,7 @@ export function dropWeapon(){
   if (state.mode !== 'play') return;
   const o = 1 - player.cur;
   if (!player.weapons[o]) return toast('That’s your only weapon');
-  const w = curWeapon();
+  const w = curWeapon(); w.out = false; w.charge = 0;
   player.weapons[player.cur] = null; player.cur = o; player.reloadT = 0; player.fireCd = 0.3; player.aiming = false; refreshGun();
   spawnDrop('weapon', w, 0, player.pos.x, player.pos.z, true);
   sfx.swap(); floatText(`Dropped ${weaponTitle(w)}`, 'dim');

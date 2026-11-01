@@ -65,7 +65,7 @@ export function weaponStats(w){
   }
   S.dmg *= p.dmgMul;
   if (S.rate) S.rate *= p.fireMul;
-  if (W.kind) return S;
+  if (W.kind){ if (S.reload) S.reload *= p.reloadMul; return S; }
   S.mag = Math.max(1, Math.round(S.mag*p.magMul)); S.reload *= p.reloadMul; S.pellets += p.pellets; S.pierce += p.pierce;
   return S;
 }

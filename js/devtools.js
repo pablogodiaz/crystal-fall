@@ -15,7 +15,7 @@ import { player, refreshGun } from './player.js';
 import { addItem, countItem, giveWeapon, replaceWeapon, magSize, curWeapon } from './inventory.js';
 import { makeWeapon, rollWeapon, rollRarity, rollMods, RARITIES, weaponTitle } from './weapons.js';
 import { spawnDrop } from './loot.js';
-import { spawnZombieAt, findSpawnNear, killZombie, alertZombie, turnZombie } from './zombies.js';
+import { spawnZombieAt, findSpawnNear, killZombie, alertZombie, turnZombie, freezeZombie } from './zombies.js';
 import { hitCrystal } from './combat.js';
 import { foundCrystal } from './crystal.js';
 import { updateFlow, reveal, blockIndex } from './grid.js';
@@ -277,6 +277,7 @@ function buildPanel(){
   r = row(s);
   btn(r, 'Refill gas pumps', () => { if (world.city) for (const l of world.city.landmarks) l.refueled = false; }, 'Every gas station can refuel the flamethrower again');
   btn(r, 'Turn nearby', () => { for (const z of zombies) if (Math.hypot(z.pos.x - player.pos.x, z.pos.z - player.pos.z) < 8 && !(z.rise > 0)) turnZombie(z, WEAPONS.potion.turn); }, 'Zombies within 8 units turn on their own kind (Turncoat flask)');
+  btn(r, 'Freeze nearby', () => { for (const z of zombies) if (Math.hypot(z.pos.x - player.pos.x, z.pos.z - player.pos.z) < 8) freezeZombie(z, WEAPONS.cryo.freeze); }, 'Zombies within 8 units freeze solid (Cryo sprayer): any hit shatters them');
   r = row(s);
   btn(r, 'Refill ammo', () => { ensureRun(); refillAmmo(); });
   btn(r, 'Fill pack', () => { ensureRun(); for (const id in ITEMS) addItem(id, Math.max(0, ITEMS[id].max - countItem(id))); }, 'Tops every item up to one full stack');

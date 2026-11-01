@@ -26,10 +26,34 @@ export const WEAPONS = {
   // Arc caster: a bolt to the nearest zombie in front (range, ±cone) that jumps to up to `chain` more within
   // `jump` of each other, each jump doing `fall` of the last; stuns. mag = charge, cost per shot, regen/s after regenDelay s.
   tesla:   { name:'Arc caster',    ammo:'charge', unique:true, kind:'arc', mag:100, cost:20, rate:0.42, regen:14, regenDelay:1.2, dmg:2.4, range:10, cone:0.5, chain:4, jump:4.5, fall:0.8, stun:0.4, noise:16,
-             desc:'Lightning that jumps between up to 5 zombies and stuns them. Recharges by itself' }
+             desc:'Lightning that jumps between up to 5 zombies and stuns them. Recharges by itself' },
+  // Gravity well launcher: an orb flies to the cursor (like a throw, max 13 units) at `speed` and opens a well
+  // for `time` s that drags zombies within radius toward its middle at up to `pull` u/s (they can't act),
+  // then pops, stunning them for `stun` s. No damage. mag = charges, all refilled at the start of every city.
+  gravity: { name:'Gravity well launcher', ammo:'wells', unique:true, kind:'grav', mag:3, speed:12, radius:7, time:4, pull:6, stun:1, noise:14,
+             desc:'Fires a slow orb that opens a gravity well, dragging every zombie nearby into a tight knot for 4 s. Three wells, refilled each city' },
+  // Railgun: hold to charge for `charge` s, release to fire a beam that hits everything in a line out to range,
+  // through one wall (not two). Releasing early cancels. One slug per shot, reloaded from the reserve.
+  railgun: { name:'Railgun',       ammo:'slugs', unique:true, kind:'rail', mag:1, reload:1.4, charge:1.1, dmg:14, range:45, kb:4, noise:55, maxAmmo:12, find:[1,2], start:6,
+             desc:'Hold to charge, release to fire a beam through every zombie in a line, and through one wall. Deafening' },
+  // Cryo sprayer: hold to spray frost in a cone (range, ±cone); each zombie in it chills by `chill`/s (slower by up
+  // to slow) and freezes solid at 1 for `freeze` s: frozen zombies can't act and shatter at the next hit
+  // (fire thaws them). mag = coolant (use per s), reloaded from canisters found like ammo.
+  cryo:    { name:'Cryo sprayer',  ammo:'coolant', unique:true, kind:'cryo', mag:100, use:10, reload:1.6, range:6, cone:0.36, chill:1.7, thaw:0.35, slow:0.7, freeze:4, noise:12,
+             maxAmmo:200, find:[25,45], start:100,
+             desc:'Hold to spray frost: zombies slow down, then freeze solid. Any hit shatters a frozen one, even a brute' },
+  // Crystal shard: fires a violet shard that ricochets off walls `bounce` times and pierces. mag = shards, only
+  // recharged (+refill, up to mag) when you break a city's Crystal.
+  shard:   { name:'Crystal shard', ammo:'shards', unique:true, kind:'shard', mag:24, refill:12, dmg:3.5, rate:0.24, speed:34, life:1.6, pierce:2, bounce:3, jitter:0.01, noise:14,
+             desc:'Shoots crystal splinters that ricochet off walls. Only recharges when you break a city’s Crystal' },
+  // Guardian drone: click to launch or dock it. Flying, it circles you and shoots the nearest zombie it can see
+  // within range every `rate` s, whatever you're holding. mag = battery: drains `drain`/s flying, recharges
+  // `recharge`/s docked; it docks itself when flat.
+  drone:   { name:'Guardian drone', ammo:'battery', unique:true, kind:'drone', mag:100, drain:1.6, recharge:2, dmg:1.2, rate:0.45, range:11, speed:44, orbit:2.2, noise:12,
+             desc:'Click to launch: it circles you and shoots on its own, even while you hold another weapon. Battery recharges while docked' }
 };
 export const GUNS = ['pistol','shotgun','smg','rifle'];
-export const UNIQUES = ['bow','flamer','potion','tesla'];
+export const UNIQUES = ['bow','flamer','potion','tesla','gravity','railgun','cryo','shard','drone'];
 // Which gun an ammo find (search or zombie drop) is for: `held` = the gun in your hands, `carried`
 // = your other gun (both skip a full reserve and guns without ammo; with one gun it gets both shares),
 // the rest any standard gun. Fixed shares, so adding weapons doesn't dilute the ammo you actually need.

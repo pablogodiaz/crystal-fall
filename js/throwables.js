@@ -22,7 +22,7 @@ let flash = 0;
 
 // Flight path of a throw toward the cursor: max 13 units, landing short of the first wall in the way.
 // T = flight time; arcY(k, T) = height at progress k. Shared by the throw and the aim preview.
-function throwPath(){
+export function throwPath(){
   const px = player.pos.x, pz = player.pos.z;
   let dx = aimPoint.x - px, dz = aimPoint.z - pz, d = Math.hypot(dx,dz);
   if (d < 0.5){ dx = Math.sin(player.angle); dz = Math.cos(player.angle); d = 1; }
@@ -46,9 +46,9 @@ export const throwPotion = () => throwItem('potion');
 
 // ---------- Aim preview (hold right click) ----------
 // Outline of the area the throwable will affect (fire / blast radius) plus a dotted flight arc.
-// Also shown whenever a ready Turncoat flask is in your hands (left click throws it).
+// Also shown whenever a ready Turncoat flask or a loaded gravity well launcher is in your hands.
 // Drawn without depth testing so it stays visible behind buildings. Built once, never disposed.
-const PREVIEW = { molotov:{ r:FIRE_R, color:0xff8a2a }, pipebomb:{ r:BOMB_R, color:0x8cc8ff }, potion:{ r:WEAPONS.potion.radius, color:0xff5fd2 } };
+const PREVIEW = { molotov:{ r:FIRE_R, color:0xff8a2a }, pipebomb:{ r:BOMB_R, color:0x8cc8ff }, potion:{ r:WEAPONS.potion.radius, color:0xff5fd2 }, gravity:{ r:WEAPONS.gravity.radius, color:0xa070ff } };
 let preview = null;
 function buildPreview(){
   const mat = new THREE.MeshBasicMaterial({ transparent:true, opacity:0.85, depthTest:false, depthWrite:false, side:THREE.DoubleSide });
@@ -70,6 +70,7 @@ export function updateThrowPreview(){
   if (player.aiming && !countItem(id)){ player.aiming = false; id = null; }
   const w = state.mode === 'play' && player.weapons && curWeapon();
   if (!id && w && w.id === 'potion' && w.cd <= 0) id = 'potion';
+  if (!id && w && w.id === 'gravity' && w.mag >= 1) id = 'gravity';
   if (!id){ if (preview) preview.g.visible = false; return; }
   preview = preview || buildPreview();
   const p = throwPath(), P = PREVIEW[id];

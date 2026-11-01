@@ -83,7 +83,7 @@ export function spawnZombieAt(x,z,horde,alert,guard,exclude,rise = mr(RISE[0], R
     // Senses (see the Senses section): mode, last known target lx/lz, memory left, sight, path.
     mode:'idle', alert:false, tracked:false, lx:x, lz:z, mem:0, sees:false, direct:false, percT:Math.random()*0.25, searchT:0, giveUp:0, fk:-1, ff:null,
     mark:m.mark, markT:0,
-    turned:0, foe:null, foeT:0, dead:false, fuse:0, los:false, losT:Math.random()*0.2, windup:0, screamed:false, spitT:0, spitCd:mr(1,2.5), stun:0, side:Math.random() < 0.5 ? -1 : 1, rise, riseT:rise };
+    turned:0, foe:null, foeT:0, chill:0, frozen:0, ice:null, dead:false, fuse:0, los:false, losT:Math.random()*0.2, windup:0, screamed:false, spitT:0, spitCd:mr(1,2.5), stun:0, side:Math.random() < 0.5 ? -1 : 1, rise, riseT:rise };
   if (alert || horde) Object.assign(zz, { mode:'hunt', alert:true, mem:AI.memory, lx:player.pos.x, lz:player.pos.z, tracked:!!horde });
   if (mods.explosive) zz.warn = makeWarnRing();
   if (rise > 0){
@@ -304,10 +304,17 @@ function wander(z, dt, cx, cz, R){
 // other zombie (z.foe) instead of you: it can't hurt you, your bullets, melee, fire and lightning pass
 // it by (blasts still don't care). With nobody to fight it tags along near you. A zombie it bites
 // fights back (foe = the biter, for foeT seconds). Afterwards it forgets everything and walks home.
-const TURN_EM = 0x7a1a68;
+const TURN_EM = 0x7a1a68, ICE_EM = 0x2a6aa8;
+// Emissive override (turned pink, frozen blue); null restores the zombie's resting glow.
+function setGlow(z, hex){
+  if (hex !== null){ if (!z.em0) z.em0 = z.em.slice(); z.em = z.em0.map(() => hex); }
+  else if (z.em0){ z.em = z.em0; z.em0 = null; }
+  z.mats.forEach((m, j) => m.emissive.setHex(z.em[j]));
+}
 export function turnZombie(z, t){
   if (z.dead) return;
-  if (!(z.turned > 0)){ z.em0 = z.em.slice(); z.em.fill(TURN_EM); z.mats.forEach(m => m.emissive.setHex(TURN_EM)); }
+  if (z.frozen > 0) thaw(z);
+  if (!(z.turned > 0)) setGlow(z, TURN_EM);
   z.turned = t; z.foe = null; z.foeT = 0; z.fuse = 0; z.spitT = 0; z.stun = 0;
   if (z.windup > 0) cancelScream(z);
   setMode(z, 'idle'); z.sees = false;
@@ -315,8 +322,33 @@ export function turnZombie(z, t){
 }
 function unturn(z){
   z.turned = 0; z.foe = null; z.mark.visible = false;
-  if (z.em0){ z.em = z.em0; z.mats.forEach((m, j) => m.emissive.setHex(z.em[j])); }
+  setGlow(z, null);
   setMode(z, 'return'); z.giveUp = AI.giveUp*2;
+}
+
+// ---------- Frozen (Cryo sprayer) ----------
+// Frost chills a zombie (z.chill 0..1, slower by up to WEAPONS.cryo.slow; it wears off by `thaw`/s).
+// At 1 it freezes solid for `freeze` s inside a block of ice: no moving, attacking or fuses, and the
+// next hit of any kind shatters it (fire thaws it instead).
+export function chillZombie(z, amt){
+  if (z.dead || z.rise > 0 || z.frozen > 0) return;
+  z.chill = Math.min(1, (z.chill || 0) + amt);
+  if (z.chill >= 1) freezeZombie(z, WEAPONS.cryo.freeze);
+}
+export function freezeZombie(z, t){
+  if (z.dead || z.rise > 0) return;
+  if (z.turned > 0) unturn(z);
+  z.frozen = t; z.chill = 1; z.fuse = 0; z.spitT = 0; z.stun = 0; z.vel.set(0, 0, 0);
+  if (z.windup > 0) cancelScream(z);
+  z.b.rotation.set(0, 0, 0); setGlow(z, ICE_EM);
+  if (!z.ice){ z.ice = new THREE.Mesh(SH.iceGeo, SH.iceMat); z.g.add(z.ice); }
+  burst(new THREE.Vector3(z.pos.x, 1, z.pos.z), 'ice', 8, 2); sfx.freeze();
+}
+function thaw(z){
+  z.frozen = 0; z.chill = 0.4;
+  if (z.ice){ z.g.remove(z.ice); z.ice = null; }
+  setGlow(z, null);
+  if (!z.dead) burst(new THREE.Vector3(z.pos.x, 1, z.pos.z), 'ice', 6, 2.5);
 }
 // Who z is fighting right now (null = nobody: business as usual).
 function foeOf(z, dt){
@@ -341,20 +373,29 @@ function bite(z, foe){
   if (!foe.dead && !(foe.turned > 0) && z.turned > 0){ foe.foe = z; foe.foeT = 4; }
 }
 
-// cause = 'bullet' | 'melee' | 'blast' | 'fire' | 'bite' (fire is damage over time: no blood burst or hit
+// cause = 'bullet' | 'melee' | 'blast' | 'fire' | 'bite' | 'rail' (railgun: goes through riot shields)
+// (fire is damage over time: no blood burst or hit
 // sound); it also picks the death animation. (dx,dz) = hit direction and knockback.
 // Armored zombies take frontMul damage from hits landing within frontArc of where they face.
 // Returns true if the shield took the hit (bullets stop there instead of piercing).
 // Zombies still rising out of the ground can't be hurt.
 export function damageZombie(z, dmg, dx, dz, cause){
   if (z.dead || z.rise > 0) return false;
+  if (z.frozen > 0){
+    // Frozen solid: fire melts the ice, anything else shatters it, zombie and all.
+    if (cause === 'fire'){ thaw(z); return false; }
+    if (dmg > 0){
+      burst(new THREE.Vector3(z.pos.x, 1.1, z.pos.z), 'ice', 22, 6); sfx.shatterIce();
+      killZombie(z, true, 'blast', dx, dz, 99); return false;
+    }
+  }
   const quiet = cause === 'fire';
   const A = ZMODS.armored, l = Math.hypot(dx,dz);
-  const blocked = z.mods.armored && l > 0 && -(Math.sin(z.g.rotation.y)*dx + Math.cos(z.g.rotation.y)*dz)/l > Math.cos(A.frontArc);
+  const blocked = cause !== 'rail' && z.mods.armored && l > 0 && -(Math.sin(z.g.rotation.y)*dx + Math.cos(z.g.rotation.y)*dz)/l > Math.cos(A.frontArc);
   if (blocked) dmg *= A.frontMul;
   if (dev.oneHit) dmg = Math.max(dmg, z.hp);
   z.hp -= dmg; z.flash = 0.08;
-  if (cause === 'bullet' || cause === 'melee') alertZombie(z);
+  if (cause === 'bullet' || cause === 'melee' || cause === 'rail') alertZombie(z);
   for (const m of z.mats) m.emissive.setHex(quiet ? 0x804010 : blocked ? 0x2a3a55 : 0x663333);
   z.vel.x += dx*z.kb; z.vel.z += dz*z.kb;
   if (!quiet){
@@ -374,6 +415,7 @@ export function stunZombie(z, t){
 // cause/dx/dz/dmg describe the killing blow (see damageZombie) and shape the corpse.
 export function killZombie(z, credit = true, cause, dx = 0, dz = 0, dmg = 0){
   z.dead = true; z.mark.visible = false;
+  if (z.ice){ z.g.remove(z.ice); z.ice = null; } z.frozen = 0;
   if (z.warn) z.warn.visible = false;
   const i = zombies.indexOf(z); if (i >= 0) zombies.splice(i,1);
   if (z.horde) state.hordeAlive--;
@@ -404,6 +446,17 @@ export function updateZombies(dt){
     z.g.visible = dist < 50;  // well off-screen (and out of the shadow camera): skip rendering it
     if (!(z.turned > 0)) updateMark(z, dt);
     if (z.rise > 0){ updateRise(z, dt); continue; }
+    if (z.frozen > 0){
+      // A statue: it only gets shoved aside by you (and dragged by gravity wells).
+      z.frozen -= dt;
+      if (z.frozen <= 0) thaw(z);
+      else {
+        const ndx = p.x - z.pos.x, ndz = p.z - z.pos.z, nd = Math.hypot(ndx, ndz), minD = z.r + player.radius;
+        if (nd < minD && nd > 1e-4){ z.pos.x = p.x - ndx/nd*minD; z.pos.z = p.z - ndz/nd*minD; resolveCircle(z.pos, z.r); }
+        continue;
+      }
+    }
+    if (z.chill > 0) z.chill = Math.max(0, z.chill - dt*WEAPONS.cryo.thaw);
     if (z.turned > 0){ z.turned -= dt; if (z.turned <= 0) unturn(z); }
     const turned = z.turned > 0, foe = foeOf(z, dt);
     if (turned || foe){}  // busy fighting (or on your side): no senses
@@ -415,7 +468,7 @@ export function updateZombies(dt){
     }
     // Idle zombies far off-screen skip crowd separation and animation.
     const far = dist > 48 && z.mode === 'idle' && !turned && !foe;
-    let desX = 0, desZ = 0, spd = z.speed, hold = false, mv = null, dir = null;
+    let desX = 0, desZ = 0, spd = z.speed*(z.chill > 0 ? 1 - WEAPONS.cryo.slow*z.chill : 1), hold = false, mv = null, dir = null;
     if (z.stun > 0) z.stun -= dt;
     const stunned = z.stun > 0;
     // Specials: a winding-up screamer roots in place; an alerted spitter picks its own spacing.

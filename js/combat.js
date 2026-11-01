@@ -22,7 +22,7 @@ import { foundCrystal, checkPulse, breakCrystal } from './crystal.js';
 
 export function tryReload(){
   const w = curWeapon();
-  if (state.mode !== 'play' || WEAPONS[w.id].kind || player.reloadT > 0 || w.mag >= magSize(w) || player.ammo[w.id] <= 0) return;
+  if (state.mode !== 'play' || (WEAPONS[w.id].kind && !WEAPONS[w.id].reload) || player.reloadT > 0 || w.mag >= magSize(w) || player.ammo[w.id] <= 0) return;
   player.reloadT = weaponStats(w).reload; sfx.reload();
 }
 // Called every frame the trigger is held. Regular guns (and the bow) shoot bullets here using the
@@ -31,7 +31,12 @@ export function tryReload(){
 export function fire(dt){
   if (player.reloadT > 0 || player.fireCd > 0) return;
   const w = curWeapon(), W = WEAPONS[w.id];
-  if (W.kind){ if (!fireUnique(w, dt)) dryMelee(); return; }
+  if (W.kind){
+    // Uniques with a reserve (railgun, cryo) reload like guns when empty.
+    if (W.reload && w.mag <= 0.01){ if (player.ammo[w.id] > 0.5) tryReload(); else dryMelee(); return; }
+    if (!fireUnique(w, dt)) dryMelee();
+    return;
+  }
   if (w.mag <= 0){ if (player.ammo[w.id] > 0) tryReload(); else dryMelee(); return; }
   const S = weaponStats(w);
   // A bad "crit" roll jams instead; fast guns jam less per shot so they don't stall every second.
@@ -75,7 +80,11 @@ function dryMelee(){
     dryWarned = performance.now();
     toast(w.id === 'flamer' ? 'Out of fuel. Refuel at a gas station pump (once per station), or press Q to swap'
       : w.id === 'potion' ? `The flask is still brewing (${Math.ceil(w.cd)} s). Press Q to swap`
-      : w.id === 'tesla' ? 'Recharging. Press Q to swap' : `Out of ${W.ammo}. Search the city or press Q to swap`, 'bad');
+      : w.id === 'tesla' ? 'Recharging. Press Q to swap'
+      : w.id === 'gravity' ? 'No gravity wells left. They come back in the next city'
+      : w.id === 'shard' ? 'No shards left. Break a city’s Crystal to recharge'
+      : w.id === 'drone' ? 'Drone battery flat. It recharges while docked'
+      : `Out of ${W.ammo}. Search the city or press Q to swap`, 'bad');
   }
   melee();
 }
@@ -112,7 +121,18 @@ export function updateBullets(dt){
         const cx = bp.x - crystal.pos.x, cz = bp.z - crystal.pos.z, ct = world.city.crystalTile;
         if (cx*cx + cz*cz < CRYSTAL_R*CRYSTAL_R || (tx === ct.x && tz === ct.z)){ hitCrystal(b.damage); burst(bp.clone(), 'crystal', 5, 3); bp.x -= b.dx*0.8; bp.z -= b.dz*0.8; dead = true; break; }
       }
-      if (isOpaqueTile(tx, tz)){ burst(bp.clone(), 'spark', 4, 2.5); bp.x -= b.dx*0.5; bp.z -= b.dz*0.5; dead = true; break; }  // cell bars let shots through
+      if (isOpaqueTile(tx, tz)){
+        // Crystal shards ricochet: flip whichever direction crossed into the wall (both at a corner).
+        if (b.bounce > 0){
+          const ox = bp.x - b.dx*b.speed*sdt, oz = bp.z - b.dz*b.speed*sdt;
+          const fx = isOpaqueTile(tx, Math.floor(oz/TILE)), fz = isOpaqueTile(Math.floor(ox/TILE), tz);
+          if (fx || !fz) b.dx = -b.dx;
+          if (fz || !fx) b.dz = -b.dz;
+          bp.x = ox; bp.z = oz; b.bounce--; b.hit.clear(); b.mesh.rotation.y = Math.atan2(b.dx, b.dz);
+          burst(bp.clone(), 'void', 3, 2); sfx.ping(); continue;
+        }
+        burst(bp.clone(), 'spark', 4, 2.5); bp.x -= b.dx*0.5; bp.z -= b.dz*0.5; dead = true; break;
+      }  // cell bars let shots through
       for (const z of zombies){
         if (b.hit.has(z) || z.rise > 0 || z.turned > 0) continue;  // still digging out: shots pass over; turned ones are friends
         const zx = bp.x - z.pos.x, zz = bp.z - z.pos.z, rr = z.r + 0.14;

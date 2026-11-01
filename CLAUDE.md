@@ -98,7 +98,25 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     60 s brew (`w.cd`); a radius preview shows while it's ready in your hands), **Arc caster**
     (`arc`: chain lightning to up to 5 zombies, stuns, `mag` = charge that recharges after
     `regenDelay`), **compound bow** (a regular gun with `arrow`: nearly silent, pierces, comes with
-    `start` arrows, and `keep` of its arrows land as pickups (`dropArrow`)).
+    `start` arrows, and `keep` of its arrows land as pickups (`dropArrow`)), **gravity well launcher**
+    (`grav`: one orb per click (`w.latch`) flies to the cursor via `throwPath` and opens a well for 4 s
+    that drags zombies toward its middle and keeps them dazed (`stunZombie`), its noise drawing more in,
+    then pops and stuns; 3 charges, refilled in `resetUniques` at every city start; radius preview while
+    loaded), **railgun** (`rail`: hold to charge `w.charge` (`chargeRail`), release to fire
+    (`updateRail` watches `mouse.down`; early release fizzles): a beam hitting everything within
+    `r + 0.35` of the line, through the first wall it meets and stopped by the second, cause `'rail'`
+    (ignores riot shields); slugs reload from a reserve like a gun), **cryo sprayer** (`cryo`: shares
+    the flamethrower's `spray`/`puff` code; frost calls `chillZombie`; coolant reloads from canisters
+    found like ammo), **Crystal shard** (`shard`: shards are bullets with `bounce`, reflected off walls
+    in `updateBullets` (their hit set clears on each bounce); `rechargeShards` from `breakCrystal` is the
+    only refill) and **guardian drone** (`drone`: click toggles `w.out`; flying, one shared
+    `droneModel()` circles you and shoots the nearest visible zombie whatever you hold, draining its
+    battery; recharges docked; dropping or swapping it away docks it).
+  - **Frozen zombies** (Frozen section of `zombies.js`): `z.chill` 0..1 slows them (up to `slow`) and
+    wears off; at 1 `freezeZombie`: an ice block (`SH.iceGeo`, child of `z.g`), blue glow (`setGlow`,
+    shared with turned zombies), no moving/attacking/fuses for `freeze` s (the update loop skips them,
+    only you shove them; wells still drag them). Any non-fire hit shatters them (`damageZombie` kills
+    with cause `'blast'`), fire thaws them.
   - **Turned zombies** (Turned section of `zombies.js`, `turnZombie`): pink glow and a ♥ mark;
     they hunt the nearest other zombie (`z.foe`, flow fields like everything else) and bite it
     (`WEAPONS.potion.bite` × their damage, cause `'bite'`); bitten zombies fight back for 4 s. They
@@ -282,7 +300,7 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     random) with random modifiers, any unique (both replace the held one when both slots are full)
     with full ammo; reroll the held gun's modifiers; scatter 6 random weapon finds around you (normal
     or lucky odds, for the tooltip); refill ammo (also fuel, charge and the flask); refill every gas
-    pump; turn the zombies near you; fill/empty the pack. Upgrades: apply any.
+    pump; turn or freeze the zombies near you; fill/empty the pack. Upgrades: apply any.
   - World: time scale (stopped, 0.25–3×; >1 runs several capped `update` steps per frame), camera
     zoom, hide HUD.
   - Using anything sets `state.cheated` (a violet "Dev" chip under the stamina bar; the best run
@@ -323,14 +341,16 @@ js/
   player.js       Player mesh, base stats + starting kit, movement/sprint/stamina, aim/reload, melee pose, bleeding
   zombies.js      Zombie meshes (incl. type/modifier tells, ?/! mark), spawning + rising from the ground,
                   senses (sight, hearing via makeNoise/alertNear, memory, leash), steering (flow fields,
-                  pipe-bomb lure), turned zombies (Turncoat flask), damage (armor), stun, explosive fuse
+                  pipe-bomb lure), turned zombies (Turncoat flask), frozen zombies (cryo), damage (armor),
+                  stun, explosive fuse
                   and warning ring, death
                   (ragdoll corpses, gibs)
   specials.js     Threat unlocks and rolls, screamer/spitter behaviour, acid, "New threat" banners
   combat.js       Firing per weapon (rarity modifiers: crits, jams, free/wasted rounds), melee start/strike,
                   bullets (and arrows), hurtPlayer/drainHp, Crystal hits
-  uniques.js      Unique weapons: flamethrower (flames, burning, refuel), Turncoat flask splash,
-                  Arc caster (chain lightning bolts), flask/arc cooldown and recharge
+  uniques.js      Unique weapons: flamethrower + cryo sprayer (spray cones, puffs, burning, refuel),
+                  Turncoat flask splash, Arc caster (chain lightning bolts), gravity wells (orbs, pull),
+                  railgun (charge, beam), Crystal shard (fire, recharge), guardian drone; cooldowns/recharges
   crystal.js      Crystal found/pulse/break, its animation, takeover end, violet tint + screen wave
   inventory.js    Item stacks, weapon slots (give/replace/drop), ammo reserves, using/dropping items, crafting
   loot.js         Hold-E searching (and gas-pump refuels, weapon swaps), loot rolls, ground drops (weapon
@@ -429,7 +449,8 @@ landmark, spawn the threat you changed, skip the takeover. To verify changes, se
 explore (check districts feel different, walk into the police station and supermarket; from City
 3/4/6 the hospital, gun shop and army outpost) → search
 containers/landmarks (weapon finds: rarity colours, the ground tooltip, Tab loadout; "Scatter 6 guns" in the dev
-tools) → try each unique (flamethrower + a gas pump refuel, flask, arc caster, bow arrows) →
+tools) → try each unique (flamethrower + a gas pump refuel, flask, arc caster, bow arrows, gravity well,
+railgun through a wall, cryo then shatter, shards bouncing + recharging on a Crystal break, drone) →
 lose a hunting zombie by breaking line of sight, check it walks home →
 shoot Crystal (pulse from City 3) → survive the takeover
 (set `state.takeover` low to skip ahead) → exit → pick upgrade → next

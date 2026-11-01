@@ -136,6 +136,11 @@ function ammoState(w){
   if (W.kind === 'flame') return [String(Math.ceil(w.mag)), w.mag > 0 ? '% fuel' : 'No fuel: melee', w.mag <= 0];
   if (W.kind === 'arc') return [String(Math.floor(w.mag)), w.mag >= W.cost ? '% charge' : 'Recharging', w.mag < W.cost];
   if (W.kind === 'potion') return w.cd > 0 ? [String(Math.ceil(w.cd)), 's brewing', true] : ['Ready', 'click to throw', false];
+  if (W.kind === 'grav') return [String(w.mag), `/ ${W.mag} wells`, w.mag < 1];
+  if (W.kind === 'shard') return [String(w.mag), w.mag ? 'shards' : 'Break a Crystal', w.mag < 1];
+  if (W.kind === 'drone') return [String(Math.floor(w.mag)), w.out ? '% battery · flying' : '% battery · click to launch', !w.out && w.mag < 5];
+  if (W.kind === 'cryo' && player.reloadT <= 0) return [String(Math.ceil(w.mag)), `% coolant / ${Math.ceil(player.ammo.cryo)}`, w.mag + player.ammo.cryo < 1];
+  if (W.kind === 'rail' && w.charge > 0) return [Math.floor(w.charge/W.charge*100) + '%', w.charge >= W.charge ? 'Release to fire' : 'Charging', false];
   const reserve = player.ammo[w.id];
   if (player.reloadT > 0) return ['…', 'Reloading', false];
   return [String(w.mag), w.mag + reserve === 0 ? 'Empty: melee' : '/ ' + reserve, w.mag + reserve === 0];
@@ -145,6 +150,10 @@ function shortAmmo(w){
   if (W.kind === 'flame') return `${Math.ceil(w.mag)}% fuel`;
   if (W.kind === 'arc') return `${Math.floor(w.mag)}% charge`;
   if (W.kind === 'potion') return w.cd > 0 ? `${Math.ceil(w.cd)} s` : 'ready';
+  if (W.kind === 'grav') return `${w.mag} wells`;
+  if (W.kind === 'shard') return `${w.mag} shards`;
+  if (W.kind === 'drone') return `${Math.floor(w.mag)}%${w.out ? ', flying' : ''}`;
+  if (W.kind === 'cryo') return `${Math.ceil(w.mag)}% / ${Math.ceil(player.ammo.cryo)}`;
   return `${w.mag} / ${player.ammo[w.id]}`;
 }
 // Card for a weapon: name, rarity, key stats, modifiers (green good, red bad), what a unique does.
@@ -155,6 +164,11 @@ function statCells(w, all){
   if (W.kind === 'flame') return c('Damage', f1(S.dmg) + '/s') + c('Range', W.range) + c('Fuel', Math.ceil(w.mag) + '%');
   if (W.kind === 'arc') return c('Damage', f1(S.dmg)) + c('Jumps', W.chain) + c('Rate', f1(1/S.rate) + '/s') + c('Charge', Math.floor(w.mag) + '%');
   if (W.kind === 'potion') return c('Splash', W.radius) + c('Turned', W.turn + ' s') + c('Dose', w.cd > 0 ? Math.ceil(w.cd) + ' s' : 'Ready');
+  if (W.kind === 'grav') return c('Radius', W.radius) + c('Holds', W.time + ' s') + c('Wells', `${w.mag} / ${W.mag}`);
+  if (W.kind === 'rail') return c('Damage', f1(S.dmg)) + c('Charge', W.charge + ' s') + c('Reload', f1(S.reload) + ' s') + (all ? c('Slugs', `${w.mag} / ${player.ammo.railgun}`) : '');
+  if (W.kind === 'cryo') return c('Freezes in', f1(1/W.chill) + ' s') + c('Range', W.range) + c('Frozen', W.freeze + ' s') + c('Coolant', Math.ceil(w.mag) + '%');
+  if (W.kind === 'shard') return c('Damage', f1(S.dmg)) + c('Bounces', W.bounce) + c('Rate', f1(1/S.rate) + '/s') + c('Shards', `${w.mag} / ${W.mag}`);
+  if (W.kind === 'drone') return c('Damage', f1(S.dmg)) + c('Rate', f1(1/S.rate) + '/s') + c('Range', W.range) + c('Battery', Math.floor(w.mag) + '%');
   return c('Damage', f1(S.dmg) + (S.pellets > 1 ? '×' + S.pellets : '')) + c('Rate', f1(1/S.rate) + '/s') + c('Mag', S.mag) + c('Reload', f1(S.reload) + ' s')
     + (all ? c('Ammo', `${w.mag} / ${player.ammo[w.id]}`) : '');
 }

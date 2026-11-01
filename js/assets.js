@@ -57,6 +57,8 @@ export const SH = {};
     fire: new THREE.MeshBasicMaterial({ color:0xff8a2a }),
     acid: new THREE.MeshBasicMaterial({ color:0xa6ff3a }),
     dirt: new THREE.MeshBasicMaterial({ color:0x5a4630 }),
+    ice: new THREE.MeshBasicMaterial({ color:0xcff4ff }),
+    void: new THREE.MeshBasicMaterial({ color:0xa070ff }),
     brew: new THREE.MeshBasicMaterial({ color:0xff6ad5 })
   };
   SH.decalGeo = new THREE.CircleGeometry(0.55, 10);
@@ -209,7 +211,12 @@ const GM = {
   brew: new THREE.MeshStandardMaterial({ color:0xff6ad5, emissive:0xc0208f, emissiveIntensity:0.9, roughness:0.15, transparent:true, opacity:0.85 }),
   cork: new THREE.MeshStandardMaterial({ color:0xa07a4a, roughness:1 }),
   coil: new THREE.MeshStandardMaterial({ color:0xc88a3a, emissive:0x2aa8ff, emissiveIntensity:0.6, metalness:0.6, roughness:0.3 }),
-  arc: new THREE.MeshStandardMaterial({ color:0xbff0ff, emissive:0x58d0ff, emissiveIntensity:1.6 })
+  arc: new THREE.MeshStandardMaterial({ color:0xbff0ff, emissive:0x58d0ff, emissiveIntensity:1.6 }),
+  void: new THREE.MeshStandardMaterial({ color:0x2a1450, emissive:0x7a3dff, emissiveIntensity:1.2, roughness:0.2 }),
+  white: new THREE.MeshStandardMaterial({ color:0xe4e8ec, roughness:0.4, metalness:0.2 }),
+  frost: new THREE.MeshStandardMaterial({ color:0xd8f4ff, emissive:0x5ac8ff, emissiveIntensity:0.9, roughness:0.2 }),
+  rail: new THREE.MeshStandardMaterial({ color:0xc8f0ff, emissive:0x3aa0ff, emissiveIntensity:1.3 }),
+  crystal: new THREE.MeshStandardMaterial({ color:0xc4a1ff, emissive:0x8a4dff, emissiveIntensity:1.1, roughness:0.15, flatShading:true })
 };
 SH.rarMats = {}; SH.rarGlow = {}; SH.rarBeam = {};
 const RAR_HEX = { common:0xb9b6ae, uncommon:0x4ade80, rare:0x4aa3ff, legendary:0xff9a2a, unique:0xff5fd2 };
@@ -262,6 +269,31 @@ const MODELS = {
     ['tRod', () => cylZ(0.022,0.022,0.4), 'steel', 0,0.03,0.52], ['tCoil', () => new THREE.TorusGeometry(0.07,0.02,6,14), 'coil', 0,0.03,0.42],
     ['tCoil', null, 'coil', 0,0.03,0.52], ['tCoil', null, 'coil', 0,0.03,0.62], ['tTip', () => new THREE.SphereGeometry(0.05,10,8), 'arc', 0,0.03,0.74],
     ['tStripe', () => bx(0.125,0.03,0.12), 'rar', 0,0.07,0.1]
+  ],
+  gravity: [
+    ['gBody', () => bx(0.16,0.17,0.46), 'dark', 0,0.02,0.22], ['gBarrel', () => cylZ(0.085,0.085,0.3,12), 'steel', 0,0.04,0.58],
+    ['gCore', () => new THREE.SphereGeometry(0.075,12,10), 'void', 0,0.04,0.77], ['gRing', () => new THREE.TorusGeometry(0.11,0.022,6,16), 'rar', 0,0.04,0.66],
+    ['gGrip', () => bx(0.06,0.14,0.06), 'poly', 0,-0.12,0.16], ['gGrip', null, 'poly', 0,-0.11,0.42]
+  ],
+  railgun: [
+    ['lStock', () => bx(0.1,0.14,0.4), 'dark', 0,-0.02,0.12], ['lBody', () => bx(0.12,0.12,0.4), 'white', 0,0.02,0.48],
+    ['lRail', () => bx(0.025,0.045,0.82), 'steel', 0.045,0.03,1.0], ['lRail', null, 'steel', -0.045,0.03,1.0],
+    ['lGlow', () => bx(0.03,0.02,0.78), 'rail', 0,0.03,1.0], ['lCoil', () => bx(0.15,0.1,0.06), 'rar', 0,0.03,0.76],
+    ['lCoil', null, 'rar', 0,0.03,0.98], ['lCoil', null, 'rar', 0,0.03,1.2], ['lCell', () => bx(0.06,0.12,0.16), 'rail', 0,-0.1,0.45]
+  ],
+  cryo: [
+    ['cBody', () => bx(0.11,0.12,0.38), 'white', 0,0.02,0.2], ['cTank', () => cylZ(0.08,0.08,0.34,12), 'frost', 0,-0.13,0.22],
+    ['cNozzle', () => cylZ(0.035,0.055,0.34,10), 'steel', 0,0.03,0.55], ['cTip', () => new THREE.TorusGeometry(0.055,0.015,6,12), 'frost', 0,0.03,0.72],
+    ['cGrip', () => bx(0.05,0.12,0.05), 'poly', 0,-0.09,0.4], ['cStripe', () => bx(0.115,0.03,0.12), 'rar', 0,0.06,0.28]
+  ],
+  shard: [
+    ['hGrip', () => bx(0.08,0.2,0.1), 'dark', 0,-0.08,0.06, 0.2], ['hFrame', () => bx(0.1,0.08,0.3), 'steel', 0,0.02,0.2],
+    ['hCrystal', () => new THREE.OctahedronGeometry(0.1,0).scale(0.7,0.7,3), 'crystal', 0,0.05,0.48],
+    ['hClaw', () => bx(0.02,0.1,0.12), 'rar', 0.06,0.05,0.38, 0,0,0.3], ['hClaw', null, 'rar', -0.06,0.05,0.38, 0,0,-0.3]
+  ],
+  drone: [
+    ['dPad', () => bx(0.26,0.05,0.18), 'dark', 0,0,0.18], ['dScreen', () => bx(0.16,0.012,0.11), 'arc', 0,0.03,0.18],
+    ['dAnt', () => new THREE.CylinderGeometry(0.008,0.008,0.22,4), 'steel', 0.1,0.12,0.24], ['dStripe', () => bx(0.27,0.02,0.03), 'rar', 0,0.02,0.28]
   ]
 };
 export function gunModel(id, rarity = 'common'){
@@ -283,5 +315,33 @@ SH.boltMat = new THREE.MeshBasicMaterial({ color:0xa8eeff, transparent:true, opa
 SH.boltCoreMat = new THREE.MeshBasicMaterial({ color:0xffffff });
 SH.flameMats = [0xfff2b0, 0xffb040, 0xff6a1a, 0xb8300f].map(c => new THREE.MeshBasicMaterial({ color:c, transparent:true, opacity:0.85, blending:THREE.AdditiveBlending, depthWrite:false }));
 SH.smokeMat = new THREE.MeshBasicMaterial({ color:0x3a3632, transparent:true, opacity:0.35, depthWrite:false });
+// The guardian drone (uniques.js): body, glowing eye, four spinning rotors (r.rotors), a gun underneath.
+export function droneModel(){
+  const g = new THREE.Group(), rotors = [];
+  const add = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = true; g.add(m); return m; };
+  add(gg('drBody', () => bx(0.42,0.14,0.42)), GM.white, 0, 0, 0);
+  add(gg('drDome', () => new THREE.SphereGeometry(0.13,12,8,0,Math.PI*2,0,Math.PI/2)), GM.dark, 0, 0.07, 0);
+  add(gg('drEye', () => new THREE.SphereGeometry(0.05,8,6)), SH.rarMats.unique, 0, 0, 0.22);
+  add(gg('drGun', () => cylZ(0.03,0.03,0.24)), GM.steel, 0, -0.1, 0.12);
+  for (const [x, z] of [[1,1],[1,-1],[-1,1],[-1,-1]]){
+    add(gg('drArm', () => bx(0.05,0.04,0.05)), GM.dark, x*0.25, 0.03, z*0.25);
+    const r = add(gg('drRotor', () => new THREE.CylinderGeometry(0.17,0.17,0.012,14)), GM.rotor, x*0.3, 0.08, z*0.3); r.castShadow = false; rotors.push(r);
+  }
+  g.rotors = rotors;
+  return g;
+}
+GM.rotor = new THREE.MeshBasicMaterial({ color:0xb9c0c8, transparent:true, opacity:0.35, depthWrite:false });
+SH.orbGeo = new THREE.SphereGeometry(0.28,14,10); SH.wellRingGeo = new THREE.TorusGeometry(1,0.06,6,40);
+SH.voidMat = GM.void;
+SH.wellRingMat = new THREE.MeshBasicMaterial({ color:0xa070ff, transparent:true, opacity:0.75, blending:THREE.AdditiveBlending, depthWrite:false });
+SH.wellFloorMat = new THREE.MeshBasicMaterial({ color:0x5a2ab8, transparent:true, opacity:0.22, depthWrite:false, side:THREE.DoubleSide });
+SH.gravMats = [new THREE.MeshBasicMaterial({ color:0xc8a8ff, transparent:true, opacity:0.8, blending:THREE.AdditiveBlending, depthWrite:false })];
+SH.frostMats = [0xffffff, 0xdff6ff, 0xaee4ff, 0x86cfff].map(c => new THREE.MeshBasicMaterial({ color:c, transparent:true, opacity:0.75, blending:THREE.AdditiveBlending, depthWrite:false }));
+SH.mistMat = new THREE.MeshBasicMaterial({ color:0xdaf2ff, transparent:true, opacity:0.25, depthWrite:false });
+SH.iceGeo = new THREE.BoxGeometry(0.95,2.05,0.8); SH.iceGeo.translate(0,1.0,0);
+SH.iceMat = new THREE.MeshStandardMaterial({ color:0xbfeaff, emissive:0x2a6a9a, emissiveIntensity:0.5, transparent:true, opacity:0.45, roughness:0.1, depthWrite:false });
+SH.shardGeo = new THREE.OctahedronGeometry(0.12,0).scale(0.6,0.6,3.2);
+SH.shardMat = GM.crystal;
+SH.droneBulletMat = new THREE.MeshBasicMaterial({ color:0xff8ae0 });
 SH.markMats.turned = new THREE.SpriteMaterial({ map:markTexture('♥', '#ff6ad5'), depthWrite:false });
 export const carMat = c => SH.carMats[c] || (SH.carMats[c] = new THREE.MeshStandardMaterial({ color:c, roughness:0.7, metalness:0.25 }));
