@@ -15,7 +15,9 @@ import { state, world, net, players, zombies, drops, pickups, hazards, puddles, 
 import { onNet, connect, disconnect, send, VERSION } from './net.js';
 import { playSfx, initAudio } from './audio.js';
 import { me, viewed, addPlayer, removePlayer, readLocal, movePlayer, animateLegs, refreshGun, poseMelee, resetPlayerStats } from './player.js';
-import { reveal } from './grid.js';
+import { reveal, updateFlow } from './grid.js';
+import { updateBot } from './bots.js';
+import { mpick } from './utils.js';
 import { mirrorSpawn, mirrorKill, mirrorHit, animateMirror } from './zombies.js';
 import { addBullet, hurtFx, updateBullets, MELEE_TIME } from './combat.js';
 import { burst, addDecal, addRing, animateRings, pickupMesh, animatePickup } from './fx.js';
@@ -261,7 +263,10 @@ function handle(e){
       else if (a === 'play'){ state.mode = 'play'; showScreen(null); }
       else if (a === 'upgrade'){ state.mode = 'upgrade'; me().crafting = false; me().aiming = false; showUpgrades(me(), [], () => {}); }
       break;
-    case 'upg': state.cityKills = b; state.cityTime = c; showUpgrades(me(), a, (P, name) => act('upgrade', name)); break;
+    case 'upg':
+      state.cityKills = b; state.cityTime = c; showUpgrades(me(), a, (P, name) => act('upgrade', name));
+      if (net.bot) setTimeout(() => act('upgrade', mpick(a)), 1500);  // the autopilot picks for itself
+      break;
     case 'wait': $('upgradeNote').textContent = a; break;
     case 'over': showGameOver(a, b, c, d); break;
   }
@@ -270,12 +275,18 @@ function handle(e){
 // ---------- Per frame ----------
 // Called by main.js instead of update(): our player, controls to the host, and every mirror.
 const CTL = 1/30;
+let botFlowT = 0;
 export function clientUpdate(dt, t){
   const p = me();
   if (!p || !world.city) return;
   const play = state.mode === 'play';
   if (play && !p.dead){
-    readLocal(p); movePlayer(p, dt);
+    if (net.bot){
+      // Autopilot: the companions' brain fills our controls (it follows the players' flow fields).
+      botFlowT -= dt; if (botFlowT <= 0){ botFlowT = 0.25; updateFlow(); }
+      updateBot(p, dt);
+    } else readLocal(p);
+    movePlayer(p, dt);
     if (p.meleeT > 0){ p.meleeT = Math.max(0, p.meleeT - dt); poseMelee(p, p.meleeT > 0 ? 1 - p.meleeT/MELEE_TIME : 0); }
   } else { const c = p.ctl; c.mx = c.mz = 0; c.sprint = c.fire = c.use = false; }
   ctlT -= dt;

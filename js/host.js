@@ -71,7 +71,7 @@ function onMessage(from, m){
     if (p.dead) return;
     const k = p.ctl;
     k.mx = +m.mx || 0; k.mz = +m.mz || 0; k.sprint = !!m.sp; k.fire = !!m.f; k.use = !!m.u; k.aim.set(+m.ax || 0, 1.1, +m.az || 0);
-    p.net = { x:+m.x, z:+m.z, vx:+m.vx || 0, vz:+m.vz || 0, tp:m.tp };
+    p.net = { x:+m.x, z:+m.z, vx:+m.vx || 0, vz:+m.vz || 0, tp:m.tp }; p.ctlAt = performance.now();
   } else if (m.t === 'a' && ACTS[m.a]) ACTS[m.a](p, m.v);
 }
 // A client says hello: version check, then a player for them (theirs back if they just dropped out),
@@ -141,6 +141,9 @@ const TICK = 0.05, NEAR = 64;
 export function hostTick(dt){
   updateLost(dt);  // also after hosting stopped: players who were remote leave
   if (net.role !== 'host') return;
+  // A window that stops sending (hidden tab, frozen machine) lets go of everything instead of running on.
+  const now = performance.now();
+  for (const p of players) if (p.remote && p.ctlAt && now - p.ctlAt > 500){ const k = p.ctl; k.mx = k.mz = 0; k.sprint = k.fire = k.use = false; }
   tickT -= dt; if (tickT > 0) return;
   tickT = TICK; flushNow();
 }

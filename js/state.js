@@ -41,7 +41,8 @@ export const dev = { open:false, god:false, ammo:false, stamina:false, noclip:fa
 
 // Networking (net.js): role 'solo' | 'host' (runs the simulation, others join) | 'client' (mirrors the
 // host's world: client.js). id = this connection's id at the relay. state.host = role !== 'client'.
-export const net = { role:'solo', id:0, room:'main', name:'' };
+// bot = this window plays itself (a client opened with ?bot, see lobby.js).
+export const net = { role:'solo', id:0, room:'main', name:'', bot:false };
 
 // Raw input state, written by input.js.
 export const keys = {};

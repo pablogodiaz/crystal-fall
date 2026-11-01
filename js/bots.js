@@ -3,7 +3,9 @@
 // fill their control state (p.ctl) the way a person at a keyboard would. They stay with the player you
 // control (or the nearest other living player while you're dead), shoot the nearest zombie they can
 // see, back off from ones in their face, swap to a weapon with ammo, patch themselves up and follow
-// you into the exit. They never search, craft or throw.
+// you into the exit. They never search, craft or throw. A client window opened with ?bot runs the same
+// brain for its own player (client.js), so its actions go to the host through act().
+
 import { TILE } from './config.js';
 import { state, world, zombies, players } from './state.js';
 import { lineOfSight } from './grid.js';
@@ -11,6 +13,11 @@ import { me } from './player.js';
 import { descend } from './zombies.js';
 import { useSlot, swapWeapon } from './inventory.js';
 import { WEAPONS } from './items.js';
+import { net } from './state.js';
+import { act } from './client.js';
+// On a bot client the inventory lives on the host: ask it.
+const doSwap = p => net.role === 'client' ? act('swap') : swapWeapon(p);
+const doUse = (p, i) => net.role === 'client' ? act('use', i) : useSlot(p, i);
 
 const SIGHT = 15, SHOOT = 12, FOLLOW = 3.5, CATCH_UP = 10, CLOSE = 2.6;
 function leader(p){
@@ -59,9 +66,9 @@ export function updateBot(p, dt){
   p.botT = (p.botT || 0) - dt;
   if (p.botT > 0) return;
   p.botT = 0.5;
-  if (!loaded(p, p.weapons[p.cur]) && loaded(p, p.weapons[1 - p.cur])) swapWeapon(p);
+  if (!loaded(p, p.weapons[p.cur]) && loaded(p, p.weapons[1 - p.cur])) doSwap(p);
   const kit = slotOf(p, 'medkit'), band = slotOf(p, 'bandage');
-  if (p.hp < p.maxHp*0.45 && kit >= 0) useSlot(p, kit);
-  else if (p.bleeding && band >= 0) useSlot(p, band);
-  else if (p.bleeding && kit >= 0) useSlot(p, kit);
+  if (p.hp < p.maxHp*0.45 && kit >= 0) doUse(p, kit);
+  else if (p.bleeding && band >= 0) doUse(p, band);
+  else if (p.bleeding && kit >= 0) doUse(p, kit);
 }

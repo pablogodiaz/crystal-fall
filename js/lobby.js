@@ -27,6 +27,23 @@ export function initLobby(){
   $('lobbyStart').addEventListener('click', () => { if (net.role === 'host') newRun(); });
   $('lobbyLeave').addEventListener('click', leave);
   onRoster(render); onClientRoster(render);
+  // ?bot (or ?bot=Name): this window joins by itself and plays on autopilot, trying again until someone hosts.
+  const q = new URLSearchParams(location.search);
+  if (q.has('bot')){
+    net.bot = true;
+    $('nameInput').value = q.get('bot') || 'Bot';
+    $('menuScreen').querySelector('.lead').textContent = 'Autopilot window: it joins whoever hosts on this server and plays as a companion.';
+    autoJoin(); setInterval(autoJoin, 3000);  // also back in after the host leaves and hosts again
+  }
+}
+async function autoJoin(){
+  if (!net.bot || net.role !== 'solo' || busy) return;
+  busy = true;
+  net.name = $('nameInput').value.trim().slice(0, 16) || 'Bot';
+  showLobby('Autopilot: looking for a host…');
+  try { await joinGame(); note(state.mode === 'menu' ? 'Autopilot joined. Waiting for the host to start the run…' : ''); }
+  catch(why){ note(`Autopilot: ${why}. Trying again…`, true); }
+  busy = false; render();
 }
 async function host(){
   if (busy) return; busy = true;
@@ -45,6 +62,7 @@ async function join(){
   busy = false; render();
 }
 function leave(){
+  net.bot = false;  // leaving by hand ends the autopilot's retries
   if (net.role === 'host') stopHosting();
   else if (net.role === 'client') return leaveSession('');
   showScreen('menuScreen'); $('startBtn').focus();
