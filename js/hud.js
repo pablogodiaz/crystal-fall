@@ -69,7 +69,7 @@ function drawMap(ctx, size, s, cx, cz, t, big){
     ctx.fillText(L.icon, 0, 0.5);
     ctx.restore();
   }
-  if (state.phase === 'open') ring(N-0.5, city.exitZ+1, '#4ade80');
+  if (state.phase === 'open') ring(city.n-0.5, city.exitZ+1, '#4ade80');
   const px = X(player.pos.x/TILE), pz = Z(player.pos.z/TILE), a = big ? 10 : 7;
   ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.moveTo(px, pz); ctx.lineTo(px + Math.sin(player.angle)*a, pz + Math.cos(player.angle)*a); ctx.stroke();
@@ -122,7 +122,7 @@ export function updateHUD(dt, t){
   // Full map while Tab is held.
   const big = !!keys.Tab && state.mode === 'play';
   $('bigmapWrap').classList.toggle('hidden', !big);
-  if (big){ if (world.mmDirty) paintTiles(); drawMap(bctx, bm.width, bm.width/N, N/2, N/2, t, true); }
+  if (big){ const n = world.city.n; if (world.mmDirty) paintTiles(); drawMap(bctx, bm.width, bm.width/n, n/2, n/2, t, true); }
   // Which district you're in (roads count toward the block south-east of them).
   const D = DISTRICTS[world.city.blocks[blockIndex(player.pos.x, player.pos.z)].district];
   setText('district', D.name + (D.note ? ` · ${D.note}` : ''));

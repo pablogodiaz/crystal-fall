@@ -20,19 +20,22 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
 
 - **Run structure:** one life per run. Each run is a sequence of procedurally generated
   quarantined cities (City 1, 2, 3…). Difficulty scales with `state.level`.
-- **Map:** `B = 10` × 10 blocks of 5×5 tiles between 2-tile roads (`N = 74` tiles, 148 units
-  across). You start in the north-west corner (tile 2,2); the Crystal's plaza is a block with
-  `bx + bz >= B` (far side of the map); the exit is on the east wall.
+- **Map:** a city is `b` × `b` blocks of 5×5 tiles between 2-tile roads, `n = 7b + 4` tiles across
+  (`city.b`, `city.n`). It grows with the run (`CITY_BLOCKS` in `config.js`): 10×10 blocks
+  (74 tiles) in Cities 1–2, 12×12 (88) from City 3, 14×14 (102) from City 6, with a "The cities are
+  getting bigger" banner. You start in the north-west corner (tile 2,2); the Crystal's plaza is a
+  block with `bx + bz >= b` (far side of the map); the exit is on the east wall (column `n - 1`).
 - **Districts** (`DISTRICTS` + `LAYOUT` in `config.js`, `assignDistricts` in `cityGen.js`): every
   block is downtown (towers, dumpsters, crowded), industrial (warehouses, crate yards, ruins),
   residential/suburbs (gabled houses on lawns, parks) or outskirts (fields, ruins, sparse
-  farmhouses, quiet). Placement is random per city: 1–3 downtown cores anywhere at least
-  `startGap` blocks from the start (and `coreGap` apart), each ringed by suburbs, plus 1–2
-  industrial pockets; the rest, and always the start's own blocks (`bx + bz <= 1`), is outskirts.
+  farmhouses, quiet). Placement is random per city: downtown cores anywhere at least
+  `startGap` blocks from the start (and `coreGap` apart), each ringed by suburbs, plus industrial
+  pockets; the rest, and always the start's own blocks (`bx + bz <= 1`), is outskirts. Core and
+  pocket counts scale with the city's area (`b²/100`).
   Later cities sprawl: more cores (`cores[1]` per city), bigger cores and rings (`coreGrow`,
   `ringGrow`). `block.density` = resident zombies per block (`density + perLevel*(city-1)`,
-  ×0.75–1.25), so every district gets busier each city (about 40 residents in City 1, 63 in
-  City 3, 94 in City 5, 150 in City 8). The district also sets the block types and how many
+  ×0.75–1.25), so every district gets busier each city; with the growing map that's about 40
+  residents in City 1, 94 in City 3, 140 in City 5, 225 in City 6 and 300 in City 8. The district also sets the block types and how many
   dumpsters, crates, cars and searchable doors get built, so dense areas are dangerous and
   loot-rich and the outskirts are quiet and bare. The HUD shows the district you're in under the
   city name.
@@ -87,23 +90,32 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   buildings (labelled shop/house/warehouse by building style) and the props inside walk-in landmarks. Hold E within range for 1.5 s (2.5 s at landmarks); a progress ring shows on screen.
   Searching makes noise (`makeNoise`) that can alert nearby zombies; trunks can set off a car alarm.
   Loot tables are in `LOOT` (`js/items.js`), rolled with `Math.random` at search time.
-- **Landmarks** (`LANDMARKS` in `items.js`, ASCII `TEMPLATES` + `placeLandmarks`/`stamp` in
-  `cityGen.js`): every city has a police station, a supermarket and a hardware store, plus 1–2
-  pharmacies and 1–2 gas stations, each on the best-scoring free spot for its kind (`LM_SPEC.score`
-  per district) and kept apart. Templates are mirrored/transposed so their front faces +z or +x
+- **Landmarks** (`LANDMARKS` in `items.js`, ASCII `TEMPLATES` + `LM_SPEC` + `placeLandmarks`/`stamp`
+  in `cityGen.js`): every city has a police station, a supermarket and a hardware store, plus 1–2
+  pharmacies and 1–2 gas stations. New kinds unlock as the run goes on (`LANDMARKS[].from`, with a
+  "New landmark" banner and `tip` the first time): hospital from City 3, gun shop from City 4, army
+  outpost from City 6. `LM_SPEC.n` = [min, max] per city; `more` kinds (supermarket, pharmacy, gas,
+  gun shop) likely get one extra copy in bigger cities. Each goes on the best-scoring free spot
+  for its kind (`LM_SPEC.score` per district), big ones first, kept apart. Templates are mirrored/transposed so their front faces +z or +x
   (the camera side). Each has its own look: roof sign with icon, colour band, glass storefront.
-  - **Walk-in** (`enter: true`; police station, supermarket): fill a 2×2 group of blocks, the roads
+  - **Walk-in** (`enter: true`; police station, supermarket, hospital): fill a 2×2 group of blocks, the roads
     between them included. Walls are full `T.BUILDING` tiles around `T.FLOOR` tiles with an open
     entrance; loot is in searchable props inside, not at a door. Supermarket: shelf aisles
     (`shelf` containers), checkouts, a parking lot with cars and carts, `2 + ceil(level/2)` shoppers
     inside. Police station: armory (`armory`: a gun you don't have + ammo), lockers, desks, two cells
     behind bars (`T.BARS`: blocks walking, shots and sight pass) where a prisoner may be stuck, a
     yard with flashing police cars (`cruiser` trunks), a flag; `3 + level` guards, half inside and
-    half by the entrance. While you're inside, the roof lifts off and the walls drop to knee height
-    (`updateInteriors` in `fx.js`).
+    half by the entrance. Hospital: an open ward with beds, a dispensary and hall lined with
+    medicine cabinets (`medcab`), a reception desk, gurneys, ambulances outside (`ambulance` trunks),
+    a red helipad cross on the roof, `2 + ceil(level/2)` patients inside. While you're inside, the
+    roof lifts off and the walls drop to knee height (`updateInteriors` in `fx.js`).
+  - **Open-air** (`open: true`; army outpost): a 2×2 lot walled with sandbags around a gate, on
+    dirt: tents, a watchtower, an army truck (`humvee` trunk) and military crates (`milcrate`:
+    ammo-heavy, maybe a gun); `3 + ceil(level/2)` soldier guards inside (riot-gear odds like police).
   - **Door-searched** (pharmacy: bandages, medkits, green cross; hardware store: scrap, maybe a pipe
     bomb, lumber yard and a crate; gas station: molotovs, scrap, maybe a drink, canopy over pumps and
-    a price pylon): one block, a solid shop searched through its awninged front door.
+    a price pylon; gun shop: three ammo finds and a 40% chance of a gun you don't have, dark walls
+    and barred windows): one block, a solid shop searched through its awninged front door.
   - Discovered once the tile in front of the door/entrance is revealed, then shown on the map;
     dimmed there once everything in it (`l.cts`) is searched.
 - **Crafting** (C, `RECIPES`): molotov (3 scrap) burns a 2.6-unit area for 6 s, also damaging the
@@ -146,7 +158,8 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     that tile, cached and shared in `grid.js`).
   - Takeover zombies (and everything within `CRYSTAL.breakR` when it breaks) are `tracked`: they
     always know where you are, no leash. When it ends they become residents where they stand.
-  - Idle zombies more than 48 units away skip crowd separation and animation.
+  - Idle zombies more than 48 units away skip crowd separation and animation; zombies more than
+    50 units away aren't rendered (`z.g.visible`).
 - **Threat progression:** City 1 has walkers and runners (`THREAT_BASE`). Each later city
   introduces one more threat from `THREAT_POOL`, in an order shuffled per run (`shuffleThreats`,
   `state.threatOrder`); earlier ones keep appearing. The newest is forced onto the first
@@ -199,7 +212,7 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   another). Ground drops and health crosses within 2.8 units get a small name tag below them
   (`dropName` in `loot.js`). Toasts are kept for notes (full pack, new gun hint, alarms).
 - **Maps:** the minimap follows the player (46 tiles across, the Crystal/exit pinned to its edge
-  when off it); hold Tab for the whole explored city. Both draw from one cached tile layer.
+  when off it); hold Tab for the whole explored city (scaled to the city's size). Both draw from one cached tile layer.
 - **Meta:** best run (`{ city, kills }`) stored in `localStorage['crystal-fall-best']`.
 - **Controls:** WASD/arrows move, mouse aims, hold left click to fire, Shift sprints, R reloads,
   F melee, Q swaps guns, hold right click to aim + release to throw (wheel/T picks molotov or pipe bomb, left click cancels), hold E searches, 1–8 use items (right-click a slot drops it), C crafts, hold Tab for the map, Esc/P pauses,
@@ -212,8 +225,8 @@ index.html        Markup (HUD, overlay screens), import map, loads css + js/main
 css/style.css     All styles; light/dark theme tokens on :root
 js/
   main.js         Boot (input, best score, menu city) and the requestAnimationFrame loop
-  config.js       Grid constants: TILE, B, N, tile types T, walkable()/seeThrough(), DIRS8, names, palettes,
-                  DISTRICTS, LAYOUT, POP
+  config.js       Grid constants: TILE, B/N (largest city), CITY_BLOCKS/cityBlocks() (size per city),
+                  tile types T, walkable()/seeThrough(), DIRS8, names, palettes, DISTRICTS, LAYOUT, POP
   items.js        Pure data: WEAPONS, ITEMS, RECIPES, LOOT tables, LANDMARKS (no imports)
   threats.js      Pure data: zombie types (ZTYPES), modifiers (ZMODS), unlock pool/order, banner tips,
                   Crystal pulse and takeover tuning (CRYSTAL), zombie senses (AI)
@@ -225,7 +238,7 @@ js/
                   and checker textures, carMat()
   audio.js        Procedural WebAudio SFX (sfx.*), initAudio(), toggleMute()
   cityGen.js      Pure procedural city generation from a seed: districts, blocks, landmark templates,
-                  wrecks, containers, density map
+                  wrecks, containers
   cityScene.js    Builds/tears down the city's Three.js meshes: buildings by style, walk-in landmark
                   shells/roofs, props, containers, signs, Crystal, barricade, exit
   grid.js         Tile collision (isBlockedTile, isOpaqueTile, resolveCircle), BFS flow fields (player,
@@ -284,8 +297,10 @@ js/
   (dumpsters, crates, trunks, doors).
 - **City data gets runtime fields.** `buildCityScene` adds `px/pz/range/time/noise/searched/glint/open`
   to each `city.containers` entry, and `loot.js` sets `found` on landmarks. Per-city, so no reset needed.
-  Landmark records: `{ type, cts (container indices), ox/oz (tile in front of the door/entrance),
-  cx/cz (center, tiles) }`, plus `interior, floor, cells, yard` for walk-in ones.
+  Landmark records: `{ type, cts (container indices), ox/oz (tile in front of the door/entrance/gate),
+  cx/cz (center, tiles) }`, plus `interior, floor, cells, yard` for walk-in ones and `floor, yard`
+  for open-air ones. `city.floors` maps a walk-in kind to its floor tiles; landmark vehicles in
+  `city.cars` carry `style` (`police`, `ambulance`, `military`).
 - **Resource ownership:** per-city geometries/materials are registered with `own()` in
   `cityScene.js` and disposed in `teardownCity()` (`G(key, make)` caches a per-city geometry shared
   by every mesh of that shape). Things in `SH` (assets.js) are shared and
@@ -294,9 +309,14 @@ js/
   ring materials. Gibs are zombie meshes re-parented to the scene that keep those materials, so a
   dead zombie is always removed with `disposeCorpse()` (gibs + zombie), also in `teardownCity()`.
   `rings` entries (`{ mesh, t, T, r0, r1, op }`) own their material, disposed when they finish.
-- **Units:** grid tiles are `TILE = 2` world units; the map is `N = 74` tiles square (`B = 10`
-  blocks; roads are the tiles where `(t-1) % 7 < 2`). Tile index is `z*N + x`. World→tile is
-  `Math.floor(pos/TILE)`; tile center is `(t+0.5)*TILE`. Block of a tile: `floor((t-1)/7)` clamped.
+- **Units:** grid tiles are `TILE = 2` world units. Tile arrays (`grid`, `explored`, flow fields,
+  `interiorAt`, …) are always `N*N` with `N = 102` (the largest city, `B = 14` blocks) and indexed
+  `z*N + x`; a smaller city fills the top-left `n×n` and every tile outside it is `T.WALL`, so
+  bounds checks against `N` stay correct. Use `city.n`/`city.b` (not `N`/`B`) for anything about
+  the city's extent: its edge walls, exit column, ground planes, loops over its blocks, map
+  scaling. Roads are the tiles where `(t-1) % 7 < 2`. World→tile is `Math.floor(pos/TILE)`; tile
+  center is `(t+0.5)*TILE`. Block of a point: `blockIndex(x, z)` in `grid.js` (index into
+  `city.blocks`, `bz*b + bx`).
 - **Code style:** compact, dense lines matching the existing code; section header comments
   `// ---------- Name ----------`; brief comments only where intent isn't obvious.
 - **UI text** is in `index.html`/`hud.js`. HUD writes go through `setText()` to avoid DOM churn;
@@ -319,7 +339,8 @@ js/
 ## Testing
 
 No automated test suite. To verify changes, serve locally and play a city through:
-explore (check districts feel different, walk into the police station and supermarket) → search
+explore (check districts feel different, walk into the police station and supermarket; from City
+3/4/6 the hospital, gun shop and army outpost) → search
 containers/landmarks → lose a hunting zombie by breaking line of sight, check it walks home →
 shoot Crystal (pulse from City 3) → survive the takeover
 (set `state.takeover` low to skip ahead) → exit → pick upgrade → next

@@ -180,6 +180,11 @@ export const SH = {};
   SH.poleGeo = new THREE.CylinderGeometry(0.06, 0.06, 1, 6); SH.poleGeo.translate(0, 0.5, 0);
   SH.flagGeo = new THREE.BoxGeometry(0.9, 0.55, 0.03);
   SH.flagMat = new THREE.MeshStandardMaterial({ color:0x2f4f9a, roughness:0.8, side:THREE.DoubleSide });
+  SH.blanketMat = new THREE.MeshStandardMaterial({ color:0x7fa6c4, roughness:0.9 });
+  SH.sandbagMat = new THREE.MeshStandardMaterial({ color:0xa48e66, roughness:1, flatShading:true });
+  SH.tentMat = new THREE.MeshStandardMaterial({ color:0x5b6b3a, roughness:1, side:THREE.DoubleSide });
+  SH.canvasMat = new THREE.MeshStandardMaterial({ color:0x6b6a48, roughness:1 });
+  SH.milMat = new THREE.MeshStandardMaterial({ color:0x4f5a32, roughness:0.8 });
   SH.lightbarGeo = new THREE.BoxGeometry(0.22, 0.12, 0.4);
   SH.policeDoorGeo = new THREE.BoxGeometry(0.9, 0.24, 1.08);
   // Abandoned police cars still flash; animated in game.js animateWorld().

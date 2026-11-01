@@ -1,7 +1,8 @@
 // ---------- Game flow ----------
 // Run/city lifecycle (explore -> takeover -> open -> upgrade), spawning, per-frame update.
 import * as THREE from 'three';
-import { TILE, N, T, POP } from './config.js';
+import { TILE, N, T, POP, cityBlocks } from './config.js';
+import { LANDMARKS } from './items.js';
 import { $, mr, fmtTime } from './utils.js';
 import { camFocus, muzzleLight, fxLight } from './renderer.js';
 import { SH } from './assets.js';
@@ -15,7 +16,7 @@ import { spawnZombieAt, findSpawnTile, findBlockTile, updateZombies, updateDying
 import { updateBullets } from './combat.js';
 import { burst, updateParticles, updatePickups } from './fx.js';
 import { foundCrystal, endTakeover, resetTakeover, animateCrystal } from './crystal.js';
-import { showScreen, banner, renderCraft } from './hud.js';
+import { showScreen, banner, queueBanner, renderCraft } from './hud.js';
 import { interact, updateInteract, updateDrops, updateLandmarks, animateContainers } from './loot.js';
 import { updateThrowables, updateThrowPreview } from './throwables.js';
 import { setupThreats, shuffleThreats, updateSpecials } from './specials.js';
@@ -38,7 +39,11 @@ export function startCity(level, seed){
   setupThreats(level);
   populate(city, level);
   $('cityName').textContent = `City ${level}: ${city.name}`;
-  if (state.mode === 'play') banner(`City ${level}`, city.name);
+  if (state.mode !== 'play') return;
+  banner(`City ${level}`, city.name);
+  // Bigger city or a new kind of landmark: say so after the city banner.
+  if (level > 1 && cityBlocks(level) > cityBlocks(level - 1)) queueBanner('The cities are getting bigger', 'More ground to cover, and more of them waiting in it', 3600);
+  for (const t in LANDMARKS){ const L = LANDMARKS[t]; if (L.from === level && level > 1) queueBanner(`${L.icon} ${L.name}`, `New landmark. ${L.tip}`, 4200); }
 }
 // Residents (block.density per block, on average), plus each walk-in landmark's own: police guards
 // (half inside, half out front), a prisoner in some cells, shoppers wandering the supermarket aisles.
@@ -55,7 +60,8 @@ function populate(city, level){
       const g = 3 + level;
       some(l.floor, Math.ceil(g/2), 'police'); some(l.yard.filter(([x, z]) => Math.hypot(x - l.ox, z - l.oz) < 5), Math.floor(g/2), 'police');
       for (let k=0;k<l.cells.length;k+=2) if (Math.random() < 0.6) some(l.cells.slice(k, k+2), 1, 'cell');  // two tiles per cell
-    } else if (l.type === 'supermarket') some(l.floor, 2 + Math.ceil(level/2), 'shop');
+    } else if (l.type === 'supermarket' || l.type === 'hospital') some(l.floor, 2 + Math.ceil(level/2), 'shop');
+    else if (l.type === 'outpost') some(l.floor, 3 + Math.ceil(level/2), 'police');  // soldiers: riot gear odds like police guards
   }
 }
 export function newRun(){
@@ -72,7 +78,7 @@ function openRoad(){
   const city = world.city;
   endTakeover();
   state.phase = 'open';
-  for (const z of [city.exitZ, city.exitZ+1]){ city.grid[z*N + N-1] = T.EXIT; world.explored[z*N + N-1] = 1; }
+  for (const z of [city.exitZ, city.exitZ+1]){ city.grid[z*N + city.n-1] = T.EXIT; world.explored[z*N + city.n-1] = 1; }
   world.mmDirty = true; clearFlowCache();
   if (world.barricade){
     world.barricade.children.forEach(c => burst(c.getWorldPosition(new THREE.Vector3()), 'dust', 4, 3));
@@ -190,7 +196,7 @@ export function update(dt){
   updateDrops(dt);
   updateInteract(dt);
   updateLandmarks();
-  if (state.phase === 'open' && Math.floor(player.pos.x/TILE) >= N-1) completeCity();
+  if (state.phase === 'open' && Math.floor(player.pos.x/TILE) >= world.city.n-1) completeCity();
 }
 // Cosmetic animation; runs every frame in every mode.
 export function animateWorld(dt, t){

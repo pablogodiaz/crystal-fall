@@ -357,6 +357,7 @@ export function updateZombies(dt){
   for (let i=zombies.length-1;i>=0;i--){
     const z = zombies[i];
     const dx = p.x - z.pos.x, dz = p.z - z.pos.z, dist = Math.hypot(dx,dz) || 0.0001;
+    z.g.visible = dist < 50;  // well off-screen (and out of the shadow camera): skip rendering it
     updateMark(z, dt);
     if (z.rise > 0){ updateRise(z, dt); continue; }
     if (z.tracked){ z.sees = true; z.lx = p.x; z.lz = p.z; }

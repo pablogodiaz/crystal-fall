@@ -1,8 +1,8 @@
 // ---------- Renderer / scene / camera ----------
 import * as THREE from 'three';
-import { TILE, N } from './config.js';
+import { TILE } from './config.js';
 import { $, mr } from './utils.js';
-import { state } from './state.js';
+import { state, world } from './state.js';
 
 const container = $('game');
 export const renderer = new THREE.WebGLRenderer({ antialias:true });
@@ -53,7 +53,7 @@ export function setTint(k){
 export function updateCamera(dt, target){
   if (state.mode === 'menu'){
     state.menuT += dt;
-    const c = N*TILE/2;
+    const c = (world.city ? world.city.n : 74)*TILE/2;
     camFocus.set(c + Math.sin(state.menuT*0.06)*34, 0, c + Math.cos(state.menuT*0.06)*34);
   } else {
     camFocus.lerp(target, Math.min(1, dt*9));

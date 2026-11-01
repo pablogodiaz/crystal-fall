@@ -1,6 +1,11 @@
 // ---------- Constants ----------
-// World units per grid tile; the map is B×B blocks of 5×5 tiles between 2-tile roads (N×N tiles).
-export const TILE = 2, B = 10, N = 7*B + 4;
+// World units per grid tile. A city is b×b blocks of 5×5 tiles between 2-tile roads, n = 7b + 4
+// tiles across (city.b, city.n). Tile arrays are always sized for the biggest city (B blocks, N
+// tiles, index z*N + x); a smaller city fills the top-left n×n and the rest is wall.
+export const TILE = 2, B = 14, N = 7*B + 4;
+// City size by city number: [from city, blocks], last match wins (must not exceed B).
+export const CITY_BLOCKS = [[1, 10], [3, 12], [6, 14]];
+export const cityBlocks = level => CITY_BLOCKS.reduce((b, [from, n]) => level >= from ? n : b, CITY_BLOCKS[0][1]);
 export const T = { ROAD:0, BUILDING:1, WALL:2, BARRICADE:3, EXIT:4, SIDEWALK:5, GRASS:6, PLAZA:7, OBSTACLE:8, CRYSTAL:9, FLOOR:10, BARS:11 };
 export const walkable = t => t === 0 || t === 4 || t === 5 || t === 6 || t === 7 || t === 10;
 // Bullets and sight also pass through cell bars.
@@ -25,9 +30,10 @@ export const DISTRICTS = {
   outskirts:   { name:'Outskirts', note:'quiet', density:0.12, perLevel:0.04, blocks:[['field',5],['ruins',2],['farm',1.6],['park',1],['lot',0.6]], dumpster:[0.1,0], door:0.35 }
 };
 // Where districts go, rolled per city (block units). cores = downtown centres [base, perCity, max]
-// (count = floor(base + perCity*(city-1) + random 0..1), capped), each `core` blocks in radius
+// (count = floor((base + perCity*(city-1))*area + random 0..1), capped at max*area, where area =
+// the city's block count / 100, so bigger cities get more of them), each `core` blocks in radius
 // (+coreGrow per city) inside a ring of suburbs `ring` blocks wide (+ringGrow per city), so later
-// cities sprawl. pockets = industrial areas, `pocket` blocks in radius. Cores keep `startGap` blocks
+// cities sprawl. pockets = industrial areas ([min, max] × area), `pocket` blocks in radius. Cores keep `startGap` blocks
 // from the start corner and `coreGap` from each other; pockets keep `pocketGap` from the start.
 // The start's own blocks (bx + bz <= 1) are always outskirts.
 export const LAYOUT = { cores:[1, 0.15, 3], core:[1.5, 2.3], coreGrow:0.08, ring:[1.4, 2.1], ringGrow:0.1,

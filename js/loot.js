@@ -42,6 +42,11 @@ function rollEntry(k){
 function landmarkLoot(type){
   if (type === 'pharmacy') return [{ item:'bandage', n:mri(2,4) }, { item:'medkit', n:mri(1,2) }];
   if (type === 'gas') return [{ item:'molotov', n:mri(1,2) }, { item:'scrap', n:mri(2,4) }].concat(Math.random() < 0.5 ? [{ item:'drink', n:1 }] : []);
+  if (type === 'gunshop'){
+    const out = [ammoRoll(ammoType(), 1.5), ammoRoll(ammoType()), ammoRoll(ammoType())];
+    if (Math.random() < 0.4){ const own = carried(), fresh = FOUND_WEAPONS.filter(w => !own.includes(w)); out.push({ weapon:mpick(fresh.length ? fresh : FOUND_WEAPONS) }); }
+    return out;
+  }
   const out = [{ item:'scrap', n:mri(5,8) }];
   if (Math.random() < 0.5) out.push({ item:'pipebomb', n:1 });
   return out;

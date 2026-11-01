@@ -1,7 +1,7 @@
 // ---------- City scene ----------
 // Turns generated city data into Three.js meshes, and tears it all down again.
 import * as THREE from 'three';
-import { TILE, N, B } from './config.js';
+import { TILE, N } from './config.js';
 import { mr, mpick } from './utils.js';
 import { scene } from './renderer.js';
 import { SH, WIN_TEX, CORR_TEX, CHECKER_TEX, carMat } from './assets.js';
@@ -25,7 +25,7 @@ const glassMat = () => std(0x2a3f55, { emissive:0x1a3a55, emissiveIntensity:0.5,
 
 export function buildCityScene(c){
   const cityGroup = world.cityGroup = new THREE.Group(); scene.add(cityGroup);
-  const W = N*TILE;
+  const n = c.n, W = n*TILE;
   const outer = new THREE.Mesh(own(new THREE.PlaneGeometry(W+300, W+300)), std(0x121418, { roughness:1 }));
   outer.rotation.x = -Math.PI/2; outer.position.set(W/2,-0.05,W/2); outer.receiveShadow = true; cityGroup.add(outer);
   const road = new THREE.Mesh(own(new THREE.PlaneGeometry(W, W)), std(0x2f3136, { roughness:1 }));
@@ -51,21 +51,19 @@ export function buildCityScene(c){
     im.receiveShadow = true; cityGroup.add(im);
   };
   const O = c.overlays;
-  tiles(O.lot, SH.lotMat); tiles(O.pad, SH.padMat);
-  tiles(O.police, std(LANDMARKS.police.floor, { roughness:0.6 }));
-  tiles(O.supermarket, std(LANDMARKS.supermarket.floor, { map:CHECKER_TEX, roughness:0.5 }));
-  // Parking stall lines, running along the parked cars.
-  const sm = c.interiors.find(i => i.lm === 'supermarket'), alongZ = !sm || sm.front[1] === 1;
+  tiles(O.lot, SH.lotMat); tiles(O.pad, SH.padMat); tiles(O.dirt, std(0x5a4b38, { roughness:1 }));
+  for (const type in c.floors){ const L = LANDMARKS[type]; tiles(c.floors[type], std(L.floor, L.checker ? { map:CHECKER_TEX, roughness:0.5 } : { roughness:0.6 })); }
+  // Parking stall lines, running along the parked cars (each lot tile carries its lot's front rotation).
   const lotSet = new Set(O.lot.map(([x,z]) => z*N + x));
-  const lines = O.lot.filter(([x,z]) => lotSet.has(alongZ ? z*N + x-1 : (z-1)*N + x));
-  if (alongZ) tiles(lines, SH.lineMat, 0.086, 0.09, TILE*0.8, -TILE/2, 0); else tiles(lines, SH.lineMat, 0.086, TILE*0.8, 0.09, 0, -TILE/2);
+  const linesZ = O.lot.filter(([x,z,r]) => r === 0 && lotSet.has(z*N + x-1)), linesX = O.lot.filter(([x,z,r]) => r !== 0 && lotSet.has((z-1)*N + x));
+  tiles(linesZ, SH.lineMat, 0.086, 0.09, TILE*0.8, -TILE/2, 0); tiles(linesX, SH.lineMat, 0.086, TILE*0.8, 0.09, 0, -TILE/2);
 
   // Lane dashes, wherever both lanes of a road survive (landmark lots swallow some).
-  const dash = own(new THREE.InstancedMesh(own(new THREE.PlaneGeometry(1.0, 0.13)), own(new THREE.MeshBasicMaterial({ color:0x9c8c4a })), 2*(B+1)*N));
+  const dash = own(new THREE.InstancedMesh(own(new THREE.PlaneGeometry(1.0, 0.13)), own(new THREE.MeshBasicMaterial({ color:0x9c8c4a })), 2*(c.b+1)*n));
   let di = 0;
-  for (let k=0;k<=B;k++){
+  for (let k=0;k<=c.b;k++){
     const line = (2+7*k)*TILE, a = 1+7*k;
-    for (let t=1;t<N-1;t++){
+    for (let t=1;t<n-1;t++){
       if ((t-1)%7 < 2) continue;
       if (c.road[a*N+t] && c.road[(a+1)*N+t]){ dummy.rotation.set(-Math.PI/2,0,0); dummy.position.set((t+0.5)*TILE, 0.012, line); dummy.scale.set(1,1,1); dummy.updateMatrix(); dash.setMatrixAt(di++, dummy.matrix); }
       if (c.road[t*N+a] && c.road[t*N+a+1]){ dummy.rotation.set(-Math.PI/2,0,Math.PI/2); dummy.position.set(line, 0.012, (t+0.5)*TILE); dummy.scale.set(1,1,1); dummy.updateMatrix(); dash.setMatrixAt(di++, dummy.matrix); }
@@ -85,7 +83,7 @@ export function buildCityScene(c){
   addWall(TILE, W, TILE/2, W/2);
   const e = c.exitZ;
   addWall(TILE, e*TILE, W-TILE/2, e*TILE/2);
-  const l2 = (N-e-2)*TILE; addWall(TILE, l2, W-TILE/2, (e+2)*TILE + l2/2);
+  const l2 = (n-e-2)*TILE; addWall(TILE, l2, W-TILE/2, (e+2)*TILE + l2/2);
 
   world.buildingMeshes = [];
   for (const b of c.buildings){ const m = buildingMesh(b); world.buildingMeshes.push(m); cityGroup.add(m); }
@@ -99,14 +97,24 @@ export function buildCityScene(c){
   }
   for (const cr of c.cars){
     const g = new THREE.Group(); g.position.set((cr.x+0.5)*TILE, 0, (cr.z+0.5)*TILE); g.rotation.y = cr.rot;
-    const body = new THREE.Mesh(SH.carBody, carMat(cr.police ? 0xe9e9ee : cr.color)); body.position.y = 0.42; body.castShadow = body.receiveShadow = true;
+    const st = cr.style, color = st === 'police' || st === 'ambulance' ? 0xe9e9ee : st === 'military' ? 0x4b5320 : cr.color;
+    const body = new THREE.Mesh(SH.carBody, carMat(color)); body.position.y = 0.42; body.castShadow = body.receiveShadow = true;
     const cab = new THREE.Mesh(SH.carCab, SH.glassMat); cab.position.set(-0.1, 0.9, 0); cab.castShadow = true;
     if (cr.wreck) { g.rotation.z = 0.04; cab.rotation.z = 0.12; }
     g.add(body, cab);
-    if (cr.police){
+    if (st === 'police'){
       // Black-and-white with a lightbar that still flashes.
       mesh(SH.policeDoorGeo, SH.navyMat, -0.05, 0.47, 0, g, false);
       mesh(SH.lightbarGeo, SH.sirenR, -0.1, 1.18, -0.2, g, false); mesh(SH.lightbarGeo, SH.sirenB, -0.1, 1.18, 0.2, g, false);
+    } else if (st === 'ambulance'){
+      // Boxy white rear with a red stripe and red lights.
+      mesh(G('ambBox', () => box(1.1, 0.75, 1.0, true)), carMat(0xe9e9ee), 0.4, 0.68, 0, g);
+      mesh(SH.policeDoorGeo, SH.redMat, -0.05, 0.47, 0, g, false);
+      mesh(SH.lightbarGeo, SH.sirenR, -0.1, 1.18, 0, g, false);
+    } else if (st === 'military'){
+      // Bigger, olive, with a canvas-covered bed.
+      g.scale.set(1.15, 1.15, 1.2);
+      mesh(G('canvas', () => box(1.0, 0.6, 1.0, true)), SH.canvasMat, 0.45, 0.68, 0, g);
     }
     cityGroup.add(g);
   }
@@ -124,7 +132,7 @@ export function buildCityScene(c){
   const opens = buildProps(c);
   buildContainers(c, opens);
   world.crystal = buildCrystal(c.crystalTile, state.level);
-  world.barricade = buildBarricade(c.exitZ);
+  world.barricade = buildBarricade(c.exitZ, n);
 }
 
 // ---------- Buildings ----------
@@ -186,6 +194,7 @@ function buildingMesh(b){
       if (tx === b.door[0] && tz === b.door[1]) continue;
       const px = (tx + 0.5)*TILE - m.position.x + fx*TILE*0.43, pz = (tz + 0.5)*TILE - m.position.z + fz*TILE*0.43;
       add(G('pane' + (fx ? 'x' : 'z'), () => fx ? box(0.06, 1.3, TILE - 0.5) : box(TILE - 0.5, 1.3, 0.06)), glass, px, -top + 1.35, pz);
+      if (L.grille) for (let i=-2;i<=2;i++) add(G('grille', () => box(0.07, 1.4, 0.07)), band, px + fx*0.05 + (fx ? 0 : i*0.3), -top + 1.35, pz + fz*0.05 + (fx ? i*0.3 : 0));
     }
     uniq.push(band, glass);
     // Roof sign angled toward the camera.
@@ -254,6 +263,12 @@ function buildInterior(it, idx){
   const sign = mesh(G('roofSign', () => box(7, 1.4, 0.25)), signM, rcx, H + 1.3, rcz, roof);
   sign.rotation.y = Math.PI/4;
   if (it.lm === 'police'){ const a = mesh(SH.poleGeo, dark, rcx - rw*0.35, H + 0.3, rcz - rd*0.35, roof); a.scale.set(1, 4, 1); }
+  if (it.lm === 'hospital'){
+    // Helipad cross on the roof, offset so the sign doesn't cover it.
+    const red = std(LANDMARKS.hospital.band, { roughness:0.7 }); mats.push(red);
+    const hx = rcx - rw*0.22, hz = rcz - rd*0.22;
+    mesh(G('heliA', () => box(4.2, 0.06, 1.3, true)), red, hx, H + 0.3, hz, roof, false); mesh(G('heliB', () => box(1.3, 0.06, 4.2, true)), red, hx, H + 0.3, hz, roof, false);
+  }
   slab.userData.mats = mats;
   for (const p of parts.concat(slab)){ p.userData.fadeKey = slab; world.buildingMeshes.push(p); }
   world.interiors.push({ shell, roof, key:slab, k:0 });
@@ -319,6 +334,45 @@ function buildProps(c){
     } else if (p.kind === 'flag'){
       mesh(SH.poleGeo, SH.metalMat, 0, 0, 0, g).scale.set(1, 4.6, 1);
       const f = mesh(SH.flagGeo, SH.flagMat, 0.48, 4.25, 0, g); f.rotation.y = Math.PI/4 - g.rotation.y;
+    } else if (p.kind === 'bed'){
+      mesh(G('bed', () => box(1.7, 0.55, 0.9, true)), SH.whiteMat, 0, 0, 0, g);
+      mesh(G('pillow', () => box(0.35, 0.12, 0.6, true)), SH.metalMat, 0.6, 0.55, 0, g, false);
+      mesh(G('blanket', () => box(1.0, 0.06, 0.94, true)), SH.blanketMat, -0.25, 0.55, 0, g, false);
+    } else if (p.kind === 'gurney'){
+      mesh(G('gurney', () => box(1.6, 0.12, 0.7, true)), SH.whiteMat, 0, 0.75, 0, g);
+      for (const [lx, lz] of [[-0.65,-0.25],[0.65,-0.25],[-0.65,0.25],[0.65,0.25]]) mesh(SH.poleGeo, SH.metalMat, lx, 0, lz, g, false).scale.set(0.6, 0.75, 0.6);
+    } else if (p.kind === 'medcab'){
+      mesh(SH.lockerGeo, SH.whiteMat, 0, 0, 0, g);
+      const h = new THREE.Group(); h.position.set(-0.72, 0.1, 0.31); g.add(h);
+      mesh(G('cabDoor', () => { const b = box(1.44, 1.8, 0.04, true); b.translate(0.72, 0, 0); return b; }), SH.whiteMat, 0, 0, 0, h, false);
+      mesh(G('cabCrossA', () => box(0.5, 0.14, 0.03)), SH.redMat, 0.72, 1.3, 0.03, h, false); mesh(G('cabCrossB', () => box(0.14, 0.5, 0.03)), SH.redMat, 0.72, 1.3, 0.03, h, false);
+      if (p.search) open = () => { h.rotation.y = -1.7; };
+    } else if (p.kind === 'sandbag'){
+      // Two staggered courses of bags.
+      mesh(G('bagsLow', () => box(TILE, 0.5, 1.0, true)), SH.sandbagMat, 0, 0, 0, g);
+      mesh(G('bagsHigh', () => box(TILE - 0.3, 0.45, 0.8, true)), SH.sandbagMat, 0, 0.5, 0, g);
+    } else if (p.kind === 'tent'){
+      const t = mesh(G('tent', () => {
+        const sh = new THREE.Shape(); sh.moveTo(-0.95, 0); sh.lineTo(0.95, 0); sh.lineTo(0, 1.6); sh.closePath();
+        const e = new THREE.ExtrudeGeometry(sh, { depth:1.9, bevelEnabled:false }); e.translate(0, 0, -0.95); return e;
+      }), SH.tentMat, 0, 0, 0, g);
+      t.rotation.y = Math.PI/2;
+    } else if (p.kind === 'tower'){
+      // Watchtower: four legs, a platform with a sandbag rim, a little roof.
+      for (const [lx, lz] of [[-0.7,-0.7],[0.7,-0.7],[-0.7,0.7],[0.7,0.7]]) mesh(SH.poleGeo, SH.woodMat, lx, 0, lz, g).scale.set(1.6, 3.4, 1.6);
+      mesh(G('towerDeck', () => box(1.9, 0.15, 1.9, true)), SH.woodMat, 0, 3.4, 0, g);
+      mesh(G('towerRim', () => box(1.9, 0.55, 1.9, true)), SH.sandbagMat, 0, 3.55, 0, g);
+      for (const [lx, lz] of [[-0.85,-0.85],[0.85,-0.85],[-0.85,0.85],[0.85,0.85]]) mesh(SH.poleGeo, SH.woodMat, lx, 3.55, lz, g, false).scale.set(1, 1.3, 1);
+      mesh(G('towerRoof', () => box(2.2, 0.12, 2.2, true)), SH.tentMat, 0, 4.85, 0, g);
+    } else if (p.kind === 'milcrate'){
+      mesh(G('milBox', () => box(1.4, 0.75, 0.9, true)), SH.milMat, 0, 0, 0, g);
+      const lid = mesh(G('milLid', () => box(1.46, 0.12, 0.96, true)), SH.milMat, 0, 0.75, 0, g);
+      mesh(G('milStripe', () => box(1.42, 0.1, 0.92, true)), SH.lumberMat, 0, 0.45, 0, g, false);
+      if (p.search) open = () => { lid.position.set(0, 0.2, 0.75); lid.rotation.x = 1.2; };
+    } else if (p.kind === 'gate'){
+      // Two posts and the sign over the gap in the sandbags.
+      for (const sd of [-1, 1]) mesh(SH.poleGeo, SH.woodMat, sd*2.1, 0, 0, g).scale.set(2, 3.4, 2);
+      mesh(G('gateSign', () => box(4.4, 0.7, 0.12)), signMats(p.lm), 0, 3.1, 0, g);
     } else if (p.kind === 'canopy'){
       // Gas station canopy over the pumps; fades like a building when it hides the player.
       const cw = (p.x1 - p.x0 + 1)*TILE, cd = (p.z1 - p.z0 + 1)*TILE;
@@ -354,7 +408,7 @@ const awningMat = type => awningCache[type] || (awningCache[type] = std(LANDMARK
 
 // Searchable containers. Adds runtime fields to each: px/pz/range (interaction point), time, noise,
 // name, searched, glint (floating marker), open() (visual once searched).
-const GLINT_Y = { shelf:2.0, locker:2.5, armory:2.4, desk:1.6 };
+const GLINT_Y = { shelf:2.0, locker:2.5, armory:2.4, desk:1.6, medcab:2.5, milcrate:1.5 };
 function buildContainers(c, opens){
   const cityGroup = world.cityGroup;
   for (const ct of c.containers){
@@ -423,13 +477,13 @@ function buildCrystal(tile, level){
   return { group:g, mesh, mat, shards, light, beam, glow, pos:new THREE.Vector3(g.position.x, 2, g.position.z), hp, maxHp:hp, alive:true, flash:0 };
 }
 
-function buildBarricade(exitZ){
+function buildBarricade(exitZ, n){
   const g = new THREE.Group();
   const red = std(0xb8342a, { roughness:0.8 });
   const white = std(0xe2ddd2, { roughness:0.8 });
   const yellow = std(0xc8901a, { roughness:0.7 });
   const geo = own(new THREE.BoxGeometry(0.55,0.95,0.6));
-  const x = (N-1)*TILE + 0.45;
+  const x = (n-1)*TILE + 0.45;
   for (let i=0;i<6;i++){
     const m = new THREE.Mesh(geo, i%2 ? red : white);
     m.position.set(x, 0.48, exitZ*TILE + 0.35 + i*0.66); m.castShadow = true; g.add(m);
@@ -444,7 +498,7 @@ function buildBarricade(exitZ){
 
 export function buildExitMarker(){
   const g = new THREE.Group();
-  const cx = (N-1+0.5)*TILE, cz = (world.city.exitZ+1)*TILE;
+  const cx = (world.city.n-0.5)*TILE, cz = (world.city.exitZ+1)*TILE;
   const gm = own(new THREE.MeshBasicMaterial({ color:0x4ade80, transparent:true, opacity:0.35, blending:THREE.AdditiveBlending, depthWrite:false }));
   const pad = new THREE.Mesh(own(new THREE.PlaneGeometry(TILE*1.4, TILE*2)), gm);
   pad.rotation.x = -Math.PI/2; pad.position.set(cx, 0.05, cz); g.add(pad);
