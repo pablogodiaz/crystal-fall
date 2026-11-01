@@ -1,16 +1,19 @@
 // ---------- Input ----------
 import { $ } from './utils.js';
 import { renderer } from './renderer.js';
-import { state, keys, mouse, mouseNDC } from './state.js';
+import { state, keys, mouse, mouseNDC, dev } from './state.js';
 import { player } from './player.js';
 import { tryReload, melee } from './combat.js';
 import { toggleMute } from './audio.js';
 import { newRun, togglePause, toggleCraft } from './game.js';
 import { swapWeapon, useSlot, startAim, releaseThrow, cancelAim, cycleThrowable } from './inventory.js';
 import { craftFromKey } from './hud.js';
+import { isDevKey, toggleDev, devTypingIn, teleportToCursor } from './devtools.js';
 
 export function initInput(){
   addEventListener('keydown', e => {
+    if (isDevKey(e)){ e.preventDefault(); if (!e.repeat) toggleDev(); return; }
+    if (devTypingIn(e.target)) return;  // typing into a dev tools field
     keys[e.code] = true;
     if (state.mode === 'play' && ['Space','Tab','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
     if (e.repeat) return;
@@ -29,6 +32,7 @@ export function initInput(){
   cv.addEventListener('mousemove', e => { mouseNDC.x = e.clientX/innerWidth*2 - 1; mouseNDC.y = -(e.clientY/innerHeight)*2 + 1; });
   // Hold right click to aim a throwable, release to throw; a left click while aiming cancels it.
   cv.addEventListener('mousedown', e => {
+    if (e.button === 0 && dev.clickTp && state.mode === 'play'){ teleportToCursor(); return; }
     if (e.button === 0){ if (player.aiming) cancelAim(); else if (state.mode === 'play') mouse.down = true; }
     if (e.button === 2) startAim();
   });
@@ -46,8 +50,8 @@ export function initInput(){
   }, { passive:false });
   addEventListener('blur', () => { for (const k in keys) keys[k] = false; mouse.down = false; cancelAim(); if (state.mode === 'play') togglePause(); });
   document.addEventListener('visibilitychange', () => { if (document.hidden && state.mode === 'play') togglePause(); });
-  $('startBtn').addEventListener('click', newRun);
-  $('retryBtn').addEventListener('click', newRun);
+  $('startBtn').addEventListener('click', () => newRun());
+  $('retryBtn').addEventListener('click', () => newRun());
   $('resumeBtn').addEventListener('click', togglePause);
   $('craftClose').addEventListener('click', toggleCraft);
 }
