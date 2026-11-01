@@ -5,17 +5,23 @@ import { $, fmtTime } from './utils.js';
 import { camera } from './renderer.js';
 import { WEAPONS, ITEMS, RECIPES, LANDMARKS, INV_SLOTS, RARITY } from './items.js';
 import { CRYSTAL } from './threats.js';
-import { state, world, zombies, drops, pickups, keys } from './state.js';
-import { player } from './player.js';
-import { useSlot, dropSlot, craft, countItem, magSize, selectedThrowable } from './inventory.js';
+import { state, world, zombies, drops, pickups, keys, players } from './state.js';
+import { me, viewed } from './player.js';
+import { craft, countItem, magSize, selectedThrowable } from './inventory.js';
 import { weaponStats, weaponDps, weaponTitle, modText } from './weapons.js';
-import { interact, dropName } from './loot.js';
+import { dropName } from './loot.js';
+import { EXIT_WAIT, crafting } from './game.js';
 import { blockIndex } from './grid.js';
+import { emit, emitTo } from './host.js';
+import { act } from './client.js';
 
 const mm = $('minimap'), mctx = mm.getContext('2d'), bm = $('bigmap'), bctx = bm.getContext('2d');
 // Explored tiles are cached on an offscreen layer (MS px per tile), redrawn only when world.mmDirty.
 const MS = 4, tileLayer = document.createElement('canvas'); tileLayer.width = N*MS; tileLayer.height = N*MS;
 const tctx = tileLayer.getContext('2d');
+// The HUD shows the player being watched (P = viewed(), set every frame): you, or whoever you're
+// spectating while dead. Actions from it (inventory clicks, crafting) are always for me().
+let P = null;
 const MM_COLORS = { 0:'#3c3f46', 1:'#15171b', 2:'#0b0c0f', 3:'#d64545', 4:'#4ade80', 5:'#6a6862', 6:'#3f5a33', 7:'#8a8273', 8:'#24262b', 9:'#a070ff', 10:'#57534b', 11:'#30333a' };
 let mmTimer = 0, hudCache = {};
 function setText(id, v){ if (hudCache[id] !== v){ hudCache[id] = v; $(id).textContent = v; } }
@@ -45,7 +51,7 @@ function drawMap(ctx, size, s, cx, cz, t, big){
     for (const z of zombies){
       const tx = Math.floor(z.pos.x/TILE), tz = Math.floor(z.pos.z/TILE);
       if (tx < 0 || tz < 0 || tx >= N || tz >= N || !explored[tz*N+tx]) continue;
-      if (Math.hypot(z.pos.x - player.pos.x, z.pos.z - player.pos.z) > 26) continue;
+      if (Math.hypot(z.pos.x - P.pos.x, z.pos.z - P.pos.z) > 26) continue;
       ctx.fillRect(X(z.pos.x/TILE) - 1.5, Z(z.pos.z/TILE) - 1.5, 3, 3);
     }
   }
@@ -71,43 +77,60 @@ function drawMap(ctx, size, s, cx, cz, t, big){
     ctx.restore();
   }
   if (state.phase === 'open') ring(city.n-0.5, city.exitZ+1, '#4ade80');
-  const px = X(player.pos.x/TILE), pz = Z(player.pos.z/TILE), a = big ? 10 : 7;
+  // Everyone else in their colour (pinned to the minimap's edge when off it), then the watched player in white.
+  for (const o of players){
+    if (o === P || o.dead) continue;
+    const ox = edge(X(o.pos.x/TILE)), oz = edge(Z(o.pos.z/TILE));
+    ctx.fillStyle = o.css; ctx.strokeStyle = '#07080a'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(ox, oz, big ? 3.5 : 2.6, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+  }
+  const px = X(P.pos.x/TILE), pz = Z(P.pos.z/TILE), a = big ? 10 : 7;
   ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(px, pz); ctx.lineTo(px + Math.sin(player.angle)*a, pz + Math.cos(player.angle)*a); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(px, pz); ctx.lineTo(px + Math.sin(P.angle)*a, pz + Math.cos(P.angle)*a); ctx.stroke();
   ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(px, pz, big ? 3.5 : 2.6, 0, Math.PI*2); ctx.fill();
 }
 function drawMinimap(t){
   if (world.mmDirty) paintTiles();
-  drawMap(mctx, mm.width, MS, player.pos.x/TILE, player.pos.z/TILE, t, false);
+  drawMap(mctx, mm.width, MS, P.pos.x/TILE, P.pos.z/TILE, t, false);
 }
 export function updateHUD(dt, t){
   const crystal = world.crystal;
-  $('hpFill').style.width = (player.hp/player.maxHp*100) + '%';
-  setText('hpText', Math.ceil(player.hp) + ' / ' + player.maxHp);
-  $('stFill').style.width = (player.stamina*100) + '%';
-  $('stFill').classList.toggle('winded', player.winded);
-  const st = (player.bleeding ? '<span>Bleeding</span>' : '') + (player.winded ? '<span class="warn">Winded</span>' : '') + (player.boost > 0 ? '<span class="good">Energized</span>' : '') + (state.cheated ? '<span class="dev">Dev</span>' : '');
+  P = viewed();
+  const mine = P === me();
+  $('hpFill').style.width = (P.hp/P.maxHp*100) + '%';
+  setText('hpText', Math.ceil(P.hp) + ' / ' + P.maxHp);
+  $('stFill').style.width = (P.stamina*100) + '%';
+  $('stFill').classList.toggle('winded', P.winded);
+  const st = (players.length > 1 ? `<span class="who" style="--pc:${P.css}">${P.name}${mine ? '' : ' (watching)'}</span>` : '') + (P.bleeding ? '<span>Bleeding</span>' : '') + (P.winded ? '<span class="warn">Winded</span>' : '') + (P.boost > 0 ? '<span class="good">Energized</span>' : '') + (state.cheated ? '<span class="dev">Dev</span>' : '');
   if (hudCache.status !== st){ hudCache.status = st; $('status').innerHTML = st; }
   setText('killText', state.kills + (state.kills === 1 ? ' kill' : ' kills'));
   setText('timeText', fmtTime(state.runTime));
-  const w = player.weapons[player.cur], alt = player.weapons[1 - player.cur], [aBig, aSub, aEmpty] = ammoState(w);
+  const w = P.weapons[P.cur], alt = P.weapons[1 - P.cur], [aBig, aSub, aEmpty] = ammoState(w);
   setText('wpnName', weaponTitle(w));
   if (hudCache.rar !== w.rarity){ hudCache.rar = w.rarity; $('wpnName').dataset.r = w.rarity; }
   setText('ammoText', aBig); setText('ammoSub', aSub);
   $('ammoSub').classList.toggle('empty', aEmpty);
-  setText('wpnAlt', alt ? `Q ⇄ ${weaponTitle(alt)} (${shortAmmo(alt)})` : WEAPONS[w.id].kind ? 'Second slot empty' : `Mag ${magSize(w)}. Second slot empty`);
-  const th = selectedThrowable(), thn = countItem(th);
+  setText('wpnAlt', alt ? `Q ⇄ ${weaponTitle(alt)} (${shortAmmo(alt)})` : WEAPONS[w.id].kind ? 'Second slot empty' : `Mag ${magSize(w, P)}. Second slot empty`);
+  const th = selectedThrowable(P), thn = countItem(P, th);
   setText('throwText', `${ITEMS[th].icon} ${ITEMS[th].name} ×${thn}`);
   $('throwLine').classList.toggle('none', !thn);
   renderInventory();
   updateInteractPrompt();
-  updateFloaters(dt); updateTags(); updateWeaponTip();
+  updateFloaters(dt); updateTags(); updateWeaponTip(); updatePlayerTags();
+  const me0 = me();
+  $('spectate').classList.toggle('hidden', !me0.dead || state.mode !== 'play');
+  if (me0.dead) setText('spectateText', `You turned. Watching ${P.name} · click or Q for someone else · back next city`);
   let obj, sub = '';
   if (state.phase === 'explore'){
     if (!state.crystalFound){ obj = 'Find the Crystal'; sub = 'Follow the violet light. Gunfire draws the dead.'; }
     else { obj = 'Shatter the Crystal'; sub = 'Breaking it lets it take the city.'; }
   } else if (state.phase === 'takeover'){ obj = 'Survive the takeover'; sub = 'The dead keep rising until the Crystal’s hold breaks.'; }
-  else { obj = 'Reach the exit'; sub = 'The road east is open. Follow the green light.'; }
+  else if (state.exitIn && players.length > 1){
+    const alive = players.filter(o => !o.dead).length;
+    obj = state.exitIn < alive ? `At the exit: ${state.exitIn} / ${alive}` : `Leaving in ${Math.max(1, Math.ceil(EXIT_WAIT - state.exitT))}…`;
+    sub = state.exitIn < alive ? 'Everyone still standing has to reach the road out.' : 'Stay in the exit.';
+  } else if (state.exitIn){ obj = `Leaving in ${Math.max(1, Math.ceil(EXIT_WAIT - state.exitT))}…`; sub = 'Stay in the exit.'; }
+  else { obj = 'Reach the exit'; sub = players.length > 1 ? 'The road east is open. Everyone still standing has to get there.' : 'The road east is open. Follow the green light.'; }
   setText('objText', obj); setText('objSub', sub);
   // The Crystal's HP while it stands, then the takeover's remaining time.
   const tk = state.phase === 'takeover', showCr = tk || !!(crystal && crystal.alive && state.crystalFound);
@@ -116,7 +139,7 @@ export function updateHUD(dt, t){
   $('countdown').classList.toggle('hidden', !tk);
   if (tk){ setText('countdown', fmtTime(Math.ceil(state.takeover))); $('countdown').classList.toggle('urgent', state.takeover <= 10); }
   const v = $('vignette'); const vo = parseFloat(v.style.opacity || 0);
-  const low = player.hp < player.maxHp*0.3 ? 0.25 + Math.sin(t*5)*0.08 : 0;
+  const low = P.hp < P.maxHp*0.3 ? 0.25 + Math.sin(t*5)*0.08 : 0;
   v.style.opacity = Math.max(low, vo - dt*1.5);
   mmTimer -= dt;
   if (mmTimer <= 0){ mmTimer = 0.1; drawMinimap(t); }
@@ -125,7 +148,7 @@ export function updateHUD(dt, t){
   $('bigmapWrap').classList.toggle('hidden', !big);
   if (big){ const n = world.city.n; if (world.mmDirty) paintTiles(); drawMap(bctx, bm.width, bm.width/n, n/2, n/2, t, true); renderLoadout(); }
   // Which district you're in (roads count toward the block south-east of them).
-  const D = DISTRICTS[world.city.blocks[blockIndex(player.pos.x, player.pos.z)].district];
+  const D = DISTRICTS[world.city.blocks[blockIndex(P.pos.x, P.pos.z)].district];
   setText('district', D.name + (D.note ? ` · ${D.note}` : ''));
 }
 
@@ -139,10 +162,10 @@ function ammoState(w){
   if (W.kind === 'grav') return [String(w.mag), `/ ${W.mag} wells`, w.mag < 1];
   if (W.kind === 'shard') return [String(w.mag), w.mag ? 'shards' : 'Break a Crystal', w.mag < 1];
   if (W.kind === 'drone') return [String(Math.floor(w.mag)), w.out ? '% battery · flying' : '% battery · click to launch', !w.out && w.mag < W.launch];
-  if (W.kind === 'cryo' && player.reloadT <= 0) return [String(Math.ceil(w.mag)), `% coolant / ${Math.ceil(player.ammo.cryo)}`, w.mag + player.ammo.cryo < 1];
+  if (W.kind === 'cryo' && P.reloadT <= 0) return [String(Math.ceil(w.mag)), `% coolant / ${Math.ceil(P.ammo.cryo)}`, w.mag + P.ammo.cryo < 1];
   if (W.kind === 'rail' && w.charge > 0) return [Math.floor(w.charge/W.charge*100) + '%', w.charge >= W.charge ? 'Release to fire' : 'Charging', false];
-  const reserve = player.ammo[w.id];
-  if (player.reloadT > 0) return ['…', 'Reloading', false];
+  const reserve = P.ammo[w.id];
+  if (P.reloadT > 0) return ['…', 'Reloading', false];
   return [String(w.mag), w.mag + reserve === 0 ? 'Empty: melee' : '/ ' + reserve, w.mag + reserve === 0];
 }
 function shortAmmo(w){
@@ -153,24 +176,24 @@ function shortAmmo(w){
   if (W.kind === 'grav') return `${w.mag} wells`;
   if (W.kind === 'shard') return `${w.mag} shards`;
   if (W.kind === 'drone') return `${Math.floor(w.mag)}%${w.out ? ', flying' : ''}`;
-  if (W.kind === 'cryo') return `${Math.ceil(w.mag)}% / ${Math.ceil(player.ammo.cryo)}`;
-  return `${w.mag} / ${player.ammo[w.id]}`;
+  if (W.kind === 'cryo') return `${Math.ceil(w.mag)}% / ${Math.ceil(P.ammo.cryo)}`;
+  return `${w.mag} / ${P.ammo[w.id]}`;
 }
 // Card for a weapon: name, rarity, key stats, modifiers (green good, red bad), what a unique does.
 // Shared by the ground tooltip and the Tab loadout. tag = chip next to the name, extra = lines after.
 const f1 = v => String(+v.toFixed(1));
 function statCells(w, all){
-  const W = WEAPONS[w.id], S = weaponStats(w), c = (k, v) => `<span><small>${k}</small><b>${v}</b></span>`;
+  const W = WEAPONS[w.id], S = weaponStats(w, P), c = (k, v) => `<span><small>${k}</small><b>${v}</b></span>`;
   if (W.kind === 'flame') return c('Damage', f1(S.dmg) + '/s') + c('Range', W.range) + c('Fuel', Math.ceil(w.mag) + '%');
   if (W.kind === 'arc') return c('Damage', f1(S.dmg)) + c('Jumps', W.chain) + c('Rate', f1(1/S.rate) + '/s') + c('Charge', Math.floor(w.mag) + '%');
   if (W.kind === 'potion') return c('Splash', W.radius) + c('Turned', W.turn + ' s') + c('Dose', w.cd > 0 ? Math.ceil(w.cd) + ' s' : 'Ready');
   if (W.kind === 'grav') return c('Radius', W.radius) + c('Holds', W.time + ' s') + c('Wells', `${w.mag} / ${W.mag}`);
-  if (W.kind === 'rail') return c('Damage', f1(S.dmg)) + c('Charge', W.charge + ' s') + c('Reload', f1(S.reload) + ' s') + (all ? c('Slugs', `${w.mag} / ${player.ammo.railgun}`) : '');
+  if (W.kind === 'rail') return c('Damage', f1(S.dmg)) + c('Charge', W.charge + ' s') + c('Reload', f1(S.reload) + ' s') + (all ? c('Slugs', `${w.mag} / ${P.ammo.railgun}`) : '');
   if (W.kind === 'cryo') return c('Freezes in', f1(1/W.chill) + ' s') + c('Range', W.range) + c('Frozen', W.freeze + ' s') + c('Coolant', Math.ceil(w.mag) + '%');
-  if (W.kind === 'shard') return c('Damage', f1(S.dmg) + '×' + (W.pellets + player.pellets)) + c('Pierce', W.pierce + player.pierce) + c('Bounces', W.bounce) + c('Shards', `${w.mag} / ${W.mag}`);
+  if (W.kind === 'shard') return c('Damage', f1(S.dmg) + '×' + (W.pellets + P.pellets)) + c('Pierce', W.pierce + P.pierce) + c('Bounces', W.bounce) + c('Shards', `${w.mag} / ${W.mag}`);
   if (W.kind === 'drone') return c('Damage', f1(S.dmg)) + c('Rate', f1(1/S.rate) + '/s') + c('Range', W.range) + c('Battery', Math.floor(w.mag) + '%');
   return c('Damage', f1(S.dmg) + (S.pellets > 1 ? '×' + S.pellets : '')) + c('Rate', f1(1/S.rate) + '/s') + c('Mag', S.mag) + c('Reload', f1(S.reload) + ' s')
-    + (all ? c('Ammo', `${w.mag} / ${player.ammo[w.id]}`) : '');
+    + (all ? c('Ammo', `${w.mag} / ${P.ammo[w.id]}`) : '');
 }
 function weaponCard(w, tag = '', extra = '', all = false){
   const W = WEAPONS[w.id];
@@ -186,18 +209,19 @@ let tipSig = '';
 function updateWeaponTip(){
   const el = $('wpnTip');
   let best = null, bd = 3.2;
-  if (state.mode === 'play') for (const d of drops){
+  if (state.mode === 'play' && P === me() && !P.dead) for (const d of drops){
     if (d.kind !== 'weapon') continue;
-    const dd = Math.hypot(d.px - player.pos.x, d.pz - player.pos.z); if (dd < bd){ bd = dd; best = d; }
+    const dd = Math.hypot(d.px - P.pos.x, d.pz - P.pos.z); if (dd < bd){ bd = dd; best = d; }
   }
   if (!best){ if (tipSig){ tipSig = ''; el.classList.add('hidden'); } return; }
-  const held = player.weapons[player.cur], free = player.weapons.includes(null);
-  const sig = [best.w.uid, held.uid, free, best.held, player.dmgMul, player.fireMul, player.pellets].join();
+  const held = P.weapons[P.cur], free = P.weapons.includes(null);
+  const mineHeld = best.held === P;
+  const sig = [best.w.uid, held.uid, free, mineHeld, P.dmgMul, P.fireMul, P.pellets].join();
   if (sig !== tipSig){
     tipSig = sig;
-    const a = weaponDps(best.w), b = weaponDps(held), diff = a !== null && b !== null ? a - b : null;
+    const a = weaponDps(best.w, P), b = weaponDps(held, P), diff = a !== null && b !== null ? a - b : null;
     const cmp = diff === null ? '' : `<div class="wc-cmp">DPS <b>${f1(a)}</b> <span class="${diff >= 0 ? 'pos' : 'neg'}">${diff >= 0 ? '▲' : '▼'} ${f1(Math.abs(diff))}</span> vs your ${weaponTitle(held)}</div>`;
-    const act = best.held ? 'Step away, then hold <kbd>E</kbd> to take it back' : free ? 'Hold <kbd>E</kbd> to pick it up' : `Hold <kbd>E</kbd> to swap for your ${weaponTitle(held)}`;
+    const act = mineHeld ? 'Step away, then hold <kbd>E</kbd> to take it back' : free ? 'Hold <kbd>E</kbd> to pick it up' : `Hold <kbd>E</kbd> to swap for your ${weaponTitle(held)}`;
     el.innerHTML = weaponCard(best.w, '', cmp + `<div class="wc-act">${act}</div>`);
     el.classList.remove('hidden');
   }
@@ -207,11 +231,11 @@ function updateWeaponTip(){
 // Both weapon slots, shown bottom right while the full map is open (Tab).
 let loadSig = '';
 function renderLoadout(){
-  const sig = player.weapons.map(w => w ? [w.uid, w.mag|0, Math.ceil(w.cd), player.ammo[w.id]].join(':') : '-').join()
-    + [player.cur, player.dmgMul, player.fireMul, player.magMul, player.reloadMul, player.pellets, player.pierce].join();
+  const sig = P.weapons.map(w => w ? [w.uid, w.mag|0, Math.ceil(w.cd), P.ammo[w.id]].join(':') : '-').join()
+    + [P.cur, P.dmgMul, P.fireMul, P.magMul, P.reloadMul, P.pellets, P.pierce].join();
   if (sig === loadSig) return; loadSig = sig;
-  $('loadout').innerHTML = '<div class="lo-title">Your weapons <small>Q swaps · G drops</small></div>' + player.weapons.map((w, i) =>
-    w ? weaponCard(w, i === player.cur ? '<span class="wc-held">In hand</span>' : '', '', true) : '<div class="wcard wc-empty">Empty slot</div>').join('');
+  $('loadout').innerHTML = '<div class="lo-title">Your weapons <small>Q swaps · G drops</small></div>' + P.weapons.map((w, i) =>
+    w ? weaponCard(w, i === P.cur ? '<span class="wc-held">In hand</span>' : '', '', true) : '<div class="wcard wc-empty">Empty slot</div>').join('');
 }
 
 // ---------- Inventory bar ----------
@@ -220,15 +244,15 @@ const slotEls = [];
 for (let i=0;i<INV_SLOTS;i++){
   const b = document.createElement('button'); b.className = 'slot empty'; b.tabIndex = -1;
   b.innerHTML = `<kbd>${i+1}</kbd><span class="ic"></span><small></small>`;
-  b.addEventListener('click', () => { b.blur(); useSlot(i); });
-  b.addEventListener('contextmenu', e => { e.preventDefault(); dropSlot(i); });
+  b.addEventListener('click', () => { b.blur(); act('use', i); });
+  b.addEventListener('contextmenu', e => { e.preventDefault(); act('dropSlot', i); });
   $('inventory').appendChild(b); slotEls.push(b);
 }
 let invSig = '';
 function renderInventory(){
-  const sig = player.inv.map(s => s ? s.id + s.n : '-').join();
+  const sig = P.inv.map(s => s ? s.id + s.n : '-').join();
   if (sig === invSig) return; invSig = sig;
-  player.inv.forEach((s, i) => {
+  P.inv.forEach((s, i) => {
     const el = slotEls[i], I = s && ITEMS[s.id];
     el.classList.toggle('empty', !s);
     el.querySelector('.ic').textContent = I ? I.icon : '';
@@ -240,7 +264,7 @@ function renderInventory(){
 // ---------- Interaction prompt ----------
 const ipos = new THREE.Vector3(), RING = 113.1;
 function updateInteractPrompt(){
-  const t = interact.target, el = $('interact');
+  const interact = P.interact, t = P === me() && !P.dead ? interact.target : null, el = $('interact');
   el.classList.toggle('hidden', !t || state.mode !== 'play');
   if (!t || state.mode !== 'play') return;
   ipos.set(t.px, 1.2, t.pz).project(camera);
@@ -250,11 +274,14 @@ function updateInteractPrompt(){
 }
 
 // ---------- Floating text ----------
-// Pickups ("+1 🩹 Bandage") rise and fade above the player; several at once (a search) go up
-// one after another. Ground drops and health crosses near the player get a small name tag.
+// Pickups ("+1 🩹 Bandage") rise and fade above the watched player; several at once (a search) go up
+// one after another (p = whose gain it is: other players' are not shown). Ground drops and health
+// crosses near the watched player get a small name tag.
 const floaters = [], tags = [], fpos = new THREE.Vector3(), FLOAT_T = 1.6;
 const toScreen = (x, y, z) => { fpos.set(x, y, z).project(camera); return [(fpos.x+1)/2*innerWidth, (1-fpos.y)/2*innerHeight]; };
-export function floatText(msg, kind){
+export function floatText(msg, kind, p){
+  if (p && p.remote) emitTo(p, ['ft', msg, kind]);
+  if (p && p !== viewed()) return;
   const el = document.createElement('div');
   el.className = 'floater' + (kind ? ' ' + kind : ''); el.textContent = msg; el.style.opacity = 0;
   $('floaters').appendChild(el);
@@ -262,7 +289,7 @@ export function floatText(msg, kind){
   floaters.push({ el, t:-0.45*queued });
 }
 function updateFloaters(dt){
-  const [sx, sy] = toScreen(player.pos.x, 2.3, player.pos.z);
+  const [sx, sy] = toScreen(P.pos.x, 2.3, P.pos.z);
   for (let i=floaters.length-1;i>=0;i--){
     const f = floaters[i]; f.t += dt;
     if (f.t >= FLOAT_T){ f.el.remove(); floaters.splice(i,1); continue; }
@@ -282,16 +309,42 @@ function updateTags(){
     el.classList.remove('hidden');
   };
   if (state.mode === 'play'){
-    const near = (x, z) => Math.hypot(x - player.pos.x, z - player.pos.z) < 2.8;
+    const near = (x, z) => Math.hypot(x - P.pos.x, z - P.pos.z) < 2.8;
     for (const d of drops) if (n < 5 && d.kind !== 'weapon' && near(d.px, d.pz)) show(d.px, d.pz, dropName(d));  // weapons get a card (updateWeaponTip)
     for (const p of pickups) if (n < 5 && near(p.g.position.x, p.g.position.z)) show(p.g.position.x, p.g.position.z, '✚ Health +20');
   }
   for (let i=n;i<tags.length;i++) tags[i].classList.add('hidden');
 }
 
+// ---------- Player tags ----------
+// Name and a small health bar over every other living player.
+const ptags = new Map();
+function updatePlayerTags(){
+  for (const o of players){
+    let el = ptags.get(o);
+    const show = o !== P && !o.dead && state.mode !== 'menu';
+    if (!el){
+      if (!show) continue;
+      el = $('floaters').appendChild(Object.assign(document.createElement('div'), { className:'ptag' }));
+      el.innerHTML = '<b></b><i><span></span></i>'; ptags.set(o, el);
+    }
+    el.classList.toggle('hidden', !show);
+    if (!show) continue;
+    const b = el.firstChild; if (b.textContent !== o.name){ b.textContent = o.name; el.style.setProperty('--pc', o.css); }
+    el.lastChild.firstChild.style.width = (o.hp/o.maxHp*100).toFixed(0) + '%';
+    const [x, y] = toScreen(o.pos.x, 2.4, o.pos.z);
+    el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -100%)`;
+  }
+  for (const [o, el] of ptags) if (!players.includes(o)){ el.remove(); ptags.delete(o); }
+}
+
 // ---------- Toasts ----------
-// kind: '' | 'good' | 'bad' | 'info'
-export function toast(msg, kind){
+// kind: '' | 'good' | 'bad' | 'info'. p = the player it's for: shown only if that's you (and sent to
+// their screen if they play on another machine). toastAll = everyone in the session.
+export function toastAll(msg, kind){ emit(['t', msg, kind]); toast(msg, kind); }
+export function toast(msg, kind, p){
+  if (p && p.remote) emitTo(p, ['t', msg, kind]);
+  if (p && p !== me()) return;
   const wrap = $('toasts'), el = document.createElement('div');
   el.className = 'toast' + (kind ? ' ' + kind : ''); el.textContent = msg;
   wrap.appendChild(el);
@@ -302,27 +355,32 @@ export function toast(msg, kind){
 
 // ---------- Craft screen ----------
 export function renderCraft(){
-  const scrap = countItem('scrap'), wrap = $('craftCards');
+  const p = me(), scrap = countItem(p, 'scrap'), wrap = $('craftCards');
   $('scrapCount').textContent = scrap;
   wrap.innerHTML = '';
   RECIPES.forEach((r, i) => {
     const I = ITEMS[r.id], b = document.createElement('button'); b.className = 'upg'; b.disabled = scrap < r.scrap;
-    b.innerHTML = `<div class="ic">${I.icon}</div><b>${i+1}. ${I.name}</b><span>${r.desc}</span><span class="cost">${r.scrap} scrap · you have ${countItem(r.id)}</span>`;
+    b.innerHTML = `<div class="ic">${I.icon}</div><b>${i+1}. ${I.name}</b><span>${r.desc}</span><span class="cost">${r.scrap} scrap · you have ${countItem(p, r.id)}</span>`;
     b.addEventListener('click', () => craftFromKey(i));
     wrap.appendChild(b);
   });
   const f = wrap.querySelector('button:not(:disabled)') || $('craftClose'); f.focus();
 }
 export function craftFromKey(i){
-  const r = RECIPES[i]; if (!r || state.mode !== 'craft') return;
-  const err = craft(r.id);
-  toast(err || `Crafted a ${ITEMS[r.id].name}`, err ? 'bad' : 'good');
+  const r = RECIPES[i]; if (!r || !crafting()) return;
+  act('craft', r.id);
   renderCraft();
+}
+// Player p crafts recipe id (host side; clients send it as an action).
+export function craftFor(p, id){
+  const r = RECIPES.find(r => r.id === id); if (!r) return;
+  const err = craft(p, id);
+  toast(err || `Crafted a ${ITEMS[r.id].name}`, err ? 'bad' : 'good', p);
 }
 
 // Shows one overlay screen by id (or none with null).
 export function showScreen(id){
-  for (const s of ['menuScreen','pauseScreen','craftScreen','upgradeScreen','deathScreen']) $(s).classList.toggle('hidden', s !== id);
+  for (const s of ['menuScreen','lobbyScreen','pauseScreen','craftScreen','upgradeScreen','deathScreen']) $(s).classList.toggle('hidden', s !== id);
 }
 let bannerTimer = null;
 const bannerQueue = [];
@@ -332,6 +390,8 @@ export function banner(t, s, dur){
   clearTimeout(bannerTimer);
   bannerTimer = setTimeout(() => { $('banner').classList.remove('show'); bannerTimer = null; setTimeout(nextBanner, 450); }, dur || 2800);
 }
+// A banner on everyone's screen.
+export function bannerAll(t, s, dur){ emit(['bn', t, s, dur]); banner(t, s, dur); }
 // Waits for the current banner (e.g. "City 2") to finish instead of cutting it off.
 export function queueBanner(t, s, dur){ bannerQueue.push([t, s, dur]); if (!bannerTimer) nextBanner(); }
 function nextBanner(){ if (!bannerTimer && bannerQueue.length) banner(...bannerQueue.shift()); }

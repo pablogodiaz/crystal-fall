@@ -12,7 +12,8 @@ ES modules don't load from `file://`, so serve the folder:
 python3 -m http.server 8000
 ```
 
-Then open http://localhost:8000. Three.js **r128** comes from cdnjs through the import map
+Then open http://localhost:8000. For co-op, run `python3 server/serve.py` instead (same port, also
+serves the game, plus the WebSocket relay; see "Networking"). Three.js **r128** comes from cdnjs through the import map
 in `index.html` (`"three"` → `three.js/r128/three.module.js`). Don't bump the version casually:
 lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
 
@@ -20,6 +21,89 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
 
 - **Run structure:** one life per run. Each run is a sequence of procedurally generated
   quarantined cities (City 1, 2, 3…). Difficulty scales with `state.level`.
+- **Players:** a session has 1–4 players (`players` in `state.js`, `MAX_PLAYERS`),
+  each a full player object (`addPlayer`/`removePlayer` in `player.js`; slot colours `LOOKS`: jacket,
+  ring, HUD css). `state.me` = the index this machine controls (`me()`), `state.view` = the one the
+  camera/HUD follow (`viewed()`: you, or whoever you spectate), `state.host` = this machine runs the
+  simulation (false on a networked client). Every player moves from its control state
+  `p.ctl = { mx, mz, sprint, fire, use, aim }`: `readLocal` (keyboard/mouse) fills it for `me()`, host.js for
+  remote players (`p.remote` = their connection id), `bots.js` for everyone else. One-shot actions (reload,
+  swap, items, throws, crafting) are calls that take the player; input goes through `act(name, arg)`
+  (client.js), which calls `ACTS` (host.js) here or sends it to the host. Players can be people on other
+  machines (see "Networking") or **companions** (bots) added from the dev tools: they follow you (or the nearest
+  living player), shoot the nearest zombie in sight, back off, swap to a loaded weapon, bandage/medkit
+  themselves and follow you into the exit; they never search, craft or throw.
+  - **Death:** `killPlayer(p)` (game.js): the player's body vanishes and they get back up as a zombie
+    (`spawnTurnedPlayer`: a walker in their jacket and cap, swaying first). While anyone is alive the run
+    goes on; if it was you, you spectate (`spectate(dir)`: click / Q / Space cycles, a bar says so, the HUD
+    shows the watched player). The dead keep their gear and come back at the start of the next city with
+    `REVIVE` (50%) health (`placePlayers`/`revivePlayer`). Everyone dead → game over ("Everyone turned").
+  - **Shared world:** containers are shared (whoever finishes the search gets loot rolled for them),
+    ground drops go to whoever walks over them (a dropped item only skips the player who dropped it,
+    `d.held`, until they step away, so you can hand things over), health crosses to the first hurt player,
+    the explored map is shared, kills count for the team (`state.kills`) and per player (`p.kills`).
+  - **Zombie scaling** (`COOP` in `threats.js`): the city's population (residents, landmark guards,
+    respawns) ×`residents()` = 1 + 0.5 per extra player; what spawns mid-fight (takeover surge, stream
+    and cap, the Crystal's pulse, screams) ×`crowd(true)` = 1 + 0.75 per extra living player, spread over
+    the players (`findSpawnTile` picks a random living player as anchor and keeps every spawn away from
+    all of them), so two players together face all of it. The frame-time ceiling (`zombieCap()`, 260
+    solo) grows with `residents()`.
+  - **Host only:** Esc/P pause (pauses everyone) and the dev tools (`` ` ``). With more than one player the
+    workbench (C) doesn't pause: `p.crafting` freezes only your controls; losing window focus only
+    pauses a solo game.
+  - **Upgrades:** each player gets their own three cards (`completeCity` deals different ones while there
+    are enough), the dead pick too; the next city starts when everyone has picked (`pickUpgrade`; players
+    this machine doesn't control pick at random, "Waiting for …" shows otherwise).
+  - **HUD:** a coloured name chip (`P2 (watching)` while spectating), name + health tags over the other
+    players (`updatePlayerTags`), other players as coloured dots on the maps. Toasts are only for you
+    (`toast(msg, kind, p)` ignores other players'); pickup floaters only for the watched player
+    (`floatText(msg, kind, p)`). One lamp follows the watched player (`updateLamp`).
+- **Networking** (co-op over LAN/Tailscale; `features/multiplayer.md` has the plan and what's left):
+  **host-authoritative.** `server/serve.py` (stdlib Python) serves the files and a game-agnostic WebSocket
+  relay at `/ws/<room>`; `net.js` is the only code that knows about sockets (`connect`, `send(to, msg)`,
+  `onNet({ message, join, leave, close, ready })`, URL from `location`, `VERSION` checked in `hello`; bump
+  it when `cityGen.js`, `config.js` layout data or messages change). `net.role`: `solo` | `host` | `client`.
+  - **Host** (`host.js`): runs `update()` as always. Clients' `hello` → `addPlayer()` with `p.remote`
+    (a player who dropped out within `LOST` = 30 s and comes back with the same name gets theirs back;
+    meanwhile a bot plays them). Their `c` messages (30 Hz) fill `p.ctl` and `p.net` (the position their
+    machine moved them to: `movePlayer` accepts it while it's within 4 units and their `tp` matches;
+    otherwise `p.tp++` snaps them back); `a` messages call `ACTS`. Every 50 ms (`hostTick` → `flushNow`)
+    each client gets one `k` message: `e` (events for everyone, `emit`), `pe` (for that player, `emitTo`),
+    `s` (run state), `p` (every player: position, angle, hp, flags, held weapon, melee, stamina, `tp`,
+    drone, rail charge), `z` (zombies within 64 units of the player they watch: nid, position, facing,
+    flags from `zombieFlags`, hp %) and `f` (full HUD state for their player and the one they watch, only
+    when it changed). Joining mid-run gets `syncEvents()` (the world as events) in the `w` welcome.
+  - **Smoothing** (`smooth.js`, snapshot interpolation): positions from another machine arrive in steps
+    and at uneven times, so they're never drawn as they land. Every tick (`ts`, host clock) and control
+    message (`ts`, client clock) is stamped; each remote thing keeps a few samples (`track`) and is drawn
+    a little in the past, blended between the two samples around that moment (`at`): remote players on
+    the host 70 ms behind (`REMOTE_DELAY` in `player.js`, their facing comes from the client too), other
+    players, zombies and drones on a client 100 ms behind (`DELAY` in `client.js`). The clock offset
+    (`syncClock`) eases rather than jumps; teleports (`tp`) and gaps over 0.5 s restart the samples.
+  - **Client** (`client.js`): never calls `update()`. `startCity(level, seed)` builds the same city
+    (skipping `populate`); everything else is mirrored: events spawn/kill zombies (`mirrorSpawn`/
+    `mirrorKill`, corpses play out locally), drops (`dropMesh`), health crosses, hazards, throws, acid,
+    wells and orbs as **ghosts** (same meshes, no gameplay), ghost bullets (`addBullet(…, { ghost })`, fly
+    and stop at walls/zombies in `updateBullets`), searched containers, landmarks, Crystal steps
+    (`crystalFx`), the road (`roadFx`), upgrades (`showUpgrades`), game over (`showGameOver`). Snapshots
+    move other players and zombies (smoothed, see below); `animateMirror` drives zombie looks from flags.
+    Its own player is predicted with `movePlayer` and reported; knockback arrives as `kick`.
+  - **Effects reach clients by themselves:** `burst`, `addDecal`, `addRing`/`shockwave`, `shake` (fx.js) and
+    every `sfx.*` call (wrapped in `initHost`) are emitted unless passed `local` (ambient effects of things
+    clients mirror, corpses, gibs, rising dirt, menu). Sounds and messages for one player: `sfxFor(p, name)`,
+    `toast(msg, kind, p)`, `floatText(…, p)`, `shake(a, p)`; for everyone: `toastAll`, `bannerAll`.
+  - **Session rules:** pause and dev tools are host-only (clients see the pause screen without Resume).
+    Mid-run joiners spawn next to a living player with a fresh kit (between cities: counted as picked).
+    The host leaving sends every client back to the menu ("The host left"). Best runs are saved on every
+    machine from the host's result (`over` event).
+  - **Lobby** (`lobby.js`): menu buttons Host co-op / Join co-op, a name field
+    (`localStorage['crystal-fall-name']`), the lobby card (address to share, players, host's Start run).
+  - **Autopilot client** (`?bot` or `?bot=Name` in the URL, `net.bot`): the window joins whoever hosts on
+    the server (retrying every 3 s, rejoining after the host leaves) and plays its own player with the
+    companions' brain (`updateBot`, flow fields from `updateFlow` every 0.25 s; swaps and item use go
+    through `act`), picking upgrades at random. For trying co-op alone over the real network path.
+  - A remote player whose machine stops sending controls for 0.5 s (hidden tab, frozen window) stops
+    moving and firing on the host (`p.ctlAt` in `hostTick`).
 - **Map:** a city is `b` × `b` blocks of 5×5 tiles between 2-tile roads, `n = 7b + 4` tiles across
   (`city.b`, `city.n`). It grows with the run (`CITY_BLOCKS` in `config.js`): 10×10 blocks
   (74 tiles) in Cities 1–2, 12×12 (88) from City 3, 14×14 (102) from City 6, with a "The cities are
@@ -56,16 +140,17 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
      down). Takeover zombies have `z.horde` set and are counted in `state.hordeAlive`.
   4. Timer hits 0 → `endTakeover()` + `open` — the tint fades, leftover takeover zombies become
      ordinary ones, the barricade on the east wall disappears and a green exit marker appears.
-  5. Walk into the exit tile column → upgrade screen (pick 1 of 3 random upgrades, heal 40% of max HP)
-     → next city with a new seed.
+  5. Every living player stands in the exit tile column for `EXIT_WAIT` (3 s, ticking; stepping out
+     resets it, `updateExit`, `state.exitT`/`exitIn`, shown in the objective panel) → upgrade screen
+     (each player picks 1 of 3 random upgrades, the living heal 40% of max HP) → next city with a new seed.
 - **Game modes** (`state.mode`): `menu` (camera orbits a city behind the title card), `play`,
   `paused`, `craft` (workbench overlay, C), `upgrade`, `dead`. Simulation (`update`) only runs in
   `play`; cosmetic animation (`animateWorld`) runs always.
-- **Player:** 100 HP, walk speed 4.6 (slower than runners, so sprinting matters). Sprint is ×1.75
+- **Player** (each of them): 100 HP, walk speed 4.6 (slower than runners, so sprinting matters). Sprint is ×1.75
   and drains stamina (~3.6 s from full); it refills after a 1 s pause, 1.7× faster standing still.
   Running dry makes you **winded** (`player.winded`): no sprint and 0.8× walk until stamina is back
   to 40%. Tunables are the constants above `updatePlayer` in `player.js`. WASD is screen-relative on the isometric grid;
-  mouse aims on a plane at gun height. Upgrades (`js/upgrades.js`) mutate player stats directly;
+  mouse aims on a plane at gun height (`readLocal` turns both into `p.ctl`). Upgrades (`js/upgrades.js`) mutate player stats directly;
   weapon upgrades are modifiers (`dmgMul`, `fireMul`, `magMul`, `reloadMul`, `pellets`, `pierce`)
   applied on top of every gun's base stats and rarity modifiers (`weaponStats` in `weapons.js`;
   uniques only take `dmgMul`/`fireMul`).
@@ -135,7 +220,7 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   - **Pickups:** weapons are never picked up by walking over them. Every weapon find is tossed out
     of the container onto the ground (with a sting sound and a "Found: …" floater) so it can't go
     unnoticed; hold E next to it to pick it up into a free slot, or to swap it for the one in your
-    hands. After any E action, E must be released before the next one starts (`interact.lock`).
+    hands. After any E action, E must be released before the next one starts (`p.interact.lock`).
 - **Melee:** F any time (left click falls back to it when the held gun has no mag or reserve, or
   a unique can't fire: no fuel, brewing, recharging): a
   0.4 s butt-stroke animation (`poseMelee` in `player.js`); the blow lands 42% in (`meleeStrike`),
@@ -145,8 +230,8 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
 - **Inventory:** 8 slots of stackable items (`player.inv`, `ITEMS`): bandage, medkit, energy drink
   (full stamina + sprint drains 60% less for 20 s via `player.boost`), scrap, molotov, pipe bomb. Keys 1–8 (or click) use a slot, right-click drops the stack. Full pack →
   overflow is dropped on the ground (`drops`), picked up by walking over it. Inventory, weapons,
-  ammo and bleeding all live on `player`, so they carry over between cities; only `newRun`
-  resets them (`resetPlayerStats`).
+  ammo and bleeding all live on the player object, so they carry over between cities; only `newRun`
+  resets them (`resetPlayerStats(p)`).
 - **Bleeding:** zombie hits may cause bleeding (`bleed` chance per type in `ZTYPES`): −1.1 HP/s until
   a bandage or medkit. (There is no hunger system; it was removed.)
 - **Looting** (`js/loot.js`): containers are car trunks, dumpsters, crates, doors on some
@@ -201,11 +286,13 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   `specials.js`). HP scales +30%/city, speed +4%/city; each type/modifier's odds are
   `chance = [base, perCity, max]` counted from the city it was introduced in (walker fills the rest).
 - **Zombie senses** (`AI` in `threats.js`, Senses section of `zombies.js`): zombies live in their
-  district. Each has a home (its spawn point) and a `mode`:
+  district. Each works against one player at a time: `z.tgt` while hunting (the nearest one it saw,
+  got hit by (`damageZombie`'s `by`) or was told about), otherwise the nearest living one; if its
+  player dies it has to find someone else. Each has a home (its spawn point) and a `mode`:
   `idle` (wanders within 7 units of home) → `search` (heard a noise: walks to it, shows a yellow `?`,
   looks around 4 s) → `hunt` (saw you or got shot/hit: red `!`, `z.alert`) → `search` at your last
   known spot once it forgets you → `return` (walks home) → `idle`.
-  - Sight (`perceive`, every 0.2–0.3 s, needs a clear line): idle/searching ones notice you within 13
+  - Sight (`perceive`, every 0.2–0.3 s, checks every living player, needs a clear line): idle/searching ones notice you within 13
     units in a ±1.9 rad cone ahead or 3.5 units from any side (you can sneak up from behind);
     hunters keep track to 26 units.
   - Memory: a hunter that can't see you goes to your last known position and forgets you after 6 s.
@@ -218,13 +305,13 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     new position; others go and look, unless it's further than 1.25× their leash from home
     (`force`, the pipe bomb, ignores that). `alertNear` (screams, the Crystal's pulse) tells
     everything in range where you are.
-  - Paths: hunters that see you descend the player flow field (`distField`, every 0.25 s); everything
+  - Paths: hunters that see their player descend that player's flow field (`p.dist`, every 0.25 s); everything
     else walks straight to its target when it's in view, or down `flowTo(tile)` (a BFS field toward
     that tile, cached and shared in `grid.js`).
   - Takeover zombies (and everything within `CRYSTAL.breakR` when it breaks) are `tracked`: they
-    always know where you are, no leash. When it ends they become residents where they stand.
-  - Idle zombies more than 48 units away skip crowd separation and animation; zombies more than
-    50 units away aren't rendered (`z.g.visible`).
+    always know where the nearest living player is, no leash. When it ends they become residents where they stand.
+  - Idle zombies more than 48 units from every player skip crowd separation and animation; zombies more
+    than 50 units from the watched player aren't rendered (`z.g.visible`).
 - **Threat progression:** City 1 has walkers and runners (`THREAT_BASE`). Each later city
   introduces one more threat from `THREAT_POOL`, in an order shuffled per run (`shuffleThreats`,
   `state.threatOrder`); earlier ones keep appearing. The newest is forced onto the first
@@ -261,13 +348,13 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   away bleeding and settles flat on the ground. Blast deaths (explosions, exploders themselves)
   fling every body part. Corpses lie 2.5–4 s, then sink away.
 - **Population:** `populate` (in `game.js`) gives each block `floor(density + random)` standing
-  residents on random reachable tiles of its patch (the block plus the roads north and west of
-  it, `findBlockTile`), at least `POP.startGap` units from the start, plus the walk-in landmarks'
-  guards, prisoners and shoppers. Nobody despawns. Killed residents are slowly replaced (every
+  residents (×`residents()` with more players) on random reachable tiles of its patch (the block plus
+  the roads north and west of it, `findBlockTile`), at least `POP.startGap` units from every player, plus
+  the walk-in landmarks' guards, prisoners and shoppers. Nobody despawns. Killed residents are slowly replaced (every
   1.5–4 s, idle, at least `POP.respawnGap` units from you) while the city has fewer than the sum of
   its blocks' densities (70% once the road is open), into the block furthest below its share
   (counted by each zombie's home block, `blockIndex` in `grid.js`). The takeover's spawns are
-  capped by `CRYSTAL.cap`; a 260-zombie ceiling guards frame time.
+  capped by `CRYSTAL.cap`; a 260-zombie ceiling (`zombieCap()`, grows with players) guards frame time.
 - **Zombie drops:** deliberately rare so loot matters: a health cross (+20 HP, ~2.5%, more from
   brutes (`heal` in `ZTYPES`) or when below 40% HP), otherwise ~7% a small ammo box (14% during
   the takeover, `CRYSTAL.ammoDrop`, so the takeover's nonstop fighting stays possible). An
@@ -282,7 +369,7 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   (`dropName` in `loot.js`). Toasts are kept for notes (full pack, new gun hint, alarms).
 - **Maps:** the minimap follows the player (46 tiles across, the Crystal/exit pinned to its edge
   when off it); hold Tab for the whole explored city (scaled to the city's size). Both draw from one cached tile layer.
-- **Meta:** best run (`{ city, kills }`) stored in `localStorage['crystal-fall-best']`. Runs where dev
+- **Meta:** best run (`{ city, kills }`, team kills) stored in `localStorage['crystal-fall-best']`. Runs where dev
   tools were used (`state.cheated`) aren't saved.
 - **Dev tools** (`js/devtools.js`, the `` ` `` key = `Backquote`, the key left of 1 on any layout; works in
   every mode, including the menu): a panel on the right for trying anything out. **Whenever you add a
@@ -290,12 +377,16 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   upgrade, tunable), add a way to trigger or test it here and list it below.**
   - Readout: fps, mode, city/size/seed, zombie count (takeover ones), kills, tile, district, Crystal HP
     or takeover time.
-  - Player: god mode (`hurtPlayer`/`drainHp` do nothing, no bleeding), infinite ammo (mags and
+  - Player cheats apply only to the player you control (`cheats(p)` in `player.js`): god mode
+    (`hurtPlayer`/`drainHp` do nothing, no bleeding), infinite ammo (mags and
     reserves refilled every frame), infinite stamina, noclip (no `resolveCircle`, clamped to the
     city), ignored by zombies (they can't see or attack you; noise still draws them; turning it on
     calms everyone), one-hit kills (`damageZombie`), click to teleport (left click on the ground
-    teleports instead of shooting), move speed ×0.5–3; heal/revive (also from the death screen), cure
-    or cause bleeding, +25 max HP, hurt 25, die.
+    teleports instead of shooting), move speed ×0.5–3; heal/revive (also from the death screen or while
+    spectating), cure or cause bleeding, +25 max HP, hurt 25, die (turn; spectate if companions live).
+  - Players: + / − companion (bots, up to 4 players), kill one (turns into a zombie), revive all where
+    they fell, "Play as P*n*" to take control of any player (the others become companions); the
+    readout lists everyone's health and kills. "Refill everyone" tops up companions' ammo too.
   - City: go to any city number with an optional seed (from the menu this starts a run there), prev /
     next / restart (same seed), clear city (upgrade screen); find the Crystal, take it to 50% (pulse),
     break it, takeover → 10 s, open the road; reveal the map. Inventory, guns and upgrades carry over.
@@ -316,16 +407,17 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     isn't saved). The player cheats in `SAVED` are remembered in `localStorage['crystal-fall-dev']`;
     time scale, zoom, freeze and click-teleport reset on reload.
 - **Controls:** WASD/arrows move, mouse aims, hold left click to fire, Shift sprints, R reloads,
-  F melee, Q swaps guns, G drops the held one, hold right click to aim + release to throw (wheel/T picks molotov or pipe bomb, left click cancels), hold E searches, 1–8 use items (right-click a slot drops it), C crafts, hold Tab for the map, Esc/P pauses,
+  F melee, Q swaps guns, G drops the held one, hold right click to aim + release to throw (wheel/T picks molotov or pipe bomb, left click cancels), hold E searches, 1–8 use items (right-click a slot drops it), C crafts, hold Tab for the map, Esc/P pauses (host only), click / Q / Space switch who you watch while dead,
   M mutes, `` ` `` opens the dev tools.
 
 ## Folder structure
 
 ```
+server/serve.py   Co-op server: static files + WebSocket relay (/ws/<room>), Python standard library only
 index.html        Markup (HUD, overlay screens), import map, loads css + js/main.js
 css/style.css     All styles; light/dark theme tokens on :root
 js/
-  main.js         Boot (input, best score, menu city) and the requestAnimationFrame loop
+  main.js         Boot (P1, input, best score, menu city) and the requestAnimationFrame loop
   config.js       Grid constants: TILE, B/N (largest city), CITY_BLOCKS/cityBlocks() (size per city),
                   tile types T, walkable()/seeThrough(), DIRS8, names, palettes, DISTRICTS, LAYOUT, POP
   items.js        Pure data: WEAPONS (guns + uniques), RARITY, WMODS, ITEMS, RECIPES, LOOT tables,
@@ -347,7 +439,10 @@ js/
                   shells/roofs, props, containers, signs, Crystal, barricade, exit
   grid.js         Tile collision (isBlockedTile, isOpaqueTile, resolveCircle), BFS flow fields (player,
                   cached flowTo), line of sight, blockIndex, fog-of-war reveal
-  player.js       Player mesh, base stats + starting kit, movement/sprint/stamina, aim/reload, melee pose, bleeding
+  player.js       Players: add/remove (meshes per slot colour), me()/viewed()/nearestPlayer(), co-op scaling
+                  (residents/crowd/zombieCap), base stats + starting kit, local controls (readLocal), movement/
+                  sprint/stamina, aim/reload, melee pose, bleeding, the lamp
+  bots.js         Companions: fill a non-local player's controls (follow, shoot, back off, heal, exit)
   zombies.js      Zombie meshes (incl. type/modifier tells, ?/! mark), spawning + rising from the ground,
                   senses (sight, hearing via makeNoise/alertNear, memory, leash), steering (flow fields,
                   pipe-bomb lure), turned zombies (Turncoat flask), frozen zombies (cryo), damage (armor),
@@ -372,10 +467,20 @@ js/
                   interact prompt, floating pickup text, drop name tags, toasts, minimap + full map, district line,
                   craft screen, banner, showScreen()
   upgrades.js     Upgrade definitions
-  game.js         Game flow: startCity/newRun, populate(), takeover countdown + spawning, exit, death,
-                  pause, resident respawns, update() and animateWorld()
-  input.js        Keyboard/mouse/focus listeners
+  game.js         Game flow: startCity/newRun, placing/reviving/killing players, spectating, populate(),
+                  takeover countdown + spawning, exit wait, per-player upgrades, game over, pause/craft,
+                  resident respawns, update() and animateWorld()
+  input.js        Keyboard/mouse/focus listeners (one-shot actions go through act())
+  net.js          Transport: WebSocket to the relay, send/onNet, reconnect, VERSION
+  host.js         Host session: remote players, ACTS, emit/emitTo/sfxFor, ticks (snapshots, full state),
+                  mid-run sync, disconnects; nextId() network ids
+  client.js       Client session: mirrors the host's world (events, snapshots, interpolation), predicts its
+                  own player, act()
+  lobby.js        Host co-op / Join co-op buttons and the lobby card, the ?bot autopilot
+  smooth.js       Snapshot interpolation: timestamped samples, clock offset, drawing remote things slightly in the past
   devtools.js     Dev tools panel (` key): cheats, city/phase jumps, teleport, spawning, items, time scale
+features/
+  multiplayer.md  Plan for the rest of co-op (networking: relay server, host/client split, messages)
 ```
 
 ## Conventions
@@ -391,13 +496,24 @@ js/
   New external libs go in the import map with a pinned version from cdnjs.
 - **Shared mutable state lives on objects, not exported `let`s.** Importers can't reassign
   module bindings, so per-city references (`city`, `cityGroup`, `crystal`, `barricade`,
-  `exitMarker`, `buildingMeshes`, `interiors`, `interiorAt`, `explored`, `mmDirty`, `lastTile`, `lure`) live on `world` in
+  `exitMarker`, `buildingMeshes`, `interiors`, `interiorAt`, `explored`, `mmDirty`, `lure`) live on `world` in
   `state.js`; run/game state lives on `state` (incl. `seed` of the current city and `cheated`); dev tools flags
-  live on `dev`, so gameplay code reads them without importing `devtools.js`. Entity arrays (`zombies`, `bullets`, `drops`,
-  `throwns`, `hazards`, `spits`, `puddles`, `rings`, …) are
+  live on `dev`, so gameplay code reads them without importing `devtools.js`. Players are objects in the
+  `players` array (`state.me`/`state.view` index into it); **anything a player does takes the player as
+  a parameter** (`fire(p, dt)`, `useSlot(p, i)`, `weaponStats(w, p)`, `hurtPlayer(p, dmg, z)`…), never
+  a global "the player". Per-player state (interact target, last revealed tile, flow field `p.dist`,
+  drone model, rail/flame timers) lives on the player. UI code uses `me()` for what you do and `viewed()`
+  for what's shown. Entity arrays (`zombies`, `bullets`, `drops`,
+  `throwns`, `hazards`, `spits`, `puddles`, `rings`, `players`, …) are
   mutated in place (`push`/`splice`/`length = 0`), never reassigned.
   Exception: `utils.js` owns `rng`, which only it reassigns via `seedRng()`.
-  Weapons are instances on `player.weapons` and on ground drops (`d.w`); mutate them in place.
+  Weapons are instances on `p.weapons` and on ground drops (`d.w`); mutate them in place. Bullets,
+  burning, fire zones and thrown items carry their player (`owner`/`by`) for kill credit.
+- **Networked entities:** anything the host creates that clients must see gets a network id (`nid` from
+  `nextId()`), an event when it appears and goes (`emit([...])`), and a way to build it without its
+  gameplay (a `…Mesh(…, ghost)` function or `mirror…`), so host and client share the look. Code that
+  clients also run (corpses, rising, `animate…` functions) must only make `local` effects. Keep event
+  arrays short and numbers rounded (`r2`). Personal sounds/messages take the player (`sfxFor`, `toast(…, p)`).
 - **Flow-field cache:** `flowTo()` fields are keyed by tile; call `clearFlowCache()` whenever the
   grid changes (`startCity`, `openRoad`). Zombies hold their own reference, so evicted fields are
   never recycled.
@@ -424,6 +540,8 @@ js/
   ring materials. Gibs are zombie meshes re-parented to the scene that keep those materials, so a
   dead zombie is always removed with `disposeCorpse()` (gibs + zombie), also in `teardownCity()`.
   `rings` entries (`{ mesh, t, T, r0, r1, op }`) own their material, disposed when they finish.
+  Player bodies share geometry and skin/cap/pack materials (`PG` in `player.js`); their jacket, ring and
+  swoosh materials are their own, disposed by `removePlayer`.
 - **Units:** grid tiles are `TILE = 2` world units. Tile arrays (`grid`, `explored`, flow fields,
   `interiorAt`, …) are always `N*N` with `N = 102` (the largest city, `B = 14` blocks) and indexed
   `z*N + x`; a smaller city fills the top-left `n×n` and every tile outside it is `T.WALL`, so
@@ -449,7 +567,8 @@ js/
   Anything flat drawn on the ground (ground overlays — parking, forecourts, shop floors — 0.083,
   parking lines 0.086, decals 0.09, acid 0.11, fire 0.12, acid marker and exploder warning ring 0.13,
   shockwaves 0.14) must sit above 0.08 off-road.
-- **No runtime lights.** Adding/removing lights recompiles shaders; reuse `muzzleLight`/`fxLight`.
+- **No runtime lights.** Adding/removing lights recompiles shaders; reuse `muzzleLight`/`fxLight` (and
+  the one player lamp, which follows the watched player; players don't get a light each).
 
 ## Testing
 
@@ -464,6 +583,17 @@ lose a hunting zombie by breaking line of sight, check it walks home →
 shoot Crystal (pulse from City 3) → survive the takeover
 (set `state.takeover` low to skip ahead) → exit → pick upgrade → next
 city (inventory and guns should carry over); also craft, throw, swap guns, pause and death.
+For co-op, add companions in the dev tools (Players): check zombies split their attention, a companion
+dying turns into a zombie, dying yourself spectates (click/Q cycles), the exit waits for everyone for 3 s,
+each player gets different upgrade cards, the dead come back next city, and zombie counts go up.
+Headless, `addPlayer()` from `player.js` plus `startCity()` places everyone; `killPlayer(p)` and
+`spectate(1)` are in `game.js`.
+For networking, run `python3 server/serve.py` and open two windows side by side (background tabs
+throttle `requestAnimationFrame`): one clicks Host co-op, the other Join co-op. Check the client sees the
+same city and zombies, its moves, shots, throws, searches and item use happen on the host, upgrades, the
+next city, death/spectating and pause reach it (or open the second window at `/?bot` and let it play), a third window can join mid-run, closing a client leaves a
+bot for 30 s, and closing the host sends clients back to the menu. Headless, open two Playwright contexts
+on the server; drive the host with `update(0.05)` plus `hostTick(0.05)` (host.js) in a loop.
 Watch the browser console for errors. A headless check with Playwright works if you serve the
 folder and (when the CDN is unreachable) route `**/three.module.js` to a local copy of r128.
 Headless WebGL runs at ~5 fps and `dt` is capped at 0.05 s, so drive timing-sensitive checks by

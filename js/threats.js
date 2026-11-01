@@ -57,6 +57,14 @@ export const ZMODS = {
 export const CRYSTAL = { pulseFrom:3, pulseAt:0.5, pulseR:60, pulseSpawn:[8,2,18], pulseDist:[4,12],
   takeover:180, surge:[10,3], interval:[1.8,0.15,0.8], ramp:0.4, cap:[10,4], ammoDrop:0.14, breakR:60 };
 
+// ---------- Co-op ----------
+// More players, more of them: each extra player adds `residents` (×) to the city's population
+// (residents, landmark guards, respawns) and `spawns` to what rises mid-fight (the takeover's surge,
+// stream and cap, the Crystal's pulse, screams), counting living players. Factors are 1 + k*(players-1)
+// (residents()/crowd() in player.js). Mid-fight spawns are spread over the players, so two players
+// together face all of it. The frame-time ceiling on zombies (`max`, solo) grows with residents().
+export const COOP = { residents:0.5, spawns:0.75, max:260 };
+
 // ---------- Senses ----------
 // Zombies live in their district: each has a home (where it spawned) and is in one of four modes:
 // idle (wanders within `wander` of home), search (walks to a noise or to where it lost you, looks

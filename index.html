@@ -46,6 +46,7 @@
     <svg viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="18" class="track"/><circle cx="22" cy="22" r="18" class="prog" id="interactRing"/></svg>
     <div class="label"><kbd>E</kbd><span id="interactLabel"></span></div>
   </div>
+  <div id="spectate" class="hidden"><span id="spectateText"></span></div>
   <div id="hint">Hold E to search. F melee, Q swaps guns, G drops one, hold right click to aim a throw (wheel picks), C crafts. 1–8 use items. Hold Tab for the map.</div>
 </div>
 
@@ -70,10 +71,26 @@
       <kbd>1 – 8</kbd><span>Use an item (right-click a slot to drop it)</span>
       <kbd>C</kbd><span>Craft molotovs and pipe bombs from scrap</span>
       <kbd>Hold Tab</kbd><span>Map of what you’ve explored, plus your weapons and their modifiers</span>
-      <kbd>Esc</kbd><span>Pause</span>
+      <kbd>Esc</kbd><span>Pause (in co-op, only the host can)</span>
     </div>
-    <button class="btn" id="startBtn">Start run</button>
+    <div class="row menuBtns">
+      <button class="btn" id="startBtn">Start run</button>
+      <button class="btn ghost" id="hostBtn">Host co-op</button>
+      <button class="btn ghost" id="joinBtn">Join co-op</button>
+    </div>
+    <label class="nameRow">Your name <input id="nameInput" maxlength="16" placeholder="Player" autocomplete="off" spellcheck="false"></label>
+    <p class="coopHint">Co-op for 2–4 players: the host runs <code>python3 server/serve.py</code> and everyone opens the address it prints.</p>
     <div class="best" id="bestText"></div>
+  </div>
+</div>
+
+<div class="screen hidden" id="lobbyScreen">
+  <div class="card">
+    <h2 class="title display" style="font-size:64px" id="lobbyTitle">Co-op lobby</h2>
+    <p class="lead" id="lobbyAddr"></p>
+    <ul id="lobbyPlayers"></ul>
+    <p class="lead" id="lobbyNote" aria-live="polite"></p>
+    <div class="row"><button class="btn" id="lobbyStart">Start run</button><button class="btn ghost" id="lobbyLeave">Leave</button></div>
   </div>
 </div>
 
@@ -81,6 +98,7 @@
   <div class="card">
     <h2 class="title display" style="font-size:64px">Paused</h2>
     <p class="lead">Gunfire draws the dead toward you. Sometimes the quiet route is the smart one.</p>
+    <p class="lead hidden" id="pauseNote"></p>
     <div class="row"><button class="btn" id="resumeBtn">Resume</button></div>
   </div>
 </div>
@@ -100,12 +118,13 @@
     <div class="statline" id="clearStats"></div>
     <p class="lead" style="margin-bottom:0">Pick one upgrade for the road ahead. You also recover 40% of your health.</p>
     <div class="cards" id="upgradeCards"></div>
+    <p class="lead" id="upgradeNote" aria-live="polite"></p>
   </div>
 </div>
 
 <div class="screen hidden" id="deathScreen">
   <div class="card">
-    <h2 class="title display" style="font-size:64px">You didn’t make it</h2>
+    <h2 class="title display" style="font-size:64px" id="deathTitle">You didn’t make it</h2>
     <div class="statline" id="deathStats"></div>
     <div class="row"><button class="btn" id="retryBtn">Start a new run</button></div>
     <div class="best" id="deathBest"></div>

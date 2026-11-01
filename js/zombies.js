@@ -6,9 +6,9 @@ import { TILE, N, DIRS8, walkable } from './config.js';
 import { mr, lerpAngle } from './utils.js';
 import { scene } from './renderer.js';
 import { SH } from './assets.js';
-import { state, world, zombies, dying, dev } from './state.js';
-import { distField, isBlockedTile, resolveCircle, lineOfSight, flowTo } from './grid.js';
-import { player } from './player.js';
+import { state, world, zombies, dying, dev, players, net } from './state.js';
+import { reachable, isBlockedTile, resolveCircle, lineOfSight, flowTo } from './grid.js';
+import { viewed, nearestPlayer, nearestDist, cheats, capParts } from './player.js';
 import { hurtPlayer } from './combat.js';
 import { burst, addDecal, spawnPickup } from './fx.js';
 import { dropZombieAmmo } from './loot.js';
@@ -16,12 +16,14 @@ import { queueBlast } from './throwables.js';
 import { rollThreat, updateScreamer, cancelScream, updateSpitter, poseSpecial } from './specials.js';
 import { ZTYPES, ZMODS, SCALE, CRYSTAL, AI } from './threats.js';
 import { WEAPONS } from './items.js';
-import { sfx } from './audio.js';
+import { sfx, playSfx } from './audio.js';
+import { emit, nextId } from './host.js';
+import { isBurning } from './uniques.js';
 
 const SHIRTS = [0x6b4a3a,0x4a5a6b,0x5a5a4a,0x7a3a3a,0x3a4a3a,0x6a6a72,0x8a7a5a];
 // Base body plus the visual tell of its type (screamer mouth, spitter sac) and each modifier
 // (explosive canisters + orange glow, riot helmet/vest/shield). em = resting emissive per material.
-function createZombieMesh(type, mods){
+export function createZombieMesh(type, mods){
   const S = ZTYPES[type];
   const g = new THREE.Group(), b = new THREE.Group(); g.add(b);
   const bodyMat = new THREE.MeshStandardMaterial({ color:SHIRTS[Math.floor(Math.random()*SHIRTS.length)], roughness:0.95 });
@@ -70,8 +72,9 @@ function createZombieMesh(type, mods){
 // roll riot gear more often). Everyone else lives in its district: home = its spawn point.
 // exclude = a type this spawn may not roll (screams don't spawn more screamers).
 // rise = seconds spent clawing out of the ground (invulnerable meanwhile); 0 = already standing.
-export function spawnZombieAt(x,z,horde,alert,guard,exclude,rise = mr(RISE[0], RISE[1])){
-  const lv = state.level, { type, mods } = rollThreat(guard === 'police', exclude);
+// kind = { type, mods, look } instead of a roll (a player who turned: look = their jacket colour).
+export function spawnZombieAt(x,z,horde,alert,guard,exclude,rise = mr(RISE[0], RISE[1]),kind){
+  const lv = state.level, { type, mods } = kind || rollThreat(guard === 'police', exclude);
   const S = ZTYPES[type], A = ZMODS.armored, m = createZombieMesh(type, mods);
   m.g.position.set(x,0,z); m.g.rotation.y = Math.random()*Math.PI*2;
   scene.add(m.g);
@@ -81,20 +84,41 @@ export function spawnZombieAt(x,z,horde,alert,guard,exclude,rise = mr(RISE[0], R
     kb:S.kb*(mods.armored ? A.kbMul : 1), atkCd:0, flash:0,
     horde, guard:!!guard, hx:x, hz:z, leash:guard ? AI.guardLeash : AI.leash, wanderT:0, wx:0, wz:0, phase:Math.random()*6, groan:mr(3,10),
     // Senses (see the Senses section): mode, last known target lx/lz, memory left, sight, path.
-    mode:'idle', alert:false, tracked:false, lx:x, lz:z, mem:0, sees:false, direct:false, percT:Math.random()*0.25, searchT:0, giveUp:0, fk:-1, ff:null,
+    // tgt = the player it's after (hunting), lx/lz = where it thinks they are.
+    mode:'idle', alert:false, tracked:false, tgt:null, lx:x, lz:z, mem:0, sees:false, direct:false, percT:Math.random()*0.25, searchT:0, giveUp:0, fk:-1, ff:null,
     mark:m.mark, markT:0,
-    turned:0, foe:null, foeT:0, chill:0, frozen:0, ice:null, dead:false, fuse:0, los:false, losT:Math.random()*0.2, windup:0, screamed:false, spitT:0, spitCd:mr(1,2.5), stun:0, side:Math.random() < 0.5 ? -1 : 1, rise, riseT:rise };
-  if (alert || horde) Object.assign(zz, { mode:'hunt', alert:true, mem:AI.memory, lx:player.pos.x, lz:player.pos.z, tracked:!!horde });
+    turned:0, foe:null, foeT:0, chill:0, frozen:0, ice:null, dead:false, fuse:0, los:false, losT:Math.random()*0.2, windup:0, screamed:false, spitT:0, spitCd:mr(1,2.5), stun:0, side:Math.random() < 0.5 ? -1 : 1, rise, riseT:rise,
+    nid:nextId(), hp0:hp, look:kind && kind.look !== undefined ? kind.look : null };
+  if (zz.look !== null) applyLook(zz, zz.look);
+  const t = (alert || horde) && nearestPlayer(x, z);
+  if (t) Object.assign(zz, { mode:'hunt', alert:true, mem:AI.memory, tgt:t, lx:t.pos.x, lz:t.pos.z, tracked:!!horde });
   if (mods.explosive) zz.warn = makeWarnRing();
   if (rise > 0){
-    // Facing the player (if it's coming for them), buried up to the top of its head.
-    if (zz.alert) m.g.rotation.y = Math.atan2(player.pos.x - x, player.pos.z - z);
+    // Facing the player it's coming for (if any), buried up to the top of its head.
+    if (t) m.g.rotation.y = Math.atan2(t.pos.x - x, t.pos.z - z);
     m.b.position.y = -RISE_DEPTH;
     addDecal(x, z, 1.3, SH.holeMat); burst(new THREE.Vector3(x, 0.2, z), 'dirt', 8, 2.5);
-    if (Math.hypot(player.pos.x - x, player.pos.z - z) < 22) sfx.dig();
+    const v = viewed(); if (v && Math.hypot(v.pos.x - x, v.pos.z - z) < 22) playSfx('dig');
   }
   zombies.push(zz); if (horde) state.hordeAlive++;
+  emit(spawnEvent(zz));
   return zz;
+}
+// What a client needs to build its copy of z (mirrorSpawn).
+export const spawnEvent = z => ['z+', z.nid, z.type, Object.keys(z.mods), Math.round(z.pos.x*100)/100, Math.round(z.pos.z*100)/100,
+  Math.round(z.g.rotation.y*100)/100, Math.round(z.rise*100)/100, Math.round(z.riseT*100)/100, z.look];
+// A turned player's look: their jacket on the body, their cap on the head.
+function applyLook(z, hex){
+  z.mats[0].color.setHex(hex);
+  const [geo, mat] = capParts(), cap = new THREE.Mesh(geo, mat); cap.position.set(0, 0.28, -0.02); cap.castShadow = true; z.head.add(cap);
+}
+// A player who dies gets back up as one of them: a walker in their jacket and cap, swaying a moment first.
+export function spawnTurnedPlayer(p){
+  const z = spawnZombieAt(p.pos.x, p.pos.z, false, false, false, null, 0, { type:'walker', mods:{}, look:p.mats[0].color.getHex() });
+  z.g.rotation.y = p.angle;
+  z.stun = 1.8; z.fromPlayer = p.name;
+  burst(new THREE.Vector3(p.pos.x, 1.2, p.pos.z), 'blood', 14, 3);
+  return z;
 }
 
 // ---------- Rising from the ground ----------
@@ -104,7 +128,7 @@ function updateRise(z, dt){
   z.rise -= dt;
   if (z.rise <= 0){
     z.rise = 0; z.b.position.y = 0; z.b.rotation.set(0, 0, 0);
-    burst(new THREE.Vector3(z.pos.x, 0.3, z.pos.z), 'dirt', 6, 2);
+    burst(new THREE.Vector3(z.pos.x, 0.3, z.pos.z), 'dirt', 6, 2, true);
     return;
   }
   const k = 1 - z.rise/z.riseT, u = 1 - k, t = z.riseT - z.rise;
@@ -112,7 +136,7 @@ function updateRise(z, dt){
   z.b.rotation.set(0.55*u, 0, Math.sin(t*14)*0.1*u);
   z.arms[0].rotation.x = -0.1 - 0.9*u + Math.sin(t*9)*0.4*u;
   z.arms[1].rotation.x = -0.1 - 0.9*u - Math.sin(t*9)*0.4*u;
-  if (Math.random() < dt*14*u) burst(new THREE.Vector3(z.pos.x + mr(-0.4,0.4), 0.15, z.pos.z + mr(-0.4,0.4)), 'dirt', 2, 2);
+  if (Math.random() < dt*14*u) burst(new THREE.Vector3(z.pos.x + mr(-0.4,0.4), 0.15, z.pos.z + mr(-0.4,0.4)), 'dirt', 2, 2, true);
 }
 
 // ---------- Explosive warning ring ----------
@@ -141,33 +165,37 @@ function updateWarnRing(z, nd, t){
     w.fill.scale.setScalar(E.radius); w.fill.material.opacity = 0.05;
   }
 }
-// Random reachable tile whose distance from the player is within [minD, maxD].
+// Random tile minD..maxD from a random living player that they can walk to, and at least minD from
+// everyone (so it never pops up next to someone else), or null. Spawns spread over the players, so a
+// group standing together draws all of them.
 export function findSpawnTile(minD, maxD){
-  const g = world.city.grid;
+  const g = world.city.grid, alive = players.filter(p => !p.dead);
+  if (!alive.length) return null;
   for (let i=0;i<80;i++){
-    const a = Math.random()*Math.PI*2, d = mr(minD, maxD);
-    const tx = Math.floor((player.pos.x + Math.sin(a)*d)/TILE), tz = Math.floor((player.pos.z + Math.cos(a)*d)/TILE);
+    const p = alive[Math.floor(Math.random()*alive.length)], a = Math.random()*Math.PI*2, d = mr(minD, maxD);
+    const tx = Math.floor((p.pos.x + Math.sin(a)*d)/TILE), tz = Math.floor((p.pos.z + Math.cos(a)*d)/TILE);
     if (tx < 1 || tz < 1 || tx >= N-2 || tz >= N-1) continue;
     const id = tz*N+tx;
-    if (!walkable(g[id]) || distField[id] < 0) continue;
-    return { x:(tx+0.5)*TILE + mr(-0.4,0.4), z:(tz+0.5)*TILE + mr(-0.4,0.4) };
+    if (!walkable(g[id]) || p.dist[id] < 0) continue;
+    const wx = (tx+0.5)*TILE + mr(-0.4,0.4), wz = (tz+0.5)*TILE + mr(-0.4,0.4);
+    if (nearestDist(wx, wz) >= minD*0.9) return { x:wx, z:wz };
   }
   return null;
 }
 // Random reachable tile in block b's patch (the block plus the roads north and west of it), at
-// least minD from the player, or null.
+// least minD from every player, or null.
 export function findBlockTile(b, minD){
   const g = world.city.grid;
   for (let i=0;i<25;i++){
     const tx = b.x0 - 2 + Math.floor(Math.random()*7), tz = b.z0 - 2 + Math.floor(Math.random()*7), id = tz*N+tx;
-    if (tx < 1 || tz < 1 || tx >= N-2 || tz >= N-1 || !walkable(g[id]) || distField[id] < 0) continue;
+    if (tx < 1 || tz < 1 || tx >= N-2 || tz >= N-1 || !walkable(g[id]) || !reachable(id)) continue;
     const wx = (tx+0.5)*TILE + mr(-0.4,0.4), wz = (tz+0.5)*TILE + mr(-0.4,0.4);
-    if (Math.hypot(wx - player.pos.x, wz - player.pos.z) >= minD) return { x:wx, z:wz };
+    if (nearestDist(wx, wz) >= minD) return { x:wx, z:wz };
   }
   return null;
 }
 // Random reachable tile center minR..maxR from (x,z) (widening if crowded by buildings),
-// at least 5 units from the player.
+// at least 5 units from every player.
 export function findSpawnNear(x, z, minR, maxR){
   const g = world.city.grid;
   for (let i=0;i<80;i++){
@@ -175,9 +203,9 @@ export function findSpawnNear(x, z, minR, maxR){
     const tx = Math.floor((x + Math.sin(a)*d)/TILE), tz = Math.floor((z + Math.cos(a)*d)/TILE);
     if (tx < 1 || tz < 1 || tx >= N-1 || tz >= N-1) continue;
     const id = tz*N+tx;
-    if (!walkable(g[id]) || distField[id] < 0) continue;
+    if (!walkable(g[id]) || !reachable(id)) continue;
     const wx = (tx+0.5)*TILE + mr(-0.4,0.4), wz = (tz+0.5)*TILE + mr(-0.4,0.4);
-    if (Math.hypot(wx-player.pos.x, wz-player.pos.z) >= 5) return { x:wx, z:wz };
+    if (nearestDist(wx, wz) >= 5) return { x:wx, z:wz };
   }
   return null;
 }
@@ -198,20 +226,30 @@ function updateMark(z, dt){
   z.mark.scale.setScalar(0.8*Math.min(1, k*8)*(1 + Math.max(0, 0.2 - k)*2));
   if (z.markT <= 0) z.mark.visible = false;
 }
-// It knows exactly where you are (it saw you, got hit, heard a scream). tracked = keeps knowing
-// without needing sight (the takeover).
-export function alertZombie(z, tracked){
+// It knows exactly where player p is (it saw them, got hit by them, heard a scream); without p, the
+// living player nearest to it. tracked = keeps knowing without needing sight (the takeover).
+export function alertZombie(z, tracked, p){
   if (z.dead || z.turned > 0) return;
+  if (!p || p.dead) p = nearestPlayer(z.pos.x, z.pos.z);
+  if (!p) return;
   if (z.mode !== 'hunt') mark(z, 'spotted');
-  setMode(z, 'hunt'); z.mem = AI.memory; z.lx = player.pos.x; z.lz = player.pos.z;
+  setMode(z, 'hunt'); z.mem = AI.memory; z.tgt = p; z.lx = p.pos.x; z.lz = p.pos.z;
   if (tracked) z.tracked = true;
 }
-// Everything within r of (x,z) learns where you are (screams, the Crystal's pulse).
-export function alertNear(x, z, r){ for (const o of zombies) if (Math.hypot(o.pos.x-x, o.pos.z-z) < r) alertZombie(o); }
+// Everything within r of (x,z) learns where p is (screams), or where its nearest player is (the Crystal's pulse).
+export function alertNear(x, z, r, p){ for (const o of zombies) if (Math.hypot(o.pos.x-x, o.pos.z-z) < r) alertZombie(o, false, p); }
+// Players zombies can perceive and attack (dev tools: "ignored by zombies" hides the one you control).
+const ignored = p => dev.ignored && cheats(p);
+function nearestHuntable(x, z){
+  let best = null, bd = Infinity;
+  for (const p of players){ if (p.dead || ignored(p)) continue; const d = (p.pos.x - x)**2 + (p.pos.z - z)**2; if (d < bd){ bd = d; best = p; } }
+  return best;
+}
 // A sound at (x,z) heard within r (only within muffle*r through walls). Hunters that lost sight of
 // you take it as your new position; everyone else walks over to look. Noises far from a zombie's
 // home are ignored unless forced (pipe-bomb beeps).
 export function makeNoise(x, z, r, force){
+  if (net.role === 'client') return;  // clients only mirror zombies (a predicted sprint step lands here)
   for (const o of zombies){
     if (o.dead || o.tracked || o.turned > 0 || (o.mode === 'hunt' && o.sees)) continue;
     const d = Math.hypot(o.pos.x-x, o.pos.z-z);
@@ -222,22 +260,26 @@ export function makeNoise(x, z, r, force){
     setMode(o, 'search'); o.lx = x; o.lz = z; o.searchT = AI.search; o.giveUp = AI.giveUp; o.percT = 0;
   }
 }
-// Sight, a few times a second: idle and searching zombies only notice you in front of them (or
-// right next to them); hunters keep track of you further out. Out past its leash, a hunter's
-// memory only refreshes while you're within closeR, and one walking home ignores you unless you
-// come that close (so it doesn't turn round at the edge of its turf). Also decides whether the
-// current target can be walked to in a straight line or needs a flow field.
-function perceive(z, dist, dx, dz){
+// Sight, a few times a second: idle and searching zombies only notice a player in front of them (or
+// right next to them); hunters keep track further out. Out past its leash, a hunter's memory only
+// refreshes while its player is within closeR, and one walking home ignores everyone unless they
+// come that close (so it doesn't turn round at the edge of its turf). With several players in view
+// it goes for the nearest. Also decides whether the current target can be walked to in a straight
+// line or needs a flow field.
+function perceive(z){
   const hunt = z.mode === 'hunt', away = Math.hypot(z.pos.x - z.hx, z.pos.z - z.hz) > z.leash;
   const range = hunt ? AI.sightHunt : z.mode === 'return' && away ? AI.closeR : AI.sight;
-  let see = false;
-  if (dist < range){
+  let see = null, sd = range;
+  for (const p of players){
+    if (p.dead || ignored(p)) continue;
+    const dx = p.pos.x - z.pos.x, dz = p.pos.z - z.pos.z, dist = Math.hypot(dx, dz);
+    if (dist >= sd) continue;
     const off = Math.abs(((Math.atan2(dx, dz) - z.g.rotation.y) % (Math.PI*2) + Math.PI*3) % (Math.PI*2) - Math.PI);
-    see = !dev.ignored && (hunt || dist < AI.feel || off < AI.cone) && lineOfSight(z.pos.x, z.pos.z, player.pos.x, player.pos.z);
+    if ((hunt || dist < AI.feel || off < AI.cone) && lineOfSight(z.pos.x, z.pos.z, p.pos.x, p.pos.z)){ see = p; sd = dist; }
   }
-  z.sees = see;
-  if (see && !hunt) alertZombie(z);
-  else if (see){ z.lx = player.pos.x; z.lz = player.pos.z; if (!away || dist < AI.closeR) z.mem = AI.memory; }
+  z.sees = !!see;
+  if (see && !hunt) alertZombie(z, false, see);
+  else if (see){ z.tgt = see; z.lx = see.pos.x; z.lz = see.pos.z; if (!away || sd < AI.closeR) z.mem = AI.memory; }
   if (z.mode !== 'idle' && !see){
     const ret = z.mode === 'return', tx = ret ? z.hx : z.lx, tz = ret ? z.hz : z.lz;
     z.direct = Math.hypot(tx - z.pos.x, tz - z.pos.z) < 30 && lineOfSight(z.pos.x, z.pos.z, tx, tz);
@@ -265,7 +307,8 @@ function think(z, dt, dist){
   }
 }
 // Step toward the neighbouring tile with the lowest value in a flow field (null if none is lower).
-function descend(z, f){
+// z = anything with a pos (bots.js uses it to follow players).
+export function descend(z, f){
   const tx = Math.floor(z.pos.x/TILE), tz = Math.floor(z.pos.z/TILE);
   let best = (tx>=0&&tz>=0&&tx<N&&tz<N) ? f[tz*N+tx] : -1, bx = -1, bz = -1;
   for (const [ox,oz] of DIRS8){
@@ -378,15 +421,16 @@ function bite(z, foe){
 // sound); it also picks the death animation. (dx,dz) = hit direction and knockback.
 // Armored zombies take frontMul damage from hits landing within frontArc of where they face.
 // Returns true if the shield took the hit (bullets stop there instead of piercing).
-// Zombies still rising out of the ground can't be hurt.
-export function damageZombie(z, dmg, dx, dz, cause){
+// Zombies still rising out of the ground can't be hurt. by = the player who dealt it (it turns on
+// them, and they get the kill), if any.
+export function damageZombie(z, dmg, dx, dz, cause, by){
   if (z.dead || z.rise > 0) return false;
   if (z.frozen > 0){
     // Frozen solid: fire melts the ice, anything else shatters it, zombie and all.
     if (cause === 'fire'){ thaw(z); return false; }
     if (dmg > 0){
       burst(new THREE.Vector3(z.pos.x, 1.1, z.pos.z), 'ice', 22, 6); sfx.shatterIce();
-      killZombie(z, true, 'blast', dx, dz, 99); return false;
+      killZombie(z, true, 'blast', dx, dz, 99, by); return false;
     }
   }
   const quiet = cause === 'fire';
@@ -395,14 +439,14 @@ export function damageZombie(z, dmg, dx, dz, cause){
   if (blocked) dmg *= A.frontMul;
   if (dev.oneHit) dmg = Math.max(dmg, z.hp);
   z.hp -= dmg; z.flash = 0.08;
-  if (cause === 'bullet' || cause === 'melee' || cause === 'rail') alertZombie(z);
+  if (cause === 'bullet' || cause === 'melee' || cause === 'rail') alertZombie(z, false, by);
   for (const m of z.mats) m.emissive.setHex(quiet ? 0x804010 : blocked ? 0x2a3a55 : 0x663333);
   z.vel.x += dx*z.kb; z.vel.z += dz*z.kb;
   if (!quiet){
     if (blocked){ burst(new THREE.Vector3(z.pos.x - dx/l*0.8*z.g.scale.x, 1.2, z.pos.z - dz/l*0.8*z.g.scale.x), 'spark', 5, 3); sfx.clank(); }
     else { burst(new THREE.Vector3(z.pos.x, 1.2, z.pos.z), 'blood', 4, 3); sfx.hit(); }
   }
-  if (z.hp <= 0) killZombie(z, true, cause, dx, dz, dmg);
+  if (z.hp <= 0) killZombie(z, true, cause, dx, dz, dmg, by);
   return blocked;
 }
 // Pipe-bomb concussion: frozen and swaying for t seconds; wind-ups (scream, spit) are interrupted.
@@ -412,14 +456,15 @@ export function stunZombie(z, t){
   if (z.windup > 0) cancelScream(z);
 }
 // credit = false for an exploder's own detonation: no kill counted, no drops.
-// cause/dx/dz/dmg describe the killing blow (see damageZombie) and shape the corpse.
-export function killZombie(z, credit = true, cause, dx = 0, dz = 0, dmg = 0){
+// cause/dx/dz/dmg describe the killing blow (see damageZombie) and shape the corpse; by = its player.
+export function killZombie(z, credit = true, cause, dx = 0, dz = 0, dmg = 0, by){
   z.dead = true; z.mark.visible = false;
+  emit(['z-', z.nid, z.mods.explosive ? 'blast' : cause || 'bullet', Math.round(dx*100)/100, Math.round(dz*100)/100, Math.round(dmg*10)/10]);
   if (z.ice){ z.g.remove(z.ice); z.ice = null; } z.frozen = 0;
   if (z.warn) z.warn.visible = false;
   const i = zombies.indexOf(z); if (i >= 0) zombies.splice(i,1);
   if (z.horde) state.hordeAlive--;
-  if (credit){ state.kills++; state.cityKills++; }
+  if (credit){ state.kills++; state.cityKills++; if (by) by.kills++; }
   addDecal(z.pos.x, z.pos.z);
   burst(new THREE.Vector3(z.pos.x, 1, z.pos.z), 'blood', 10, 4);
   for (const m of z.mats) m.emissive.setHex(0);
@@ -432,49 +477,67 @@ export function killZombie(z, credit = true, cause, dx = 0, dz = 0, dmg = 0){
     queueBlast(z.pos.x, z.pos.z, credit ? E.chain : 0, E.radius, E.dmgZombie, E.dmgPlayer);
   }
   if (!credit) return;
-  // Health drops are rare on purpose: most healing comes from searching the city.
-  const chance = 0.025 + (player.hp < player.maxHp*0.4 ? 0.03 : 0) + ZTYPES[z.type].heal;
+  // Health drops are rare on purpose: most healing comes from searching the city. Low health (of
+  // whoever made the kill, or the nearest player) makes them a little likelier; ammo suits their guns.
+  const p = by && !by.dead ? by : nearestPlayer(z.pos.x, z.pos.z);
+  const chance = 0.025 + (p && p.hp < p.maxHp*0.4 ? 0.03 : 0) + ZTYPES[z.type].heal;
   if (Math.random() < chance) spawnPickup(z.pos.x, z.pos.z);
-  else if (Math.random() < (state.phase === 'takeover' ? CRYSTAL.ammoDrop : 0.07)) dropZombieAmmo(z.pos.x, z.pos.z);
+  else if (p && Math.random() < (state.phase === 'takeover' ? CRYSTAL.ammoDrop : 0.07)) dropZombieAmmo(z.pos.x, z.pos.z, p);
 }
+// Shoves z out of every living player it overlaps (players push zombies, not the other way round).
+// Returns the player within striking reach, preferring its target.
+function shoveFromPlayers(z, tp){
+  let reach = null;
+  for (const p of players){
+    if (p.dead) continue;
+    const minD = z.r + p.radius, ndx = p.pos.x - z.pos.x, ndz = p.pos.z - z.pos.z, nd = Math.hypot(ndx, ndz);
+    if (nd < minD + 0.35 && (!reach || p === tp)) reach = p;
+    if (nd < minD && nd > 1e-4){ z.pos.x = p.pos.x - ndx/nd*minD; z.pos.z = p.pos.z - ndz/nd*minD; }
+  }
+  return reach;
+}
+// Each zombie works against one player at a time: its target while hunting (z.tgt), otherwise the
+// nearest living one (tp, with dx/dz/dist toward them). Visibility and sounds follow the player being
+// watched (viewed); skipping work for far-off idle zombies goes by the nearest player.
 export function updateZombies(dt){
-  const p = player.pos, lure = world.lure, E = ZMODS.explosive, t = state.cityTime;
+  const view = viewed(), lure = world.lure, E = ZMODS.explosive, t = state.cityTime;
   SH.canMat.emissiveIntensity = 0.9 + Math.sin(t*6)*0.5;
   for (let i=zombies.length-1;i>=0;i--){
     const z = zombies[i];
-    const dx = p.x - z.pos.x, dz = p.z - z.pos.z, dist = Math.hypot(dx,dz) || 0.0001;
-    z.g.visible = dist < 50;  // well off-screen (and out of the shadow camera): skip rendering it
+    if (z.tgt && z.tgt.dead){ z.tgt = null; z.sees = false; }  // its player died (or left): it has to find someone else
+    if (z.tracked && !(z.turned > 0)){ const h = nearestHuntable(z.pos.x, z.pos.z); if (h) z.tgt = h; }
+    const near = nearestPlayer(z.pos.x, z.pos.z), tp = (z.mode === 'hunt' && z.tgt) || near;
+    const nd = near ? Math.hypot(near.pos.x - z.pos.x, near.pos.z - z.pos.z) : Infinity;
+    const dx = tp ? tp.pos.x - z.pos.x : 0, dz = tp ? tp.pos.z - z.pos.z : 0, dist = tp ? Math.hypot(dx,dz) || 0.0001 : Infinity;
+    const vd = Math.hypot(view.pos.x - z.pos.x, view.pos.z - z.pos.z);
+    z.g.visible = vd < 50;  // well off-screen (and out of the shadow camera): skip rendering it
     if (!(z.turned > 0)) updateMark(z, dt);
     if (z.rise > 0){ updateRise(z, dt); continue; }
     if (z.frozen > 0){
-      // A statue: it only gets shoved aside by you (and dragged by gravity wells).
+      // A statue: it only gets shoved aside by players (and dragged by gravity wells).
       z.frozen -= dt;
       if (z.frozen <= 0) thaw(z);
-      else {
-        const ndx = p.x - z.pos.x, ndz = p.z - z.pos.z, nd = Math.hypot(ndx, ndz), minD = z.r + player.radius;
-        if (nd < minD && nd > 1e-4){ z.pos.x = p.x - ndx/nd*minD; z.pos.z = p.z - ndz/nd*minD; resolveCircle(z.pos, z.r); }
-        continue;
-      }
+      else { shoveFromPlayers(z, null); resolveCircle(z.pos, z.r); continue; }
     }
     if (z.chill > 0) z.chill = Math.max(0, z.chill - dt*WEAPONS.cryo.thaw);
     if (z.turned > 0){ z.turned -= dt; if (z.turned <= 0) unturn(z); }
     const turned = z.turned > 0, foe = foeOf(z, dt);
     if (turned || foe){}  // busy fighting (or on your side): no senses
-    else if (z.tracked && !dev.ignored){ z.sees = true; z.lx = p.x; z.lz = p.z; }
+    else if (z.tracked && z.tgt && !ignored(z.tgt)){ z.sees = true; z.lx = z.tgt.pos.x; z.lz = z.tgt.pos.z; }
     else {
       z.percT -= dt;
-      if (z.percT <= 0){ z.percT = mr(0.2, 0.3); perceive(z, dist, dx, dz); }
+      if (z.percT <= 0){ z.percT = mr(0.2, 0.3); perceive(z); }
       think(z, dt, dist);
     }
-    // Idle zombies far off-screen skip crowd separation and animation.
-    const far = dist > 48 && z.mode === 'idle' && !turned && !foe;
+    // Idle zombies far from everyone skip crowd separation and animation.
+    const far = nd > 48 && z.mode === 'idle' && !turned && !foe;
     let desX = 0, desZ = 0, spd = z.speed*(z.chill > 0 ? 1 - WEAPONS.cryo.slow*z.chill : 1), hold = false, mv = null, dir = null;
     if (z.stun > 0) z.stun -= dt;
     const stunned = z.stun > 0;
     // Specials: a winding-up screamer roots in place; an alerted spitter picks its own spacing.
     if (stunned || turned || foe){}
-    else if (z.type === 'screamer') hold = updateScreamer(z, dt, dist);
-    else if (z.type === 'spitter') mv = updateSpitter(z, dt, dist, dx, dz);
+    else if (z.type === 'screamer') hold = updateScreamer(z, dt, dist, tp);
+    else if (z.type === 'spitter') mv = updateSpitter(z, dt, dist, dx, dz, tp);
     const lx = lure ? lure.x - z.pos.x : 0, lz = lure ? lure.z - z.pos.z : 0, ld = lure ? Math.hypot(lx,lz) : 1e9;
     let fd = 1e9;
     if (hold || stunned){}
@@ -483,17 +546,18 @@ export function updateZombies(dt){
       const fx = foe.pos.x - z.pos.x, fz = foe.pos.z - z.pos.z; fd = Math.hypot(fx, fz) || 0.001;
       z.direct = fd < 6; dir = fd < 2.5 ? [fx/fd, fz/fd] : steerTo(z, foe.pos.x, foe.pos.z);
     } else if (turned){
-      // Nobody left to fight: stays near you.
-      if (dist > 3.5){ z.direct = dist < 8; dir = steerTo(z, p.x, p.z); } else { dir = wander(z, dt, p.x, p.z, 2.5); spd *= AI.speed.idle; }
+      // Nobody left to fight: stays near the nearest player.
+      if (!near){ dir = wander(z, dt, z.hx, z.hz, AI.wander); spd *= AI.speed.idle; }
+      else if (nd > 3.5){ z.direct = nd < 8; dir = steerTo(z, near.pos.x, near.pos.z); } else { dir = wander(z, dt, near.pos.x, near.pos.z, 2.5); spd *= AI.speed.idle; }
     }
     else if (mv){ desX = mv[0]; desZ = mv[1]; spd *= mv[2]; }
     else if ((z.mode === 'hunt' || z.mode === 'search') && ld < 32 && dist > 3.5){
-      // A beeping pipe bomb pulls hunting and searching zombies off the player.
+      // A beeping pipe bomb pulls hunting and searching zombies off the players.
       if (ld > 0.9){ desX = lx/ld; desZ = lz/ld; }
     } else if (z.mode === 'hunt'){
-      if (z.sees){
-        // Down the player's flow field, or straight at them up close (or when cut off, e.g. in a cell).
-        dir = dist < 4.5 ? null : descend(z, distField);
+      if (z.sees && tp){
+        // Down its player's flow field, or straight at them up close (or when cut off, e.g. in a cell).
+        dir = dist < 4.5 ? null : descend(z, tp.dist);
         if (!dir){ desX = dx/dist; desZ = dz/dist; }
       }
       // Lost sight: go to where it last saw (or heard) you, and look around there.
@@ -518,9 +582,7 @@ export function updateZombies(dt){
     const k = Math.min(1, dt*6);
     z.vel.x += (desX*spd - z.vel.x)*k; z.vel.z += (desZ*spd - z.vel.z)*k;
     z.pos.x += z.vel.x*dt; z.pos.z += z.vel.z*dt;
-    const minD = z.r + player.radius;
-    const ndx = p.x - z.pos.x, ndz = p.z - z.pos.z, nd = Math.hypot(ndx,ndz);
-    if (nd < minD && nd > 1e-4){ z.pos.x = p.x - ndx/nd*minD; z.pos.z = p.z - ndz/nd*minD; }
+    const reach = shoveFromPlayers(z, tp);
     resolveCircle(z.pos, z.r);
     const vl = Math.hypot(z.vel.x, z.vel.z);
     if (stunned){}
@@ -534,28 +596,28 @@ export function updateZombies(dt){
     z.b.rotation.z = Math.sin(z.phase*0.5)*0.06;
     z.atkCd -= dt;
     if (foe && !stunned && z.atkCd <= 0 && fd < z.r + foe.r + 0.4) bite(z, foe);
-    if (nd < minD + 0.35 && z.atkCd <= 0 && !stunned && !turned && !dev.ignored){ z.atkCd = 1.0; hurtPlayer(z.dmg, z); if (state.mode !== 'play') return; }
+    if (reach && z.atkCd <= 0 && !stunned && !turned && !ignored(reach)){ z.atkCd = 1.0; hurtPlayer(reach, z.dmg, z); if (state.mode !== 'play') return; }
     if (z.flash > 0){ z.flash -= dt; if (z.flash <= 0) z.mats.forEach((m,j) => m.emissive.setHex(z.em[j])); }
     if (z.mods.explosive){
-      // Arms a short fuse next to the player, blinking white, then detonates.
+      // Arms a short fuse next to a player, blinking white, then detonates.
       // A turned exploder lights its fuse next to the zombie it's fighting instead.
-      if (!z.fuse && !stunned && (turned ? fd < z.r + E.trigger : nd < minD + E.trigger)){ z.fuse = E.fuse; sfx.fuse(); }
+      if (!z.fuse && !stunned && (turned ? fd < z.r + E.trigger : nd < z.r + 0.45 + E.trigger)){ z.fuse = E.fuse; sfx.fuse(); }
       if (z.fuse > 0){
         z.fuse -= dt;
         z.mats[0].emissive.setHex(Math.floor(z.fuse*16) % 2 ? 0xffffff : 0xff5000); z.mats[0].emissiveIntensity = 2;
         if (z.fuse <= 0){ killZombie(z, false, 'blast'); continue; }
       } else z.mats[0].emissiveIntensity = 0.8 + Math.sin(t*6 + z.phase)*0.5;
-      updateWarnRing(z, nd, t);
+      updateWarnRing(z, vd, t);
     }
     poseSpecial(z);
     if (stunned){
       // Dazed: slow drunken sway, arms hanging, the odd spark above the head.
       z.b.rotation.z = Math.sin(t*7 + z.phase)*0.2; z.b.rotation.x = 0.15;
       z.arms[0].rotation.x = z.arms[1].rotation.x = 0.3;
-      if (Math.random() < dt*4) burst(new THREE.Vector3(z.pos.x, 2.1*z.g.scale.y, z.pos.z), 'spark', 1, 0.8);
+      if (Math.random() < dt*4) burst(new THREE.Vector3(z.pos.x, 2.1*z.g.scale.y, z.pos.z), 'spark', 1, 0.8, true);
     } else if (z.stun < 0){ z.stun = 0; z.b.rotation.x = 0; }
-    if (z.flash <= 0 && turned && Math.random() < dt*3) burst(new THREE.Vector3(z.pos.x, 1.9*z.g.scale.y, z.pos.z), 'brew', 1, 0.6);
-    if (z.alert){ z.groan -= dt; if (z.groan <= 0){ z.groan = mr(5,11); if (dist < 14) sfx.groan(); } }
+    if (z.flash <= 0 && turned && Math.random() < dt*3) burst(new THREE.Vector3(z.pos.x, 1.9*z.g.scale.y, z.pos.z), 'brew', 1, 0.6, true);
+    if (z.alert){ z.groan -= dt; if (z.groan <= 0){ z.groan = mr(5,11); if (vd < 14) playSfx('groan'); } }
   }
 }
 
@@ -584,8 +646,8 @@ function makeCorpse(z, cause, dx, dz, dmg){
       const ox = tmpV.x - z.pos.x, oz = tmpV.z - z.pos.z, s = mr(3,7);
       addGib(d, m, ux*s + ox*5 + mr(-2.5,2.5), mr(5,10), uz*s + oz*5 + mr(-2.5,2.5), 16);
     }
-    burst(new THREE.Vector3(z.pos.x, 1, z.pos.z), 'blood', 18, 7);
-    for (let i=0;i<3;i++) addDecal(z.pos.x + mr(-1.2,1.2), z.pos.z + mr(-1.2,1.2), mr(0.8,1.3));
+    burst(new THREE.Vector3(z.pos.x, 1, z.pos.z), 'blood', 18, 7, true);
+    for (let i=0;i<3;i++) addDecal(z.pos.x + mr(-1.2,1.2), z.pos.z + mr(-1.2,1.2), mr(0.8,1.3), undefined, true);
     return d;
   }
   // Fall so the head lands along the hit direction: on its back if that's behind it, otherwise
@@ -613,7 +675,7 @@ function makeCorpse(z, cause, dx, dz, dmg){
       d.flop = d.flop.filter(f => f.m !== m);
     }
     d.spurt = 0.8;
-    burst(new THREE.Vector3(z.pos.x, 1.3, z.pos.z), 'blood', 10, 4);
+    burst(new THREE.Vector3(z.pos.x, 1.3, z.pos.z), 'blood', 10, 4, true);
   }
   return d;
 }
@@ -626,10 +688,10 @@ function updateGib(p, dt){
   if (isBlockedTile(Math.floor(pos.x/TILE), Math.floor(nz/TILE))) p.vz *= -0.4; else pos.z = nz;
   pos.y += p.vy*dt;
   m.rotation.x += p.sx*dt; m.rotation.y += p.sy*dt; m.rotation.z += p.sz*dt;
-  if (Math.random() < dt*18) burst(pos, 'blood', 1, 0.6);
+  if (Math.random() < dt*18) burst(pos, 'blood', 1, 0.6, true);
   if (pos.y > 0.2) return;
   pos.y = 0.2;
-  if (!p.bled){ p.bled = true; addDecal(pos.x, pos.z, mr(0.4,0.7)); }
+  if (!p.bled){ p.bled = true; addDecal(pos.x, pos.z, mr(0.4,0.7), undefined, true); }
   if (p.vy < -3){ p.vy *= -0.3; p.vx *= 0.5; p.vz *= 0.5; p.sx *= 0.5; p.sy *= 0.5; p.sz *= 0.5; return; }
   // Settle flat on a face and rest on the ground.
   p.rest = true;
@@ -653,7 +715,7 @@ export function updateDying(dt){
       z.pos.x += d.vx*dt; z.pos.z += d.vz*dt; resolveCircle(z.pos, 0.3);
       if (d.spurt > 0){
         d.spurt -= dt;
-        if (Math.random() < dt*30){ z.b.getWorldPosition(tmpV); burst(tmpV.set(tmpV.x, 0.6 + 0.6*(1-k), tmpV.z), 'blood', 1, 1.5); }
+        if (Math.random() < dt*30){ z.b.getWorldPosition(tmpV); burst(tmpV.set(tmpV.x, 0.6 + 0.6*(1-k), tmpV.z), 'blood', 1, 1.5, true); }
       }
     }
     if (d.t > d.lie){
@@ -663,4 +725,98 @@ export function updateDying(dt){
       if (s >= 1){ disposeCorpse(d); dying.splice(i,1); }
     }
   }
+}
+
+// ---------- Client mirror ----------
+// On a client (client.js) every zombie is a copy of the host's: built from its spawn event, moved by
+// snapshots, and animated here from the flags the host sends (zombieFlags). It never thinks or
+// fights; its death is the host's kill event, played out with the same corpse code.
+const MODES = ['idle', 'search', 'hunt', 'return'];
+export const F = { stun:4, frozen:8, turned:16, fuse:32, windup:64, spit:128, burning:256, rising:512 };
+export function zombieFlags(z){
+  return MODES.indexOf(z.mode) | (z.stun > 0 ? F.stun : 0) | (z.frozen > 0 ? F.frozen : 0) | (z.turned > 0 ? F.turned : 0)
+    | (z.fuse > 0 ? F.fuse : 0) | (z.windup > 0 ? F.windup : 0) | (z.spitT > 0 ? F.spit : 0) | (isBurning(z) ? F.burning : 0) | (z.rise > 0 ? F.rising : 0);
+}
+export function mirrorSpawn(nid, type, modList, x, z, ry, rise, riseT, look){
+  const mods = {}; for (const k of modList) mods[k] = true;
+  const S = ZTYPES[type], m = createZombieMesh(type, mods);
+  m.g.position.set(x, 0, z); m.g.rotation.y = ry; scene.add(m.g);
+  const zz = { nid, type, mods, g:m.g, b:m.b, mats:m.mats, em:m.em, parts:m.parts, head:m.head, legs:m.legs, arms:m.arms, pos:m.g.position,
+    vel:new THREE.Vector3(), r:S.r, mark:m.mark, markT:0, mode:'idle', alert:false, rise, riseT:riseT || rise, phase:Math.random()*6, flash:0,
+    hp:100, dead:false, turned:0, frozen:0, ice:null, stun:0, fuse:0, windup:0, spitT:0, groan:mr(3,10), f:rise > 0 ? F.rising : 0, ghost:true };
+  if (mods.explosive) zz.warn = makeWarnRing();
+  if (look !== null && look !== undefined) applyLook(zz, look);
+  if (rise > 0) m.b.position.y = -RISE_DEPTH*(rise/zz.riseT)**1.5;
+  zombies.push(zz);
+  return zz;
+}
+export function mirrorKill(z, cause, dx, dz, dmg){
+  if (z.dead) return;
+  z.dead = true; z.mark.visible = false;
+  if (z.ice){ z.g.remove(z.ice); z.ice = null; }
+  if (z.warn) z.warn.visible = false;
+  const i = zombies.indexOf(z); if (i >= 0) zombies.splice(i, 1);
+  for (const m of z.mats) m.emissive.setHex(0);
+  if (z.windup > 0 || z.spitT > 0) cancelScream(z);
+  if (z.mods.explosive) z.parts.cans.visible = false;
+  z.rise = 0;
+  dying.push(makeCorpse(z, cause, dx, dz, dmg));
+}
+// hp = percent of its health left: a drop flashes it like a hit on the host.
+export function mirrorHit(z, hp){
+  if (hp < z.hp && !(z.turned > 0) && !z.ice && !(z.fuse > 0)){ z.flash = 0.08; for (const m of z.mats) m.emissive.setHex(0x663333); }
+  z.hp = hp;
+}
+// Per frame: z.f (flags) and its interpolated speed vl drive marks, ice, glow, poses and particles.
+export function animateMirror(z, dt, t, vd, vl){
+  const f = z.f, mode = MODES[f & 3], S = ZTYPES[z.type], E = ZMODS.explosive;
+  z.g.visible = vd < 50;
+  if (z.rise > 0){
+    if (f & F.rising){ updateRise(z, dt); if (z.rise <= 0) z.rise = 0.01; return; }
+    z.rise = 0; z.b.position.y = 0; z.b.rotation.set(0, 0, 0); burst(new THREE.Vector3(z.pos.x, 0.3, z.pos.z), 'dirt', 6, 2, true);
+  }
+  // Turned: pink glow and a heart; frozen: a block of ice and a blue glow.
+  if ((f & F.turned) && !(z.turned > 0)){ z.turned = 1; setGlow(z, TURN_EM); z.mark.material = SH.markMats.turned; z.mark.scale.setScalar(0.7); z.mark.visible = true; z.markT = 0; }
+  else if (!(f & F.turned) && z.turned > 0){ z.turned = 0; z.mark.visible = false; setGlow(z, null); }
+  if ((f & F.frozen) && !z.ice){ z.ice = new THREE.Mesh(SH.iceGeo, SH.iceMat); z.g.add(z.ice); z.b.rotation.set(0, 0, 0); setGlow(z, ICE_EM); }
+  else if (!(f & F.frozen) && z.ice){ z.g.remove(z.ice); z.ice = null; setGlow(z, null); }
+  if (!z.turned){
+    if (mode !== z.mode && (mode === 'hunt' || (mode === 'search' && z.mode !== 'hunt'))) mark(z, mode === 'hunt' ? 'spotted' : 'heard');
+    else if (mode === 'search' && z.mode === 'hunt') mark(z, 'heard');
+    updateMark(z, dt);
+  }
+  z.mode = mode; z.alert = mode === 'hunt';
+  if (z.ice) return;  // a statue
+  if (z.flash > 0){ z.flash -= dt; if (z.flash <= 0) z.mats.forEach((m, j) => m.emissive.setHex(z.em[j])); }
+  const stunned = !!(f & F.stun);
+  if (vd < 48 || !stunned){
+    z.phase += dt*(vl*2.4 + 0.5);
+    const sw = Math.sin(z.phase)*0.6*Math.min(1, vl/1.5);
+    z.legs[0].rotation.x = sw; z.legs[1].rotation.x = -sw;
+    z.arms[0].rotation.x = -0.1 + Math.sin(z.phase*0.5)*0.15; z.arms[1].rotation.x = -0.1 - Math.sin(z.phase*0.5+1)*0.15;
+    z.b.rotation.z = Math.sin(z.phase*0.5)*0.06;
+  }
+  // Wind-ups run their own clocks from when the flag came on.
+  if (f & F.windup){ if (!(z.windup > 0)) z.windup = S.windup; z.windup = Math.max(0.01, z.windup - dt); }
+  else if (z.windup > 0) cancelScream(z);
+  if (f & F.spit){ if (!(z.spitT > 0)) z.spitT = S.windup; z.spitT = Math.max(0.01, z.spitT - dt); }
+  else if (z.spitT > 0){ z.spitT = 0; cancelScream(z); }
+  if (z.mods.explosive){
+    if (f & F.fuse){
+      if (!(z.fuse > 0)) z.fuse = E.fuse;
+      z.fuse = Math.max(0.01, z.fuse - dt);
+      z.mats[0].emissive.setHex(Math.floor(z.fuse*16) % 2 ? 0xffffff : 0xff5000); z.mats[0].emissiveIntensity = 2;
+    } else { z.fuse = 0; z.mats[0].emissiveIntensity = 0.8 + Math.sin(t*6 + z.phase)*0.5; }
+    updateWarnRing(z, vd, t);
+  }
+  poseSpecial(z);
+  if (stunned){
+    z.b.rotation.z = Math.sin(t*7 + z.phase)*0.2; z.b.rotation.x = 0.15;
+    z.arms[0].rotation.x = z.arms[1].rotation.x = 0.3;
+    if (Math.random() < dt*4) burst(new THREE.Vector3(z.pos.x, 2.1*z.g.scale.y, z.pos.z), 'spark', 1, 0.8, true);
+  } else if (z.stunned){ z.b.rotation.x = 0; }
+  z.stunned = stunned;
+  if (z.turned && Math.random() < dt*3) burst(new THREE.Vector3(z.pos.x, 1.9*z.g.scale.y, z.pos.z), 'brew', 1, 0.6, true);
+  if ((f & F.burning) && Math.random() < dt*14) burst(new THREE.Vector3(z.pos.x + mr(-0.3,0.3), mr(0.6,1.6)*z.g.scale.y, z.pos.z + mr(-0.3,0.3)), 'fire', 1, 0.8, true);
+  if (z.alert){ z.groan -= dt; if (z.groan <= 0){ z.groan = mr(5,11); if (vd < 14) playSfx('groan'); } }
 }

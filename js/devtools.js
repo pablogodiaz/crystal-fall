@@ -2,16 +2,16 @@
 // Debug/cheat panel toggled with the ` key (the key left of 1, Backquote). Cheat flags live on
 // `dev` (state.js) and are read by gameplay code; everything else here calls the game's own
 // functions. Using any of it marks the run as cheated (a "Dev" chip in the HUD, best run not saved).
-// Player cheats are remembered in localStorage['crystal-fall-dev']. Add new tools to a section
-// in buildPanel() and list them in CLAUDE.md.
+// Player cheats are remembered in localStorage['crystal-fall-dev'] and only apply to the player you
+// control (P() = me()). Add new tools to a section in buildPanel() and list them in CLAUDE.md.
 import * as THREE from 'three';
 import { TILE, N, walkable, DISTRICTS } from './config.js';
 import { WEAPONS, ITEMS, LANDMARKS, GUNS, UNIQUES, RARITY } from './items.js';
 import { ZTYPES, ZMODS, THREAT_BASE, THREAT_POOL, AI } from './threats.js';
 import { $, clamp, fmtTime } from './utils.js';
 import { camera, camFocus } from './renderer.js';
-import { state, world, zombies, dev, mouseNDC } from './state.js';
-import { player, refreshGun } from './player.js';
+import { state, world, zombies, dev, mouse, mouseNDC, players } from './state.js';
+import { me, refreshGun, addPlayer, removePlayer, MAX_PLAYERS } from './player.js';
 import { addItem, countItem, giveWeapon, replaceWeapon, magSize, curWeapon } from './inventory.js';
 import { makeWeapon, rollWeapon, rollRarity, rollMods, RARITIES, weaponTitle } from './weapons.js';
 import { spawnDrop } from './loot.js';
@@ -19,10 +19,12 @@ import { spawnZombieAt, findSpawnNear, killZombie, alertZombie, turnZombie, free
 import { hitCrystal } from './combat.js';
 import { foundCrystal } from './crystal.js';
 import { updateFlow, reveal, blockIndex } from './grid.js';
-import { startCity, newRun, newSeed, openRoad, completeCity, die } from './game.js';
+import { startCity, newRun, newSeed, openRoad, completeCity, killPlayer, revivePlayer, spectate } from './game.js';
 import { showScreen, toast } from './hud.js';
 import { UPGRADES } from './upgrades.js';
+import { roster } from './host.js';
 
+const P = me;
 const PREFS = 'crystal-fall-dev', SAVED = ['god','ammo','stamina','noclip','ignored','oneHit','speed'];
 // Flags that count as cheating while they're on (zoom and click-teleport only when used).
 const cheating = () => dev.god || dev.ammo || dev.stamina || dev.noclip || dev.ignored || dev.oneHit || dev.freeze || dev.speed !== 1 || dev.timeScale !== 1 || dev.zoom !== 1;
@@ -67,8 +69,9 @@ export function teleport(x, z){
     const t = nearestOpen(tx, tz); if (!t) return toast('Nowhere to stand there', 'bad');
     [tx, tz] = t; x = (tx + 0.5)*TILE; z = (tz + 0.5)*TILE;
   }
-  player.pos.set(x, 0, z); player.vel.set(0, 0, 0); player.g.position.copy(player.pos); camFocus.copy(player.pos);
-  world.lastTile = -1; reveal(tx, tz, 8); updateFlow();
+  const p = P(); if (p.dead) return toast('You’re dead: revive first', 'bad');
+  p.pos.set(x, 0, z); p.vel.set(0, 0, 0); p.g.position.copy(p.pos); camFocus.copy(p.pos);
+  p.lastTile = -1; reveal(tx, tz, 8); updateFlow();
   mark();
 }
 const ray = new THREE.Raycaster(), ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hitV = new THREE.Vector3();
@@ -91,37 +94,39 @@ function targets(){
 
 function heal(){
   if (state.mode === 'dead'){ state.mode = 'play'; showScreen(null); }
-  player.hp = player.maxHp; player.bleeding = false;
+  const p = P(); if (p.dead) revivePlayer(p, p.maxHp);
+  p.hp = p.maxHp; p.bleeding = false;
 }
 // Full mags, full reserves, full fuel and charge, the flask brewed.
-function refillAmmo(){ for (const w of player.weapons) if (w){ w.mag = magSize(w); w.cd = 0; player.ammo[w.id] = WEAPONS[w.id].maxAmmo || 0; } }
+function refillAmmo(p = P()){ for (const w of p.weapons) if (w){ w.mag = magSize(w, p); w.cd = 0; p.ammo[w.id] = WEAPONS[w.id].maxAmmo || 0; } }
 // rarity: a RARITIES entry or 'random' (rolled with this city's odds); modifiers are random.
 function giveGun(id, rarity){
   ensureRun();
   if (rarity === 'random') rarity = rollRarity();
   const w = makeWeapon(id, rarity, rollMods(RARITY[rarity] ? RARITY[rarity].mods : 0));
-  if (!giveWeapon(w)) replaceWeapon(w);
-  w.mag = magSize(w); player.ammo[id] = WEAPONS[id].maxAmmo || 0; refreshGun();
+  const p = P();
+  if (!giveWeapon(p, w)) replaceWeapon(p, w);
+  w.mag = magSize(w, p); p.ammo[id] = WEAPONS[id].maxAmmo || 0; refreshGun(p);
   toast(`+ ${weaponTitle(w)}`, 'good');
 }
 // New modifiers for the held gun, same rarity.
 function rerollHeld(){
   ensureRun();
-  const w = curWeapon(); if (WEAPONS[w.id].kind || w.rarity === 'unique') return toast('Uniques have no modifiers');
-  w.mods = rollMods(RARITY[w.rarity].mods); w.mag = Math.min(w.mag, magSize(w));
+  const w = curWeapon(P()); if (WEAPONS[w.id].kind || w.rarity === 'unique') return toast('Uniques have no modifiers');
+  w.mods = rollMods(RARITY[w.rarity].mods); w.mag = Math.min(w.mag, magSize(w, P()));
 }
 // A ring of random weapon finds around you (with luck), to try the tooltip and pickups.
 function scatterWeapons(n, luck){
   ensureRun(); closeOverlays();
   for (let i=0;i<n;i++){
-    const a = i/n*Math.PI*2, x = player.pos.x + Math.sin(a)*2.6, z = player.pos.z + Math.cos(a)*2.6;
+    const a = i/n*Math.PI*2, x = P().pos.x + Math.sin(a)*2.6, z = P().pos.z + Math.cos(a)*2.6;
     const g = walkable(world.city.grid[Math.floor(z/TILE)*N + Math.floor(x/TILE)]);
-    spawnDrop('weapon', rollWeapon(luck), 0, g ? x : player.pos.x, g ? z : player.pos.z, !g);
+    spawnDrop('weapon', rollWeapon(luck, undefined, P()), 0, g ? x : P().pos.x, g ? z : P().pos.z, g ? null : P());
   }
 }
 function giveItem(id, fill){
   ensureRun();
-  const k = addItem(id, fill ? ITEMS[id].max : 1);
+  const k = addItem(P(), id, fill ? ITEMS[id].max : 1);
   if (!k) toast('Pack full', 'bad');
 }
 function spawnSome(type, mods, n, alert, rise){
@@ -129,7 +134,7 @@ function spawnSome(type, mods, n, alert, rise){
   dev.spawn = { type, mods };
   try {
     for (let i=0;i<n;i++){
-      const s = findSpawnNear(player.pos.x, player.pos.z, 5, 11); if (!s) continue;
+      const s = findSpawnNear(P().pos.x, P().pos.z, 5, 11); if (!s) continue;
       spawnZombieAt(s.x, s.z, false, alert, false, null, rise ? undefined : 0);
     }
   } finally { dev.spawn = null; }
@@ -150,7 +155,7 @@ function crystalAction(kind){
 }
 
 // ---------- Panel ----------
-let built = false, shownCity = null, readT = 0, frames = 0, fpsT0 = performance.now(), fps = 0;
+let built = false, shownCity = null, shownPlayers = 0, readT = 0, frames = 0, fpsT0 = performance.now(), fps = 0;
 const refs = {};
 const h = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
 function section(root, title, open = true){
@@ -201,12 +206,21 @@ function buildPanel(){
   check(r, 'clickTp', 'Click to teleport', 'Left click on the ground teleports you instead of shooting');
   pick(row(s), 'Move speed', 'speed', [0.5, 1, 1.5, 2, 3], v => v + '×');
   r = row(s);
-  btn(r, 'Heal / revive', heal); btn(r, 'Cure bleeding', () => { player.bleeding = false; });
-  btn(r, '+25 max HP', () => { player.maxHp += 25; player.hp += 25; });
+  btn(r, 'Heal / revive', heal); btn(r, 'Cure bleeding', () => { P().bleeding = false; });
+  btn(r, '+25 max HP', () => { P().maxHp += 25; P().hp += 25; });
   r = row(s);
-  btn(r, 'Hurt 25', () => { if (state.mode === 'play' && !dev.god){ player.hp = Math.max(1, player.hp - 25); } }, 'Leaves at least 1 HP; off in god mode');
-  btn(r, 'Bleed', () => { player.bleeding = true; });
-  btn(r, 'Die', () => { if (state.mode === 'play'){ player.hp = 0; die(); } });
+  btn(r, 'Hurt 25', () => { if (state.mode === 'play' && !dev.god){ P().hp = Math.max(1, P().hp - 25); } }, 'Leaves at least 1 HP; off in god mode');
+  btn(r, 'Bleed', () => { P().bleeding = true; });
+  btn(r, 'Die', () => { if (state.mode === 'play') killPlayer(P()); }, 'You turn into a zombie; with companions alive you spectate until the next city');
+
+  s = section(root, 'Players');
+  s.appendChild(h('small', 'dv-note', 'Companions stand in for other players until there’s networking: they follow you, shoot and heal themselves. Zombie numbers scale with the session.'));
+  r = row(s);
+  btn(r, '+ Companion', () => { ensureRun(); const p = addPlayer(); if (!p) return toast(`At most ${MAX_PLAYERS} players`); const m = P(); p.pos.copy(m.pos).add(new THREE.Vector3(0.8, 0, 0.8)); p.g.position.copy(p.pos); p.ctl.aim.copy(m.ctl.aim); updateFlow(); roster(); }, 'Adds a bot player next to you');
+  btn(r, '− Companion', () => { const p = players.slice().reverse().find(o => o !== P() && !o.remote); if (p) removePlayer(p); roster(); }, 'Removes the last companion (never someone playing on another machine)');
+  btn(r, 'Kill one', () => { const p = players.find(o => o !== P() && !o.dead); if (p && state.mode === 'play') killPlayer(p); }, 'A living companion turns into a zombie');
+  btn(r, 'Revive all', () => { for (const p of players) revivePlayer(p, p.maxHp); }, 'Everyone dead stands up again where they fell');
+  refs.players = row(s, 'dv-grid');
 
   s = section(root, 'City');
   r = row(s);
@@ -276,16 +290,17 @@ function buildPanel(){
   btn(r, 'Lucky ×6', () => scatterWeapons(6, 8), 'Same with armory-grade luck (more rares, legendaries and uniques)');
   r = row(s);
   btn(r, 'Refill gas pumps', () => { if (world.city) for (const l of world.city.landmarks) l.refueled = false; }, 'Every gas station can refuel the flamethrower again');
-  btn(r, 'Turn nearby', () => { for (const z of zombies) if (Math.hypot(z.pos.x - player.pos.x, z.pos.z - player.pos.z) < 8 && !(z.rise > 0)) turnZombie(z, WEAPONS.potion.turn); }, 'Zombies within 8 units turn on their own kind (Turncoat flask)');
-  btn(r, 'Freeze nearby', () => { for (const z of zombies) if (Math.hypot(z.pos.x - player.pos.x, z.pos.z - player.pos.z) < 8) freezeZombie(z, WEAPONS.cryo.freeze); }, 'Zombies within 8 units freeze solid (Cryo sprayer): any hit shatters them');
+  btn(r, 'Turn nearby', () => { for (const z of zombies) if (Math.hypot(z.pos.x - P().pos.x, z.pos.z - P().pos.z) < 8 && !(z.rise > 0)) turnZombie(z, WEAPONS.potion.turn); }, 'Zombies within 8 units turn on their own kind (Turncoat flask)');
+  btn(r, 'Freeze nearby', () => { for (const z of zombies) if (Math.hypot(z.pos.x - P().pos.x, z.pos.z - P().pos.z) < 8) freezeZombie(z, WEAPONS.cryo.freeze); }, 'Zombies within 8 units freeze solid (Cryo sprayer): any hit shatters them');
   r = row(s);
   btn(r, 'Refill ammo', () => { ensureRun(); refillAmmo(); });
-  btn(r, 'Fill pack', () => { ensureRun(); for (const id in ITEMS) addItem(id, Math.max(0, ITEMS[id].max - countItem(id))); }, 'Tops every item up to one full stack');
-  btn(r, 'Empty pack', () => { player.inv.fill(null); });
+  btn(r, 'Refill everyone', () => { ensureRun(); for (const p of players) refillAmmo(p); }, 'Your companions’ ammo too');
+  btn(r, 'Fill pack', () => { ensureRun(); for (const id in ITEMS) addItem(P(), id, Math.max(0, ITEMS[id].max - countItem(P(), id))); }, 'Tops every item up to one full stack');
+  btn(r, 'Empty pack', () => { P().inv.fill(null); });
 
   s = section(root, 'Upgrades', false);
   r = row(s, 'dv-grid');
-  for (const u of UPGRADES) btn(r, `${u.icon} ${u.name}`, () => { ensureRun(); u.apply(player); toast(u.name, 'good'); }, u.desc);
+  for (const u of UPGRADES) btn(r, `${u.icon} ${u.name}`, () => { ensureRun(); u.apply(P()); toast(u.name, 'good'); }, u.desc);
 
   s = section(root, 'World');
   r = row(s);
@@ -315,15 +330,22 @@ function syncPanel(){
     c.addEventListener('change', () => { c.blur(); if (c.checked) state.threatIntro[id] = state.level; else delete state.threatIntro[id]; mark(); });
     l.append(c, document.createTextNode(threatName(id))); box.appendChild(l);
   }
+  // Which player you control: the others become companions (bots).
+  const pr = refs.players; pr.innerHTML = '';
+  if (players.length > 1) players.forEach((p, i) => {
+    const b = btn(pr, `${i === state.me ? '● ' : ''}Play as ${p.name}${p.dead ? ' †' : ''}`, () => { if (p.remote) return toast(`${p.name} plays on another machine`); state.me = i; state.view = i; mouse.down = false; if (p.dead) spectate(1); }, 'Take control of this player');
+    b.style.color = p.css;
+  });
   refs.order.textContent = state.threatOrder.length ? 'Run order: ' + state.threatOrder.map((id, i) => `${i + 2} ${threatName(id).toLowerCase()}`).join(', ') : '';
 }
 function readout(){
   const c = world.city, cr = world.crystal; if (!c) return '';
-  const tx = Math.floor(player.pos.x/TILE), tz = Math.floor(player.pos.z/TILE), D = DISTRICTS[c.blocks[blockIndex(player.pos.x, player.pos.z)].district];
+  const tx = Math.floor(P().pos.x/TILE), tz = Math.floor(P().pos.z/TILE), D = DISTRICTS[c.blocks[blockIndex(P().pos.x, P().pos.z)].district];
   const crys = cr && cr.alive ? `Crystal ${Math.ceil(cr.hp)}/${cr.maxHp}${state.crystalFound ? '' : ' (hidden)'}` : state.phase === 'takeover' ? `Takeover ${fmtTime(Math.ceil(state.takeover))}` : 'Road open';
   return `${fps} fps · ${state.mode}${dev.timeScale !== 1 ? ` · time ${dev.timeScale}×` : ''}\n` +
     `City ${state.level} (${c.n}×${c.n}) · seed ${state.seed}\n` +
     `${zombies.length} zombies (${state.hordeAlive} takeover) · ${state.kills} kills\n` +
+    (players.length > 1 ? players.map(p => `${p.name}${p === P() ? '*' : ''} ${p.dead ? 'dead' : Math.ceil(p.hp) + 'hp'} ${p.kills}k`).join(' · ') + '\n' : '') +
     `Tile ${tx}, ${tz} · ${D.name} · ${crys}`;
 }
 
@@ -332,13 +354,13 @@ export function initDev(){ loadPrefs(); buildPanel(); }
 export function updateDev(dt){
   const now = performance.now(); frames++;
   if (now - fpsT0 >= 500){ fps = Math.round(frames*1000/(now - fpsT0)); frames = 0; fpsT0 = now; }
-  if (dev.ammo) refillAmmo();
-  if (dev.stamina){ player.stamina = 1; player.winded = false; }
-  if (dev.god) player.bleeding = false;
+  if (dev.ammo && players.length) refillAmmo();
+  if (dev.stamina){ P().stamina = 1; P().winded = false; }
+  if (dev.god) P().bleeding = false;
   if (camera.zoom !== dev.zoom){ camera.zoom = dev.zoom; camera.updateProjectionMatrix(); }
   if (cheating()) mark();
   if (!dev.open) return;
-  if (world.city !== shownCity) syncPanel();
+  if (world.city !== shownCity || players.length !== shownPlayers){ shownPlayers = players.length; syncPanel(); }
   readT -= dt;
   if (readT <= 0){ readT = 0.25; const t = readout(); if (refs.read.textContent !== t) refs.read.textContent = t; }
 }

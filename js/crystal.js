@@ -4,78 +4,85 @@
 import * as THREE from 'three';
 import { $, mr, fmtTime } from './utils.js';
 import { scene, camera, setTint } from './renderer.js';
-import { SH } from './assets.js';
 import { CRYSTAL, AI } from './threats.js';
 import { state, world, zombies, rings } from './state.js';
 import { reveal } from './grid.js';
-import { player } from './player.js';
+import { viewed, crowd } from './player.js';
 import { spawnZombieAt, findSpawnNear, alertZombie, alertNear } from './zombies.js';
-import { burst } from './fx.js';
-import { banner } from './hud.js';
+import { burst, addRing, shake } from './fx.js';
+import { bannerAll } from './hud.js';
+import { emit } from './host.js';
 import { sfx } from './audio.js';
 import { rechargeShards } from './uniques.js';
 
 export function foundCrystal(){
-  state.crystalFound = true;
-  reveal(world.city.crystalTile.x, world.city.crystalTile.z, 3);
-  banner('The Crystal', 'Shoot it to shatter it, then survive what comes');
+  crystalFx('found'); emit(['cr', 'found']);
+  bannerAll('The Crystal', 'Shoot it to shatter it, then survive what comes');
 }
 // Violet ring sweeping out from (x,z) to radius r1 over T s (animated with the other `rings`).
-function ring(x, y, z, r1, T, op, geo = SH.markGeo){
-  const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color:0xb07cff, transparent:true, opacity:op, depthWrite:false, side:THREE.DoubleSide }));
-  m.rotation.x = -Math.PI/2; m.position.set(x, y, z); scene.add(m);
-  rings.push({ mesh:m, t:0, T, r0:1, r1, op });
+function ring(x, y, z, r1, T, op, geo = 'mark', local){ addRing(geo, 0xb07cff, x, y, z, 1, r1, T, op, local); }
+// What the Crystal looks like after each step (the host's bursts, rings and sounds reach clients by
+// themselves; this is the rest, which clients run when the step's event arrives). 'tint' = join mid-takeover.
+export function crystalFx(kind){
+  const cr = world.crystal;
+  if (kind === 'found'){ state.crystalFound = true; reveal(world.city.crystalTile.x, world.city.crystalTile.z, 3); }
+  else if (kind === 'pulse'){ cr.pulsed = true; cr.flash = 0.5; screenWave(0.9, false); }
+  else if (kind === 'pulsed') cr.pulsed = true;
+  else if (kind === 'break' || kind === 'tint'){
+    cr.alive = false; cr.mesh.visible = false;
+    for (const s of cr.shards) s.visible = false;
+    cr.light.intensity = 0; world.mmDirty = true;
+    if (kind === 'break') screenWave(1.6, true); else tint.k = tint.target = 1;
+  } else if (kind === 'end' || kind === 'over'){
+    cr.alive = false; cr.mesh.visible = false; cr.light.intensity = 0;
+    for (const s of cr.shards) s.visible = false;
+    cr.beam.visible = false; cr.glow.visible = false;
+    if (kind === 'end'){ const v = viewed(); ring(v.pos.x, 0.14, v.pos.z, 30, 1.4, 0.5, 'blast', true); }
+    tint.target = 0;
+  }
 }
 // Called after every hit that leaves it standing; lashes out once per city.
 export function checkPulse(){
   const cr = world.crystal, C = CRYSTAL;
   if (cr.pulsed || state.level < C.pulseFrom || cr.hp > cr.maxHp*C.pulseAt) return;
   const { x, z } = cr.pos;
-  cr.pulsed = true; cr.flash = 0.5;
+  crystalFx('pulse'); emit(['cr', 'pulse']);
   alertNear(x, z, C.pulseR);
-  ring(x, 1.8, z, 26, 0.9, 0.8); ring(x, 0.14, z, C.pulseR*0.5, 1.4, 0.6, SH.blastRingGeo);
+  ring(x, 1.8, z, 26, 0.9, 0.8); ring(x, 0.14, z, C.pulseR*0.5, 1.4, 0.6, 'blast');
   burst(new THREE.Vector3(x, 2.1, z), 'crystal', 30, 8);
-  screenWave(0.9, false);
-  sfx.pulse(); state.shake = Math.max(state.shake, 0.5);
-  const [b, per, max] = C.pulseSpawn, n = Math.min(max, b + per*(state.level - C.pulseFrom));
+  sfx.pulse(); shake(0.5);
+  const [b, per, max] = C.pulseSpawn, n = Math.round(Math.min(max, b + per*(state.level - C.pulseFrom))*crowd(true));
   for (let i=0;i<n;i++){
     const s = findSpawnNear(x, z, C.pulseDist[0], C.pulseDist[1]); if (!s) continue;
     spawnZombieAt(s.x, s.z, false, true, false, null, mr(1.1, 2.4));  // staggered: they keep coming up
   }
-  banner('The Crystal fights back', 'It pulled the dead up out of the ground', 2400);
+  bannerAll('The Crystal fights back', 'It pulled the dead up out of the ground', 2400);
 }
 export function breakCrystal(){
   const cr = world.crystal, C = CRYSTAL, { x, z } = cr.pos;
-  cr.alive = false;
-  cr.mesh.visible = false;
-  for (const s of cr.shards) s.visible = false;
-  cr.light.intensity = 0;
-  world.mmDirty = true;
+  crystalFx('break'); emit(['cr', 'break']);
   burst(cr.pos.clone(), 'crystal', 40, 7);
-  sfx.shatter(); setTimeout(sfx.roar, 500);
+  sfx.shatter(); setTimeout(() => sfx.roar(), 500);
   rechargeShards();  // a Crystal shard in your pack drinks from it
-  state.shake = 0.8;
-  ring(x, 1.8, z, 40, 1.2, 0.8); ring(x, 0.14, z, 110, 2.4, 0.7, SH.blastRingGeo);
-  screenWave(1.6, true);
+  shake(0.8);
+  ring(x, 1.8, z, 40, 1.2, 0.8); ring(x, 0.14, z, 110, 2.4, 0.7, 'blast');
   // Its beam stays up, throbbing, until the takeover ends.
-  Object.assign(state, { phase:'takeover', takeover:C.takeover, surge:C.surge[0] + C.surge[1]*(state.level-1), spawnTimer:2.2, tick:10 });
-  // Everything nearby joins the takeover and hunts you until it ends.
+  Object.assign(state, { phase:'takeover', takeover:C.takeover, surge:Math.round((C.surge[0] + C.surge[1]*(state.level-1))*crowd(true)), spawnTimer:2.2, tick:10 });
+  // Everything nearby joins the takeover and hunts the players until it ends.
   for (const o of zombies) if (Math.hypot(o.pos.x - x, o.pos.z - z) < C.breakR) alertZombie(o, true);
-  banner('The Crystal takes the city', `Survive ${fmtTime(C.takeover)} until its hold breaks`);
+  bannerAll('The Crystal takes the city', `Survive ${fmtTime(C.takeover)} until its hold breaks`);
 }
 // Clock ran out: the light drains away and the takeover's dead become ordinary ones.
 export function endTakeover(){
   const cr = world.crystal;
-  cr.beam.visible = false; cr.glow.visible = false;
+  crystalFx('end'); emit(['cr', 'end']);
   burst(new THREE.Vector3(cr.pos.x, 1.5, cr.pos.z), 'crystal', 30, 6);
-  ring(player.pos.x, 0.14, player.pos.z, 30, 1.4, 0.5, SH.blastRingGeo);
   // The takeover's dead stay where they are and become ordinary residents there.
   for (const z of zombies){
     if (z.tracked && !z.guard){ z.hx = z.pos.x; z.hz = z.pos.z; z.leash = AI.leash; }
     z.horde = false; z.tracked = false;
   }
   state.hordeAlive = 0;
-  tint.target = 0;
 }
 
 // ---------- Takeover look ----------
@@ -107,8 +114,9 @@ export function animateCrystal(dt, t){
     cr.beam.material.opacity = 0.24 + Math.sin(t*5)*0.08;
     cr.glow.material.opacity = 0.35 + Math.sin(t*5)*0.12;
   }
-  if (state.mode === 'play' && state.phase === 'takeover' && Math.random() < dt*6)
-    burst(new THREE.Vector3(player.pos.x + mr(-14,14), mr(0.3,1.2), player.pos.z + mr(-14,14)), 'crystal', 1, 0.6);  // drifting motes
+  const v = viewed();
+  if (state.mode === 'play' && state.phase === 'takeover' && v && Math.random() < dt*6)
+    burst(new THREE.Vector3(v.pos.x + mr(-14,14), mr(0.3,1.2), v.pos.z + mr(-14,14)), 'crystal', 1, 0.6, true);  // drifting motes
 
   tint.k += Math.sign(tint.target - tint.k)*Math.min(Math.abs(tint.target - tint.k), dt/(tint.target > tint.k ? 1.4 : 3));
   setTint(tint.k);
