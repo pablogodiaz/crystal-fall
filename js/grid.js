@@ -1,11 +1,10 @@
 // ---------- Grid queries: collision, flow field, fog of war ----------
 import { TILE, N, walkable, seeThrough, DIRS8 } from './config.js';
 import { clamp } from './utils.js';
-import { world } from './state.js';
-import { player } from './player.js';
+import { world, players } from './state.js';
 
-// BFS distance (in tiles) from the player's tile; -1 = unreachable. Zombies hunting you descend it.
-export const distField = new Int16Array(N*N);
+// Each player has its own BFS distance field p.dist (in tiles from their tile; -1 = unreachable),
+// refreshed by updateFlow(). Zombies hunting a player descend that player's field.
 const bfsQueue = new Int32Array(N*N);
 
 export function isBlockedTile(tx,tz){
@@ -56,7 +55,9 @@ function bfs(field, sx, sz){
     }
   }
 }
-export function updateFlow(){ bfs(distField, Math.floor(player.pos.x/TILE), Math.floor(player.pos.z/TILE)); }
+export function updateFlow(){ for (const p of players) if (!p.dead) bfs(p.dist, Math.floor(p.pos.x/TILE), Math.floor(p.pos.z/TILE)); }
+// True if a living player can walk to tile index id (spawns only go where someone could meet them).
+export function reachable(id){ for (const p of players) if (!p.dead && p.dist[id] >= 0) return true; return false; }
 // Flow fields toward other tiles (a noise, where a zombie lost you, its home), shared by every
 // zombie headed to the same tile. Least recently used ones are dropped; callers keep a reference,
 // so a dropped field is never reused for another tile. Cleared for every new city / grid change.

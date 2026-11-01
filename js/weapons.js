@@ -6,14 +6,13 @@
 import { WEAPONS, GUNS, UNIQUES, RARITY, WMODS, WEAPON_ODDS, CRIT } from './items.js';
 import { mr, mpick } from './utils.js';
 import { state } from './state.js';
-import { player } from './player.js';
 
 export const RARITIES = ['common','uncommon','rare','legendary'];
 let uid = 0;
 export function makeWeapon(id, rarity = 'common', mods = []){
   const u = !!WEAPONS[id].unique;
   const w = { id, rarity:u ? 'unique' : rarity, mods:u ? [] : mods, mag:0, uid:++uid, cd:0, idle:0 };
-  w.mag = weaponStats(w).mag;
+  w.mag = weaponStats(w, null).mag;
   return w;
 }
 // luck = extra cities' worth of rarity odds (armories, military crates, the gun shop).
@@ -35,17 +34,18 @@ export function rollMods(n){
   }
   return out;
 }
-// A weapon find. Sometimes a unique you don't carry yet; otherwise `prefer` (or any standard gun).
-export function rollWeapon(luck = 0, prefer){
-  const [b, per, max] = WEAPON_ODDS.unique, own = player.weapons.filter(Boolean).map(w => w.id);
+// A weapon find for player p. Sometimes a unique p doesn't carry yet; otherwise `prefer` (or any standard gun).
+export function rollWeapon(luck = 0, prefer, p){
+  const [b, per, max] = WEAPON_ODDS.unique, own = p ? p.weapons.filter(Boolean).map(w => w.id) : [];
   const fresh = UNIQUES.filter(u => !own.includes(u));
   if (fresh.length && Math.random() < Math.min(max, b + per*(state.level - 1))*(luck ? WEAPON_ODDS.luckUnique : 1)) return makeWeapon(mpick(fresh));
   const rarity = rollRarity(luck);
   return makeWeapon(prefer || mpick(GUNS), rarity, rollMods(RARITY[rarity].mods));
 }
-// Effective numbers for a weapon right now. Uniques only take damage (and fire-rate) upgrades.
-export function weaponStats(w){
-  const W = WEAPONS[w.id], p = player;
+// Effective numbers for a weapon in player p's hands (p's upgrades on top; null = no upgrades).
+// Uniques only take damage (and fire-rate) upgrades.
+export function weaponStats(w, p){
+  const W = WEAPONS[w.id];
   const S = { dmg:W.dmg, rate:W.rate, mag:W.mag, reload:W.reload, jitter:W.jitter, spread:W.spread, life:W.life, speed:W.speed,
     noise:W.noise, pierce:W.pierce, pellets:W.pellets, kb:1, free:0, waste:0, crit:0, jam:0 };
   for (const m of w.mods){
@@ -63,16 +63,17 @@ export function weaponStats(w){
       case 'crit': if (m.s > 0) S.crit = m.v; else S.jam = m.v; break;
     }
   }
+  if (!p) return S;
   S.dmg *= p.dmgMul;
   if (S.rate) S.rate *= p.fireMul;
   if (W.kind){ if (S.reload) S.reload *= p.reloadMul; return S; }
   S.mag = Math.max(1, Math.round(S.mag*p.magMul)); S.reload *= p.reloadMul; S.pellets += p.pellets; S.pierce += p.pierce;
   return S;
 }
-// Damage per second while firing (ignores reloads); null for uniques that don't shoot bullets.
-export function weaponDps(w){
+// Damage per second while firing for player p (ignores reloads); null for uniques that don't shoot bullets.
+export function weaponDps(w, p){
   if (WEAPONS[w.id].kind) return null;
-  const S = weaponStats(w);
+  const S = weaponStats(w, p);
   return S.dmg*S.pellets*(1 + S.crit*(CRIT - 1))/S.rate;
 }
 // "Rare Shotgun"; commons and uniques go by their plain name.

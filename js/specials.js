@@ -7,9 +7,9 @@ import { mr, mri } from './utils.js';
 import { scene } from './renderer.js';
 import { SH } from './assets.js';
 import { ZTYPES, ZMODS, THREAT_BASE, THREAT_POOL, SHUFFLE_INTRO, INTRO_FORCED, SPOT_RANGE } from './threats.js';
-import { state, zombies, spits, puddles, rings, dev } from './state.js';
+import { state, zombies, spits, puddles, rings, dev, players } from './state.js';
 import { isBlockedTile, lineOfSight } from './grid.js';
-import { player } from './player.js';
+import { viewed, crowd, cheats } from './player.js';
 import { spawnZombieAt, findSpawnNear, alertZombie, alertNear } from './zombies.js';
 import { hurtPlayer } from './combat.js';
 import { burst } from './fx.js';
@@ -53,41 +53,42 @@ export function rollThreat(guard, exclude){
   return { type, mods };
 }
 
-// Line of sight to the player, re-checked 5 times a second.
-function sees(z, dt, dist, range){
+// Line of sight to its player p (see updateZombies), re-checked 5 times a second.
+function sees(z, dt, dist, range, p){
   z.losT -= dt;
-  if (z.losT <= 0){ z.losT = 0.2; z.los = dist < range && lineOfSight(z.pos.x, z.pos.z, player.pos.x, player.pos.z); }
+  if (z.losT <= 0){ z.losT = 0.2; z.los = !!p && !(dev.ignored && cheats(p)) && dist < range && lineOfSight(z.pos.x, z.pos.z, p.pos.x, p.pos.z); }
   return z.los;
 }
 
 // ---------- Screamer ----------
 // Returns true while rooted in the wind-up. Killing it before the wind-up ends cancels the scream.
-export function updateScreamer(z, dt, dist){
+// p = the player it's working against (it screams about them).
+export function updateScreamer(z, dt, dist, p){
   const S = ZTYPES.screamer;
   if (z.windup > 0){
     z.windup -= dt;
-    if (z.windup <= 0) scream(z);
+    if (z.windup <= 0) scream(z, z.screamAt);
     return z.windup > 0;
   }
-  if (!z.screamed && sees(z, dt, dist, S.sight)){ z.windup = S.windup; alertZombie(z); z.windSnd = sfx.windup(); return true; }
+  if (!z.screamed && sees(z, dt, dist, S.sight, p)){ z.windup = S.windup; z.screamAt = p; alertZombie(z, false, p); z.windSnd = sfx.windup(); return true; }
   return false;
 }
-function scream(z){
+function scream(z, p){
   const S = ZTYPES.screamer;
   z.screamed = true; z.windup = 0; z.windSnd = null; resetPose(z);
-  alertNear(z.pos.x, z.pos.z, S.alertR);  // they all learn where you are
+  alertNear(z.pos.x, z.pos.z, S.alertR, p);  // they all learn where that player is
   const mat = new THREE.MeshBasicMaterial({ color:0xffd0d0, transparent:true, opacity:0.7, depthWrite:false, side:THREE.DoubleSide });
   const ring = new THREE.Mesh(SH.markGeo, mat); ring.rotation.x = -Math.PI/2; ring.position.set(z.pos.x, 1.6, z.pos.z);
   scene.add(ring); rings.push({ mesh:ring, t:0, T:0.6, r0:1, r1:15.4, op:0.7 });
   sfx.scream(); state.shake = Math.max(state.shake, 0.35);
   // During the takeover its spawns count as the takeover's (always alert, never despawn).
-  const horde = state.phase === 'takeover', n = mri(S.spawn[0], S.spawn[1]);
+  const horde = state.phase === 'takeover', n = Math.round(mri(S.spawn[0], S.spawn[1])*crowd(true));
   for (let i=0;i<n;i++){
     const s = findSpawnNear(z.pos.x, z.pos.z, S.spawnR[0], S.spawnR[1]); if (!s) continue;
     spawnZombieAt(s.x, s.z, horde, true, false, 'screamer');
     burst(new THREE.Vector3(s.x, 0.3, s.z), 'dust', 6, 2.5);
   }
-  toast('A screamer called more of them', 'bad');
+  if (Math.hypot(z.pos.x - viewed().pos.x, z.pos.z - viewed().pos.z) < 40) toast('A screamer called more of them', 'bad');
 }
 export function cancelScream(z){ if (z.windSnd){ z.windSnd(); z.windSnd = null; } z.windup = 0; resetPose(z); }
 function resetPose(z){
@@ -99,23 +100,24 @@ function resetPose(z){
 // ---------- Spitter ----------
 const HOLD = [0, 0, 0];
 // Returns [dirX, dirZ, speedMul] while it handles its own spacing, or null to chase normally.
-export function updateSpitter(z, dt, dist, dx, dz){
+// p = the player it's working against (dx/dz/dist toward them).
+export function updateSpitter(z, dt, dist, dx, dz, p){
   const S = ZTYPES.spitter;
-  if (!z.alert) return null;
-  const los = sees(z, dt, dist, S.sight);
+  if (!z.alert || !p) return null;
+  const los = sees(z, dt, dist, S.sight, p);
   z.spitCd -= dt;
-  if (z.spitT > 0){ z.spitT -= dt; if (z.spitT <= 0) lob(z); return HOLD; }
-  if (los && z.spitCd <= 0 && dist > 2.5 && dist < S.range[1] + 1){ z.spitT = S.windup; return HOLD; }
+  if (z.spitT > 0){ z.spitT -= dt; if (z.spitT <= 0) lob(z, z.spitAt || p); return HOLD; }
+  if (los && z.spitCd <= 0 && dist > 2.5 && dist < S.range[1] + 1){ z.spitT = S.windup; z.spitAt = p; return HOLD; }
   if (!los || dist > S.range[1]) return null;
   if (dist < S.range[0]) return [-dx/dist, -dz/dist, S.backSpeed];
   if (Math.random() < dt*0.4) z.side = -z.side;
   return [-dz/dist*z.side, dx/dist*z.side, 0.35];  // in range: sidestep
 }
-function lob(z){
+function lob(z, p){
   const S = ZTYPES.spitter, T = mr(S.flight[0], S.flight[1]);
   z.spitCd = mr(S.cooldown[0], S.cooldown[1]);
-  let ex = player.pos.x + player.vel.x*T*S.lead + mr(-S.spread, S.spread), ez = player.pos.z + player.vel.z*T*S.lead + mr(-S.spread, S.spread);
-  if (isBlockedTile(Math.floor(ex/TILE), Math.floor(ez/TILE))){ ex = player.pos.x; ez = player.pos.z; }
+  let ex = p.pos.x + p.vel.x*T*S.lead + mr(-S.spread, S.spread), ez = p.pos.z + p.vel.z*T*S.lead + mr(-S.spread, S.spread);
+  if (isBlockedTile(Math.floor(ex/TILE), Math.floor(ez/TILE))){ ex = p.pos.x; ez = p.pos.z; }
   const g = new THREE.Group(); scene.add(g);
   const ball = new THREE.Mesh(SH.acidGeo, SH.acidMat);
   const ring = new THREE.Mesh(SH.markGeo, SH.markMat), fill = new THREE.Mesh(SH.fireGeo, SH.markFillMat);
@@ -169,7 +171,10 @@ export function updateSpecials(dt){
     if (Math.random() < dt*6) burst(new THREE.Vector3(h.x + mr(-1,1), 0.15, h.z + mr(-1,1)), 'acid', 1, 0.5);
     if (h.tick <= 0){
       h.tick = 0.25;
-      if (Math.hypot(player.pos.x - h.x, player.pos.z - h.z) < S.puddleR + player.radius*0.5){ hurtPlayer(S.puddleDps*0.25, null); if (state.mode !== 'play') return; }
+      for (const p of players){
+        if (p.dead || Math.hypot(p.pos.x - h.x, p.pos.z - h.z) >= S.puddleR + p.radius*0.5) continue;
+        hurtPlayer(p, S.puddleDps*0.25, null); if (state.mode !== 'play') return;
+      }
     }
     if (h.t <= 0){ scene.remove(h.mesh); puddles.splice(i,1); }
   }
@@ -179,10 +184,11 @@ export function updateSpecials(dt){
     r.mesh.scale.setScalar(r.r0 + (r.r1 - r.r0)*(1 - (1-k)**3)); r.mesh.material.opacity = r.op*(1 - k*k);
     if (r.t >= r.T){ scene.remove(r.mesh); r.mesh.material.dispose(); rings.splice(i,1); }
   }
-  // "New threat" banner the first time each type/modifier with a tip comes near.
+  // "New threat" banner the first time each type/modifier with a tip comes near the player being watched.
   spotT -= dt; if (spotT > 0) return; spotT = 0.25;
+  const v = viewed();
   for (const z of zombies){
-    if (Math.hypot(z.pos.x - player.pos.x, z.pos.z - player.pos.z) > SPOT_RANGE) continue;
+    if (Math.hypot(z.pos.x - v.pos.x, z.pos.z - v.pos.z) > SPOT_RANGE) continue;
     for (const id of [z.type, ...Object.keys(z.mods)]){
       const def = ZTYPES[id] || ZMODS[id];
       if (!def.tip || state.seenThreats.has(id)) continue;

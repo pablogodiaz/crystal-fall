@@ -46,6 +46,7 @@
     <svg viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="18" class="track"/><circle cx="22" cy="22" r="18" class="prog" id="interactRing"/></svg>
     <div class="label"><kbd>E</kbd><span id="interactLabel"></span></div>
   </div>
+  <div id="spectate" class="hidden"><span id="spectateText"></span></div>
   <div id="hint">Hold E to search. F melee, Q swaps guns, G drops one, hold right click to aim a throw (wheel picks), C crafts. 1–8 use items. Hold Tab for the map.</div>
 </div>
 
@@ -100,12 +101,13 @@
     <div class="statline" id="clearStats"></div>
     <p class="lead" style="margin-bottom:0">Pick one upgrade for the road ahead. You also recover 40% of your health.</p>
     <div class="cards" id="upgradeCards"></div>
+    <p class="lead" id="upgradeNote" aria-live="polite"></p>
   </div>
 </div>
 
 <div class="screen hidden" id="deathScreen">
   <div class="card">
-    <h2 class="title display" style="font-size:64px">You didn’t make it</h2>
+    <h2 class="title display" style="font-size:64px" id="deathTitle">You didn’t make it</h2>
     <div class="statline" id="deathStats"></div>
     <div class="row"><button class="btn" id="retryBtn">Start a new run</button></div>
     <div class="best" id="deathBest"></div>

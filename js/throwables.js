@@ -6,9 +6,9 @@ import { TILE } from './config.js';
 import { mr } from './utils.js';
 import { scene, fxLight } from './renderer.js';
 import { SH } from './assets.js';
-import { state, world, zombies, throwns, hazards } from './state.js';
+import { state, world, zombies, throwns, hazards, players } from './state.js';
 import { isBlockedTile } from './grid.js';
-import { player, aimPoint } from './player.js';
+import { me } from './player.js';
 import { damageZombie, stunZombie, makeNoise } from './zombies.js';
 import { hurtPlayer, hitCrystal, CRYSTAL_R } from './combat.js';
 import { selectedThrowable, countItem, curWeapon } from './inventory.js';
@@ -20,29 +20,29 @@ import { sfx } from './audio.js';
 const FIRE_R = 2.6, FIRE_TIME = 6, FIRE_DPS = 2.4, BOMB_FUSE = 3.5, BOMB_R = 6, STUN_TIME = 2.5, LURE_R = 32;
 let flash = 0;
 
-// Flight path of a throw toward the cursor: max 13 units, landing short of the first wall in the way.
-// T = flight time; arcY(k, T) = height at progress k. Shared by the throw and the aim preview.
-export function throwPath(){
-  const px = player.pos.x, pz = player.pos.z;
-  let dx = aimPoint.x - px, dz = aimPoint.z - pz, d = Math.hypot(dx,dz);
-  if (d < 0.5){ dx = Math.sin(player.angle); dz = Math.cos(player.angle); d = 1; }
+// Flight path of player p's throw toward their aim point: max 13 units, landing short of the first wall
+// in the way. T = flight time; arcY(k, T) = height at progress k. Shared by the throw and the aim preview.
+export function throwPath(p){
+  const px = p.pos.x, pz = p.pos.z;
+  let dx = p.ctl.aim.x - px, dz = p.ctl.aim.z - pz, d = Math.hypot(dx,dz);
+  if (d < 0.5){ dx = Math.sin(p.angle); dz = Math.cos(p.angle); d = 1; }
   const ux = dx/d, uz = dz/d, max = Math.min(13, Math.max(2, d));
   let land = 0;
   for (let s=0.5;s<=max;s+=0.25){ if (isBlockedTile(Math.floor((px+ux*s)/TILE), Math.floor((pz+uz*s)/TILE))) break; land = s; }
   return { sx:px, sz:pz, ex:px + ux*land, ez:pz + uz*land, T:0.3 + land/24 };
 }
 const arcY = (k, T) => 1.3*(1-k) + Math.sin(k*Math.PI)*(1 + T*3) + 0.12;
-export function throwItem(id){
-  const p = throwPath();
+export function throwItem(p, id){
+  const path = throwPath(p);
   const m = id === 'potion' ? new THREE.Mesh(SH.flaskGeo, SH.flaskMat) : new THREE.Mesh(id === 'molotov' ? SH.bottleGeo : SH.pipeGeo, id === 'molotov' ? SH.bottleMat : SH.pipeMat);
-  m.position.set(p.sx, 1.3, p.sz); scene.add(m);
-  throwns.push(Object.assign({ id, mesh:m, t:0 }, p));
+  m.position.set(path.sx, 1.3, path.sz); scene.add(m);
+  throwns.push(Object.assign({ id, mesh:m, t:0, by:p }, path));
   sfx.throw();
   return true;
 }
 
 // The Turncoat flask (a unique weapon) flies like a throwable; it splashes in uniques.js.
-export const throwPotion = () => throwItem('potion');
+export const throwPotion = p => throwItem(p, 'potion');
 
 // ---------- Aim preview (hold right click) ----------
 // Outline of the area the throwable will affect (fire / blast radius) plus a dotted flight arc.
@@ -64,16 +64,17 @@ function buildPreview(){
   scene.add(g);
   return { g, ring, fill, center, dots, mat, fillMat };
 }
-// Called every frame in play: shows the preview while player.aiming, hides it otherwise.
+// Called every frame: shows the preview while the player you control is aiming, hides it otherwise.
 export function updateThrowPreview(){
-  let id = player.aiming && state.mode === 'play' ? selectedThrowable() : null;
-  if (player.aiming && !countItem(id)){ player.aiming = false; id = null; }
-  const w = state.mode === 'play' && player.weapons && curWeapon();
+  const pl = me(), play = state.mode === 'play' && pl && !pl.dead;
+  let id = pl && pl.aiming && play ? selectedThrowable(pl) : null;
+  if (pl && pl.aiming && !countItem(pl, id)){ pl.aiming = false; id = null; }
+  const w = play && curWeapon(pl);
   if (!id && w && w.id === 'potion' && w.cd <= 0) id = 'potion';
   if (!id && w && w.id === 'gravity' && w.mag >= 1) id = 'gravity';
   if (!id){ if (preview) preview.g.visible = false; return; }
   preview = preview || buildPreview();
-  const p = throwPath(), P = PREVIEW[id];
+  const p = throwPath(pl), P = PREVIEW[id];
   preview.mat.color.setHex(P.color); preview.fillMat.color.setHex(P.color);
   for (const o of [preview.ring, preview.fill]){ o.position.set(p.ex, 0.13, p.ez); o.scale.setScalar(P.r); }
   preview.center.position.set(p.ex, 0.13, p.ez);
@@ -85,11 +86,11 @@ export function updateThrowPreview(){
 }
 function land(o){
   const x = o.ex, z = o.ez;
-  if (o.id === 'potion'){ burst(new THREE.Vector3(x, 0.4, z), 'brew', 6, 2); splashPotion(x, z); }
+  if (o.id === 'potion'){ burst(new THREE.Vector3(x, 0.4, z), 'brew', 6, 2); splashPotion(o.by, x, z); }
   else if (o.id === 'molotov'){
     const m = new THREE.Mesh(SH.fireGeo, SH.fireMat); m.rotation.x = -Math.PI/2; m.position.set(x, 0.12, z); m.scale.setScalar(FIRE_R);  // above block slabs (top at 0.08) and decals
     scene.add(m);
-    hazards.push({ kind:'fire', x, z, mesh:m, t:FIRE_TIME, tick:0 });
+    hazards.push({ kind:'fire', x, z, mesh:m, t:FIRE_TIME, tick:0, by:o.by });
     burst(new THREE.Vector3(x, 0.5, z), 'fire', 16, 4); burst(new THREE.Vector3(x, 0.5, z), 'spark', 8, 4);
     sfx.ignite(); makeNoise(x, z, 14);
   } else {
@@ -102,15 +103,17 @@ function land(o){
     makeNoise(x, z, LURE_R, true);
   }
 }
-// Blast at (x,z): zombies take zDmg (scaled by city) and the player pDmg, both falling off with distance.
+// Blast at (x,z): zombies take zDmg (scaled by city) and players pDmg, both falling off with distance.
 export function explosion(x, z, R, zDmg, pDmg, noise){
   const lv = 1 + 0.3*(state.level-1);
   for (const o of zombies.slice()){
     const dx = o.pos.x - x, dz = o.pos.z - z, d = Math.hypot(dx,dz);
     if (d < R) damageZombie(o, zDmg*lv*(1 - d/(R*1.25)), dx/(d||1)*2.5, dz/(d||1)*2.5, 'blast');
   }
-  const pd = Math.hypot(player.pos.x - x, player.pos.z - z);
-  if (pd < R) hurtPlayer(pDmg*(1 - pd/(R*1.1)), null);
+  for (const p of players){
+    const pd = Math.hypot(p.pos.x - x, p.pos.z - z);
+    if (!p.dead && pd < R) hurtPlayer(p, pDmg*(1 - pd/(R*1.1)), null);
+  }
   const p = new THREE.Vector3(x, 0.6, z);
   burst(p, 'fire', 24, 8); burst(p, 'spark', 16, 9); burst(p, 'dust', 16, 6);
   shockwave(x, z, R, 0xff6a1a); addDecal(x, z, R*0.75, SH.scorchMat);
@@ -154,10 +157,10 @@ export function updateThrowables(dt){
       if (h.tick <= 0){
         h.tick = 0.25;
         const dmg = FIRE_DPS*0.25*(1 + 0.3*(state.level-1));
-        for (const z of zombies.slice()) if (Math.hypot(z.pos.x - h.x, z.pos.z - h.z) < FIRE_R + z.r*0.5) damageZombie(z, dmg, 0, 0, 'fire');
+        for (const z of zombies.slice()) if (Math.hypot(z.pos.x - h.x, z.pos.z - h.z) < FIRE_R + z.r*0.5) damageZombie(z, dmg, 0, 0, 'fire', h.by);
         const cr = world.crystal;
         if (cr && cr.alive && Math.hypot(cr.pos.x - h.x, cr.pos.z - h.z) < FIRE_R + CRYSTAL_R) hitCrystal(dmg);
-        if (Math.hypot(player.pos.x - h.x, player.pos.z - h.z) < FIRE_R) hurtPlayer(2, null);
+        for (const p of players) if (!p.dead && Math.hypot(p.pos.x - h.x, p.pos.z - h.z) < FIRE_R) hurtPlayer(p, 2, null);
         if (state.mode !== 'play') return;
       }
       if (h.t <= 0){ scene.remove(h.mesh); hazards.splice(i,1); }

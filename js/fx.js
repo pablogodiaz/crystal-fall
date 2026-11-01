@@ -5,8 +5,8 @@ import { TILE, N, T } from './config.js';
 import { mr } from './utils.js';
 import { scene, camera } from './renderer.js';
 import { SH } from './assets.js';
-import { world, particles, decals, pickups, rings } from './state.js';
-import { player } from './player.js';
+import { world, particles, decals, pickups, rings, players } from './state.js';
+import { viewed } from './player.js';
 import { sfx } from './audio.js';
 import { floatText } from './hud.js';
 import { freeSpot } from './loot.js';
@@ -63,10 +63,11 @@ export function updatePickups(dt){
     const p = pickups[i]; p.life -= dt; p.t += dt;
     p.c.rotation.y += dt*2.2; p.c.position.y = 0.8 + Math.sin(p.t*3)*0.12;
     p.g.visible = p.life > 4 || Math.floor(p.t*6)%2 === 0;
-    const d = Math.hypot(p.g.position.x - player.pos.x, p.g.position.z - player.pos.z);
-    if (d < 1.3 && player.hp < player.maxHp){
-      const k = Math.ceil(Math.min(20, player.maxHp - player.hp));
-      player.hp = Math.min(player.maxHp, player.hp + 20); sfx.pickup(); floatText(`+${k} health`, 'good');
+    // The first hurt player to step on it gets it.
+    const pl = players.find(o => !o.dead && o.hp < o.maxHp && Math.hypot(p.g.position.x - o.pos.x, p.g.position.z - o.pos.z) < 1.3);
+    if (pl){
+      const k = Math.ceil(Math.min(20, pl.maxHp - pl.hp));
+      pl.hp = Math.min(pl.maxHp, pl.hp + 20); sfx.pickup(); floatText(`+${k} health`, 'good', pl);
       burst(new THREE.Vector3(p.g.position.x, 1, p.g.position.z), 'heal', 8, 2);
       scene.remove(p.g); pickups.splice(i,1); continue;
     }
@@ -74,7 +75,7 @@ export function updatePickups(dt){
   }
 }
 
-// ---------- Building fade (keeps the player and their surroundings visible) ----------
+// ---------- Building fade (keeps the watched player and their surroundings visible) ----------
 // Rays run from the camera to the player and to sample points on a disc around them. A building
 // they hit fades out, but (apart from ones hiding the player) only if its center is on the camera
 // side of the player, so buildings beyond you stay solid. Opacity eases in and out.
@@ -96,13 +97,15 @@ function castFade(x, y, z, cameraSideOnly){
   for (const h of fadeRay.intersectObjects(world.buildingMeshes, false)){
     const o = h.object.userData.fadeKey || h.object, p = o.userData.center || o.position;
     if (o.userData.cut) continue;
-    if (!cameraSideOnly || (p.x - player.pos.x)*-camDir.x + (p.z - player.pos.z)*-camDir.z > 0) want.add(o);
+    if (!cameraSideOnly || (p.x - fadeAt.x)*-camDir.x + (p.z - fadeAt.z)*-camDir.z > 0) want.add(o);
   }
 }
+let fadeAt = null;
 export function updateFade(dt){
   want.clear();
   camera.getWorldDirection(camDir);
-  const px = player.pos.x, pz = player.pos.z;
+  fadeAt = viewed().pos;
+  const px = fadeAt.x, pz = fadeAt.z;
   castFade(px, 0.4, pz, false); castFade(px, 1.8, pz, false);
   for (const [ox,oz] of SAMPLES) castFade(px + ox, 0.5, pz + oz, true);
   for (const m of want) if (!faded.has(m)) faded.set(m, 1);
@@ -114,10 +117,10 @@ export function updateFade(dt){
 }
 
 // ---------- Walk-in landmarks ----------
-// While you're inside one, its roof lifts off and its walls sink to knee height (they still block).
+// While the watched player is inside one, its roof lifts off and its walls sink to knee height (they still block).
 export function updateInteriors(dt){
   if (!world.interiorAt) return;
-  const tx = Math.floor(player.pos.x/TILE), tz = Math.floor(player.pos.z/TILE);
+  const v = viewed().pos, tx = Math.floor(v.x/TILE), tz = Math.floor(v.z/TILE);
   const inside = tx >= 0 && tz >= 0 && tx < N && tz < N ? world.interiorAt[tz*N+tx] - 1 : -1;
   world.interiors.forEach((it, i) => {
     const want = i === inside ? 1 : 0;
