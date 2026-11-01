@@ -36,7 +36,7 @@ Client → host (via relay):
 
 | type | when | payload |
 |---|---|---|
-| `hello` | on connect | `{ name }` |
+| `hello` | on connect | `{ name, v }`: `v` = game version; the host answers a mismatch with `reject` and the client shows "Host runs a different version, reload" |
 | `ctl` | 30 Hz | `p.ctl` fields: `mx, mz, sprint, fire, use, aim:[x,z]`, plus `seq` |
 | `act` | on input | `{ a:'reload'\|'swap'\|'drop'\|'melee'\|'cycle'\|'use'\|'dropSlot'\|'aim'\|'throw'\|'cancelAim'\|'craft'\|'upgrade', arg }` |
 
@@ -54,9 +54,12 @@ Host → clients:
 
 1. **Relay server** (`server/serve.py`): static files + `/ws`, a connection registry, forward
    client → host and host → one/all clients. The first connection to send `host` becomes the host.
-   Log connects and disconnects.
+   Log connects and disconnects. Make it room-aware from the start (`/ws/<room>`, one room is
+   fine for now) and cap message size, so it ports to a public relay (see "Public hosting later").
 2. **Net module** (`js/net.js`): connect, send, receive, reconnect, and a `net` object on `state.js`
-   (`role: 'solo'|'host'|'client'`, `id`). `state.host = net.role !== 'client'`.
+   (`role: 'solo'|'host'|'client'`, `id`). `state.host = net.role !== 'client'`. Gameplay code only
+   sees `send(to, msg)`, `onMessage(from, msg)`, `onJoin(id)`, `onLeave(id)`; the WebSocket lives
+   behind that, so a Steam or WebRTC transport can replace it later. Build the URL from `location`.
 3. **Lobby UI** (`index.html` + `hud.js`): menu buttons **Host co-op** / **Join co-op**, a lobby card
    with the address to share, the list of connected players (name, colour) and, for the host,
    **Start run**. Name field remembered in `localStorage`.
@@ -121,6 +124,52 @@ Host → clients:
   across both.
 - Real LAN / Tailscale check with two machines before merging. Watch the bandwidth in DevTools
   (Network → WS) at City 6+ with four players.
+
+## Public hosting later
+
+Tailscale + `serve.py` is for playing with friends. If the game goes public, the host-authoritative
+design stays: only the transport and where the relay runs change. Options, in the order to consider them:
+
+1. **Public relay with room codes** (the next step). The game stays static (GitHub Pages, Cloudflare
+   Pages or itch.io); the same game-agnostic relay runs in the cloud, and the host gets a room code
+   (`KX4P`) to share. `net.js` connects to `wss://<relay>/ws/<room>` (Pages is `https://`, so the relay
+   needs TLS). Where:
+   - Cloudflare Workers + Durable Objects: one Durable Object per room holding its sockets, no
+     servers, edge-close to players, no egress fees. Relay rewritten in JS (same ~100 lines).
+   - A small VPS (Hetzner, DigitalOcean, OVH): `serve.py`'s relay nearly as is, behind Caddy for TLS;
+     generous included traffic.
+   - Fly.io / Render / Railway: easy container deploys, but check egress pricing: 80 KB/s × 3 clients
+     ≈ 0.9 GB per room-hour.
+   A relay also means the host uploads each snapshot once and the relay fans it out.
+2. **Steam** (if it becomes a product): wrap in Electron / NW.js / Tauri, use Steamworks (e.g.
+   `steamworks.js`): lobbies, friend invites, "Join game", and Steam Datagram Relay (free relayed P2P
+   with NAT traversal). The same messages go over Steam networking instead of a WebSocket; no servers
+   to host. $100 Steam Direct fee.
+3. **Discord Activities:** the web build inside a Discord voice call, made for playing with friends.
+   Still needs a relay (option 1) behind it, plus Discord's SDK, proxy and CSP rules.
+4. **WebRTC P2P:** rejected above for LAN/tailnet (mDNS), but it works on the public internet with a
+   signalling server and TURN for the ~10–20% of connections that can't go direct (Cloudflare TURN,
+   metered.ca, coturn). Near-zero server cost and unreliable channels suit snapshots, but the host
+   uploads to every client and there are two services to run. Only if relay bandwidth costs hurt.
+5. **Dedicated servers** (Edgegap, AWS GameLift, Rivet, Colyseus Cloud, Nakama, Agones): the
+   simulation runs server-side, so no host advantage and runs survive the host leaving. Needs
+   `update()` running in Node without Three.js, a large refactor (gameplay code creates meshes and
+   effects inline), plus a paid server per run. Not worth it for 2–4 player PvE co-op without public
+   matchmaking.
+
+Not suitable: Firebase / Supabase Realtime / Ably / Pusher (priced and rate-limited for chat-like
+traffic, not 20 Hz snapshots). Check current pricing before choosing; the notes above are a starting point.
+
+Do these now so those doors stay open (already folded into the steps above):
+- **Transport behind `net.js`** (step 2): `send`/`onMessage`/`onJoin`/`onLeave` only.
+- **Version check in `hello`**: clients generate the city from the seed, so different builds make
+  different cities. Bump the version whenever `cityGen.js`, `config.js` layout data or the messages
+  change. A public site will have stale cached builds.
+- **Rooms in the relay** (step 1), plus caps on message size (and rate, before going public).
+- **Binary snapshots** (quantised positions, deltas) before City 6+ with four players goes over the
+  public internet; JSON is fine on a tailnet.
+- **The host leaving ends the run.** The non-deterministic simulation makes host migration
+  impractical; that's normal for listen-server co-op.
 
 ## Open questions
 
