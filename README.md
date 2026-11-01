@@ -36,6 +36,10 @@ Open http://localhost:8000, type your name, click **Host co-op**, wait for your 
 
 Open the host's address (from the list above), type your name and click **Join co-op**. Everyone has to open the game from the host's server, not from GitHub Pages: the server that hosts the game is also the one that passes the messages along. If your connection drops, a bot plays your character for 30 seconds. Join again with the same name to take it back.
 
+### Trying co-op on your own
+
+Open a second window (or another browser) at `http://localhost:8000/?bot` (or `?bot=Name`). It joins whoever hosts on this server by itself and plays its player like a companion: it follows you, shoots the nearest zombie, patches itself up, follows you into the exit and picks its own upgrades. Host from your main window and start the run. Keep the bot's window visible (side by side, or in another browser): browsers pause hidden tabs, and a paused bot just stands still.
+
 ### On the same network (LAN)
 
 Use the host's `LAN` address. If the page doesn't load, the host's firewall is probably blocking port 8000. Allow incoming connections for Python, or for that port, on private networks.

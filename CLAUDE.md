@@ -91,6 +91,12 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     machine from the host's result (`over` event).
   - **Lobby** (`lobby.js`): menu buttons Host co-op / Join co-op, a name field
     (`localStorage['crystal-fall-name']`), the lobby card (address to share, players, host's Start run).
+  - **Autopilot client** (`?bot` or `?bot=Name` in the URL, `net.bot`): the window joins whoever hosts on
+    the server (retrying every 3 s, rejoining after the host leaves) and plays its own player with the
+    companions' brain (`updateBot`, flow fields from `updateFlow` every 0.25 s; swaps and item use go
+    through `act`), picking upgrades at random. For trying co-op alone over the real network path.
+  - A remote player whose machine stops sending controls for 0.5 s (hidden tab, frozen window) stops
+    moving and firing on the host (`p.ctlAt` in `hostTick`).
 - **Map:** a city is `b` × `b` blocks of 5×5 tiles between 2-tile roads, `n = 7b + 4` tiles across
   (`city.b`, `city.n`). It grows with the run (`CITY_BLOCKS` in `config.js`): 10×10 blocks
   (74 tiles) in Cities 1–2, 12×12 (88) from City 3, 14×14 (102) from City 6, with a "The cities are
@@ -577,7 +583,7 @@ Headless, `addPlayer()` from `player.js` plus `startCity()` places everyone; `ki
 For networking, run `python3 server/serve.py` and open two windows side by side (background tabs
 throttle `requestAnimationFrame`): one clicks Host co-op, the other Join co-op. Check the client sees the
 same city and zombies, its moves, shots, throws, searches and item use happen on the host, upgrades, the
-next city, death/spectating and pause reach it, a third window can join mid-run, closing a client leaves a
+next city, death/spectating and pause reach it (or open the second window at `/?bot` and let it play), a third window can join mid-run, closing a client leaves a
 bot for 30 s, and closing the host sends clients back to the menu. Headless, open two Playwright contexts
 on the server; drive the host with `update(0.05)` plus `hostTick(0.05)` (host.js) in a loop.
 Watch the browser console for errors. A headless check with Playwright works if you serve the
