@@ -51,9 +51,10 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   - **Host only:** Esc/P pause (pauses everyone) and the dev tools (`` ` ``). With more than one player the
     workbench (C) doesn't pause: `p.crafting` freezes only your controls; losing window focus only
     pauses a solo game.
-  - **Upgrades:** each player gets their own three cards (`completeCity` deals different ones while there
-    are enough), the dead pick too; the next city starts when everyone has picked (`pickUpgrade`; players
-    this machine doesn't control pick at random, "Waiting for …" shows otherwise).
+  - **Upgrades:** each player gets their own three cards that fit their weapons (`completeCity` deals
+    different ones while there are enough), the dead pick too; each sees the result and presses Continue,
+    and the next city starts when everyone has (`pickUpgrade` then `readyUp`, `p.picked`/`p.ready`; players
+    this machine doesn't control pick at random (`autoChoice`), "Waiting for …" shows otherwise).
   - **HUD:** a coloured name chip (`P2 (watching)` while spectating), name + health tags over the other
     players (`updatePlayerTags`), other players as coloured dots on the maps. Toasts are only for you
     (`toast(msg, kind, p)` ignores other players'); pickup floaters only for the watched player
@@ -85,7 +86,7 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     `mirrorKill`, corpses play out locally), drops (`dropMesh`), health crosses, hazards, throws, acid,
     wells and orbs as **ghosts** (same meshes, no gameplay), ghost bullets (`addBullet(…, { ghost })`, fly
     and stop at walls/zombies in `updateBullets`), searched containers, landmarks, Crystal steps
-    (`crystalFx`), the road (`roadFx`), upgrades (`showUpgrades`), game over (`showGameOver`). Snapshots
+    (`crystalFx`), the road (`roadFx`), upgrades (`showUpgrades`, then `showUpgradeResult` from the host's `upgr`), game over (`showGameOver`). Snapshots
     move other players and zombies (smoothed, see below); `animateMirror` drives zombie looks from flags.
     Its own player is predicted with `movePlayer` and reported; knockback arrives as `kick`.
   - **Effects reach clients by themselves:** `burst`, `addDecal`, `addRing`/`shockwave`, `shake` (fx.js) and
@@ -142,7 +143,24 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
      ordinary ones, the barricade on the east wall disappears and a green exit marker appears.
   5. Every living player stands in the exit tile column for `EXIT_WAIT` (3 s, ticking; stepping out
      resets it, `updateExit`, `state.exitT`/`exitIn`, shown in the objective panel) → upgrade screen
-     (each player picks 1 of 3 random upgrades, the living heal 40% of max HP) → next city with a new seed.
+     (each player picks 1 of 3 upgrade cards, the living heal 40% of max HP) → next city with a new seed.
+- **Upgrades** (`UPGRADES` in `js/upgrades.js`; screen in `game.js`): gunsmithing cards, every one about
+  your weapons. Only cards that can change something you carry are dealt (`cardFits`/`targets`/`dealCards`).
+  Flow: pick a card → pick the weapon it works on (only the ones it fits) → Gunsmith only: pick the modifier
+  → result screen (what changed + the weapon's card) → Continue. A choice is `[card id, slot, modifier]`
+  (`validChoice`; clients send it with `act('upgrade', …)`, the host rolls it in `applyCard` and answers with
+  an `upgr` event). New modifiers are always random, good or bad by `WEAPON_ODDS.good`.
+  - **Gunsmith**: replace a modifier of your choice with a random one the weapon doesn't have (weapons
+    with modifiers, so never a Common). **Masterwork**: a gun one tier up plus that tier's extra random
+    modifier (not Legendary, not uniques). **Tinker**: reroll every modifier (kinds and strengths), same
+    count. **Calibrate**: same modifiers, reroll each strength (`modValue`). **Strip down**: remove a random
+    modifier; a gun drops one tier with it. **Wild card**: flip a random modifier that has a bad side, as
+    far up the other side's range as it was. **Prototype**: add a random modifier from the unique's own
+    `mods` list to a unique (up to 3). **Trade-in**: swap a gun for another standard gun type, same rarity,
+    new modifiers, some of its ammo. **Supply drop**: `p.supply`, a weapon find with one city's extra luck
+    tossed next to you at the next city start (`supplyDrops`). **Holster**: a third weapon slot.
+  - Rarity always matches the number of modifiers on a standard gun (Masterwork/Strip down move both).
+  - Transplant (moving a modifier from one weapon to another) was considered; not built.
 - **Game modes** (`state.mode`): `menu` (camera orbits a city behind the title card), `play`,
   `paused`, `craft` (workbench overlay, C), `upgrade`, `dead`. Simulation (`update`) only runs in
   `play`; cosmetic animation (`animateWorld`) runs always.
@@ -150,13 +168,12 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   and drains stamina (~3.6 s from full); it refills after a 1 s pause, 1.7× faster standing still.
   Running dry makes you **winded** (`player.winded`): no sprint and 0.8× walk until stamina is back
   to 40%. Tunables are the constants above `updatePlayer` in `player.js`. WASD is screen-relative on the isometric grid;
-  mouse aims on a plane at gun height (`readLocal` turns both into `p.ctl`). Upgrades (`js/upgrades.js`) mutate player stats directly;
-  weapon upgrades are modifiers (`dmgMul`, `fireMul`, `magMul`, `reloadMul`, `pellets`, `pierce`)
-  applied on top of every gun's base stats and rarity modifiers (`weaponStats` in `weapons.js`;
-  uniques only take `dmgMul`/`fireMul`).
+  mouse aims on a plane at gun height (`readLocal` turns both into `p.ctl`). There are no player stat
+  upgrades: a weapon's numbers are its base stats plus its own modifiers (`weaponStats(w)` in `weapons.js`).
 - **Weapons** (`WEAPONS` in `js/items.js`, instances in `js/weapons.js`): standard guns (`GUNS`:
-  pistol (start), shotgun, SMG, hunting rifle) and uniques (`UNIQUES`). Two weapon slots
-  (`player.weapons`, `player.cur`), Q swaps, G drops the held one (`dropWeapon`; you always keep one).
+  pistol (start), shotgun, SMG, hunting rifle) and uniques (`UNIQUES`). Two weapon slots, three with the
+  Holster upgrade (`player.weapons`, `player.cur`), Q cycles to the next one (`swapWeapon`/`nextSlot`;
+  `swapWeapon(p, i)` jumps to slot i), G drops the held one (`dropWeapon`; you always keep one).
   A slot holds a weapon *instance* `{ id, rarity, mods, mag, uid, cd, idle }` (`makeWeapon`), so two
   shotguns are two different guns. Ammo is finite: each gun type has its own reserve
   (`player.ammo[id]`, capped by `maxAmmo`; uniques without `find` have none); reloads draw from it.
@@ -167,15 +184,24 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   `AMMO_ODDS.unique` (25%); otherwise it goes to a standard gun you carry, so unique ammo stays rare.
   - **Rarity** (`RARITY`, `rollWeapon`/`rollRarity`/`rollMods`): every found standard gun is Common,
     Uncommon, Rare or Legendary with 0/1/2/3 random modifiers from `WMODS` (all different: damage,
-    fire rate, magazine, reload, accuracy, range, noise, knockback, ammo use, crits). Each modifier is
-    good or bad 50/50 (`WEAPON_ODDS.good`) with its own strength range, so an Uncommon can beat a
-    Legendary. `thrift` good = chance a shot is free, bad = chance it wastes a round; `crit` good =
+    fire rate, magazine, reload, accuracy, range, noise, knockback, ammo use, crits, plus the rarer
+    `pellets` (Spread shot: +1–2 bullets per shot) and `pierce` (Armor piercing: +1–2 zombies), which are
+    always good and whole numbers (`int`, weight `w`)). Each modifier is good or bad 50/50
+    (`WEAPON_ODDS.good`) with its own strength range, so an Uncommon can beat a Legendary. Rolls are
+    weighted by `WMODS[].w` (`rollMods(n, id, have)`, `rollMod`, `modValue`). `thrift` good = chance a shot is free, bad = chance it wastes a round; `crit` good =
     chance of a ×`CRIT` hit (orange bullet), bad = chance to jam (scaled down for fast guns).
     Rarity weights shift toward the rarer tiers each city; `luck` on a container (`LOOT[].luck`:
     lockers, police cars, army trucks, military crates, the armory; `LUCK_SHOP` for the gun shop)
     counts as extra cities. `weaponTitle` = "Rare Shotgun" (Commons and uniques: plain name).
     Colours: `--r-*` tokens in `style.css` (`data-r` attribute sets `--rc`), `RARITY[].hex`/`SH.rar*`
     in the world.
+  - **Unique modifiers:** uniques are found without modifiers; only the Prototype upgrade adds them, from
+    the unique's own `mods` list in `WEAPONS` (`modPool`/`freeMods`), where the shared kinds mean what
+    fits it: `mag` = fuel/coolant tank, charge, battery, shard capacity or ±1 gravity well (the code reads
+    `magSize(w)` as the cap, the HUD shows fuel/charge/battery as % of it), `rate` = railgun charge time
+    (`S.charge`) or flask brew time (`S.cooldown`), `range` = spray/bolt/beam/drone reach or the flask's
+    splash (`S.range`; also the throw preview), plus `dmg`, `reload`, `noise`, `kb`, `acc`, `pellets`,
+    `pierce` where they apply. `modText(m, id)` words them per weapon.
   - **Uniques** (`unique: true`, rolled instead of a gun with `WEAPON_ODDS.unique` odds, ×2 from
     lucky sources, only ones you don't carry; no modifiers, `kind` = how they fire, `fireUnique` in
     `js/uniques.js`): **flamethrower** (`flame`: hold to spray a fire cone, `mag` = fuel, ignites
@@ -194,8 +220,8 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     `r + 0.35` of the line, through the first wall it meets and stopped by the second, cause `'rail'`
     (ignores riot shields); slugs reload from a reserve like a gun), **cryo sprayer** (`cryo`: shares
     the flamethrower's `spray`/`puff` code; frost calls `chillZombie`; coolant reloads from canisters
-    found like ammo, rarely), **Crystal shard** (`shard`: each shot fans 3 shards (`pellets`, plus the
-    Spread shot upgrade) piercing 5 zombies; shards are bullets with `bounce`, reflected off walls
+    found like ammo, rarely), **Crystal shard** (`shard`: each shot fans 3 shards (`pellets`, more with a
+    `pellets` modifier) piercing 5 zombies; shards are bullets with `bounce`, reflected off walls
     in `updateBullets` (their hit set clears on each bounce); `rechargeShards` from `breakCrystal` is the
     only refill) and **guardian drone** (`drone`: click toggles `w.out`; flying, one shared
     `droneModel()` circles you and shoots the nearest visible zombie whatever you hold, draining its
@@ -216,7 +242,7 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     ground (1.8×, rarity ring, a light beam from Rare up).
   - **Tooltip / loadout** (`hud.js`): the nearest weapon on the ground within 3.2 units gets a card
     (`weaponCard`: stats, modifiers green/red, unique description, DPS against your held gun, how
-    to take it). Holding Tab shows both slots' cards bottom right of the full map (`#loadout`).
+    to take it). Holding Tab shows every slot's card bottom right of the full map (`#loadout`).
   - **Pickups:** weapons are never picked up by walking over them. Every weapon find is tossed out
     of the container onto the ground (with a sting sound and a "Found: …" floater) so it can't go
     unnoticed; hold E next to it to pick it up into a free slot, or to swap it for the one in your
@@ -224,7 +250,7 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
 - **Melee:** F any time (left click falls back to it when the held gun has no mag or reserve, or
   a unique can't fire: no fuel, brewing, recharging): a
   0.4 s butt-stroke animation (`poseMelee` in `player.js`); the blow lands 42% in (`meleeStrike`),
-  hitting zombies (and the Crystal) in a ±1 rad cone within ~1.7 units for 1 damage (× `dmgMul`)
+  hitting zombies (and the Crystal) in a ±1 rad cone within ~1.7 units for 1 damage
   plus knockback.
   0.55 s cooldown, small noise radius, blocks firing while swinging.
 - **Inventory:** 8 slots of stackable items (`player.inv`, `ITEMS`): bandage, medkit, energy drink
@@ -397,10 +423,13 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     `rollThreat`), hunting or not, rising or standing; kill all (no kills/drops; exploders still
     blow), calm all, alert all; freeze zombies (skips `updateZombies`).
   - Items & weapons: +1 of any item (shift-click: a full stack), any gun at a picked rarity (or
-    random) with random modifiers, any unique (both replace the held one when both slots are full)
-    with full ammo; reroll the held gun's modifiers; scatter 6 random weapon finds around you (normal
+    random) with random modifiers, any unique (both replace the held one when every slot is full)
+    with full ammo; reroll the held weapon's modifiers (a unique's too, once it has some); scatter 6 random weapon finds around you (normal
     or lucky odds, for the tooltip); refill ammo (also fuel, charge and the flask); refill every gas
-    pump; turn or freeze the zombies near you; fill/empty the pack. Upgrades: apply any.
+    pump; turn or freeze the zombies near you; fill/empty the pack.
+  - Upgrades: "Upgrade screen: every card" (clears the city and deals you every card that fits, to try the
+    whole pick → weapon → modifier → result flow), and each card as a button that plays it at once on
+    the held weapon (or the first it fits; a random modifier for Gunsmith).
   - World: time scale (stopped, 0.25–3×; >1 runs several capped `update` steps per frame), camera
     zoom, hide HUD.
   - Using anything sets `state.cheated` (a violet "Dev" chip under the stamina bar; the best run
@@ -466,7 +495,8 @@ js/
   hud.js          HUD bars/text, weapon panel, weapon cards (ground tooltip, Tab loadout), inventory bar,
                   interact prompt, floating pickup text, drop name tags, toasts, minimap + full map, district line,
                   craft screen, banner, showScreen()
-  upgrades.js     Upgrade definitions
+  upgrades.js     Upgrade cards (gunsmithing on your weapons): which fit, dealing, validating and
+                  playing a choice
   game.js         Game flow: startCity/newRun, placing/reviving/killing players, spectating, populate(),
                   takeover countdown + spawning, exit wait, per-player upgrades, game over, pause/craft,
                   resident respawns, update() and animateWorld()
@@ -581,7 +611,8 @@ tools) → try each unique (flamethrower + a gas pump refuel, flask, arc caster,
 railgun through a wall, cryo then shatter, shards bouncing + recharging on a Crystal break, drone) →
 lose a hunting zombie by breaking line of sight, check it walks home →
 shoot Crystal (pulse from City 3) → survive the takeover
-(set `state.takeover` low to skip ahead) → exit → pick upgrade → next
+(set `state.takeover` low to skip ahead) → exit → pick upgrade (card → weapon → modifier → result →
+Continue; "Upgrade screen: every card" in the dev tools deals them all) → next
 city (inventory and guns should carry over); also craft, throw, swap guns, pause and death.
 For co-op, add companions in the dev tools (Players): check zombies split their attention, a companion
 dying turns into a zombie, dying yourself spectates (click/Q cycles), the exit waits for everyone for 3 s,

@@ -27,11 +27,11 @@ export const canAct = p => state.mode === 'play' && !!p && !p.dead;
 export function tryReload(p){
   if (!canAct(p)) return;
   const w = curWeapon(p);
-  if ((WEAPONS[w.id].kind && !WEAPONS[w.id].reload) || p.reloadT > 0 || w.mag >= magSize(w, p) || p.ammo[w.id] <= 0) return;
-  p.reloadT = weaponStats(w, p).reload; sfxFor(p, 'reload');
+  if ((WEAPONS[w.id].kind && !WEAPONS[w.id].reload) || p.reloadT > 0 || w.mag >= magSize(w) || p.ammo[w.id] <= 0) return;
+  p.reloadT = weaponStats(w).reload; sfxFor(p, 'reload');
 }
 // Called every frame player p holds the trigger. Regular guns (and the bow) shoot bullets here using
-// the gun's own stats (weaponStats: rarity modifiers + p's upgrades); uniques with a `kind` fire in
+// the gun's own stats (weaponStats: base stats + its modifiers); uniques with a `kind` fire in
 // uniques.js. Anything that can't fire falls back to melee. Bullets remember their owner (kill credit).
 export function fire(p, dt){
   if (p.reloadT > 0 || p.fireCd > 0) return;
@@ -43,7 +43,7 @@ export function fire(p, dt){
     return;
   }
   if (w.mag <= 0){ if (p.ammo[w.id] > 0) tryReload(p); else dryMelee(p); return; }
-  const S = weaponStats(w, p);
+  const S = weaponStats(w);
   // A bad "crit" roll jams instead; fast guns jam less per shot so they don't stall every second.
   if (S.jam && Math.random() < S.jam*clamp(S.rate/0.5, 0.15, 1)){ p.fireCd = 0.7; sfxFor(p, 'jam'); floatText('Jammed!', 'dim', p); return; }
   if (!(S.free && Math.random() < S.free)) w.mag--;
@@ -107,7 +107,7 @@ function dryMelee(p){
 export const offAim = (p, dx, dz) => Math.abs(((Math.atan2(dx,dz) - p.angle) % (Math.PI*2) + Math.PI*3) % (Math.PI*2) - Math.PI);
 export function meleeStrike(p){
   makeNoise(p.pos.x, p.pos.z, 6);
-  const dmg = 1*p.dmgMul;
+  const dmg = 1;
   for (const z of zombies.slice()){
     const dx = z.pos.x - p.pos.x, dz = z.pos.z - p.pos.z, d = Math.hypot(dx,dz) || 0.001;
     if (d > 1.7 + z.r || z.turned > 0) continue;  // turned zombies are on your side

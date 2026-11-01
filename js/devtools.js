@@ -21,7 +21,7 @@ import { foundCrystal } from './crystal.js';
 import { updateFlow, reveal, blockIndex } from './grid.js';
 import { startCity, newRun, newSeed, openRoad, completeCity, killPlayer, revivePlayer, spectate } from './game.js';
 import { showScreen, toast } from './hud.js';
-import { UPGRADES } from './upgrades.js';
+import { UPGRADES, targets as cardTargets, cardFits, applyCard } from './upgrades.js';
 import { roster } from './host.js';
 
 const P = me;
@@ -98,22 +98,33 @@ function heal(){
   p.hp = p.maxHp; p.bleeding = false;
 }
 // Full mags, full reserves, full fuel and charge, the flask brewed.
-function refillAmmo(p = P()){ for (const w of p.weapons) if (w){ w.mag = magSize(w, p); w.cd = 0; p.ammo[w.id] = WEAPONS[w.id].maxAmmo || 0; } }
+function refillAmmo(p = P()){ for (const w of p.weapons) if (w){ w.mag = magSize(w); w.cd = 0; p.ammo[w.id] = WEAPONS[w.id].maxAmmo || 0; } }
 // rarity: a RARITIES entry or 'random' (rolled with this city's odds); modifiers are random.
 function giveGun(id, rarity){
   ensureRun();
   if (rarity === 'random') rarity = rollRarity();
-  const w = makeWeapon(id, rarity, rollMods(RARITY[rarity] ? RARITY[rarity].mods : 0));
+  const w = makeWeapon(id, rarity, rollMods(RARITY[rarity] ? RARITY[rarity].mods : 0, id));
   const p = P();
   if (!giveWeapon(p, w)) replaceWeapon(p, w);
-  w.mag = magSize(w, p); p.ammo[id] = WEAPONS[id].maxAmmo || 0; refreshGun(p);
+  w.mag = magSize(w); p.ammo[id] = WEAPONS[id].maxAmmo || 0; refreshGun(p);
   toast(`+ ${weaponTitle(w)}`, 'good');
 }
-// New modifiers for the held gun, same rarity.
+// New modifiers for the held weapon, as many as it has (a gun: as many as its rarity gives).
 function rerollHeld(){
   ensureRun();
-  const w = curWeapon(P()); if (WEAPONS[w.id].kind || w.rarity === 'unique') return toast('Uniques have no modifiers');
-  w.mods = rollMods(RARITY[w.rarity].mods); w.mag = Math.min(w.mag, magSize(w, P()));
+  const w = curWeapon(P()), n = w.rarity === 'unique' ? w.mods.length : RARITY[w.rarity].mods;
+  if (!n) return toast(w.rarity === 'unique' ? 'No modifiers yet: play Prototype on it (Upgrades)' : 'Commons have no modifiers');
+  w.mods = rollMods(n, w.id); w.mag = Math.min(w.mag, magSize(w));
+}
+// Plays upgrade card u right away: on the held weapon if it fits (else the first one it fits), a random
+// modifier for Gunsmith. Shows what it did.
+function playCard(u){
+  ensureRun();
+  const p = P();
+  if (!cardFits(p, u)) return toast(`${u.name} doesn’t fit any of your weapons`, 'bad');
+  let slot = -1, mod = -1;
+  if (u.on){ const t = cardTargets(p, u); slot = t.includes(p.cur) ? p.cur : t[0]; if (u.mod) mod = Math.floor(Math.random()*p.weapons[slot].mods.length); }
+  toast(`${u.icon} ${applyCard(p, [u.id, slot, mod]).text}`, 'good');
 }
 // A ring of random weapon finds around you (with luck), to try the tooltip and pickups.
 function scatterWeapons(n, luck){
@@ -299,8 +310,10 @@ function buildPanel(){
   btn(r, 'Empty pack', () => { P().inv.fill(null); });
 
   s = section(root, 'Upgrades', false);
+  r = row(s);
+  btn(r, 'Upgrade screen: every card', () => { ensureRun(); closeOverlays(); completeCity(true); }, 'Clear the city and get dealt every card that fits your weapons');
   r = row(s, 'dv-grid');
-  for (const u of UPGRADES) btn(r, `${u.icon} ${u.name}`, () => { ensureRun(); u.apply(P()); toast(u.name, 'good'); }, u.desc);
+  for (const u of UPGRADES) btn(r, `${u.icon} ${u.name}`, () => playCard(u), `${u.desc}. Plays it now on the held weapon (or the first it fits), random modifier for Gunsmith`);
 
   s = section(root, 'World');
   r = row(s);

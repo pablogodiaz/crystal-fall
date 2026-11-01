@@ -16,13 +16,15 @@ import { spawnZombieAt, spawnTurnedPlayer, findSpawnTile, findBlockTile, updateZ
 import { updateBullets } from './combat.js';
 import { burst, updateParticles, updatePickups } from './fx.js';
 import { foundCrystal, endTakeover, resetTakeover, animateCrystal } from './crystal.js';
-import { showScreen, banner, bannerAll, queueBanner, renderCraft, toast, toastAll } from './hud.js';
+import { showScreen, banner, bannerAll, queueBanner, renderCraft, toast, toastAll, floatText, weaponCard } from './hud.js';
 import { emit, emitTo } from './host.js';
 import { updateInteract, updateDrops, updateLandmarks, animateContainers } from './loot.js';
 import { updateThrowables, updateThrowPreview } from './throwables.js';
 import { setupThreats, shuffleThreats, updateSpecials } from './specials.js';
 import { updateUniques, resetUniques } from './uniques.js';
-import { UPGRADES } from './upgrades.js';
+import { card, targets, dealCards, validChoice, autoChoice, applyCard } from './upgrades.js';
+import { rollWeapon, weaponTitle, modText } from './weapons.js';
+import { spawnDrop } from './loot.js';
 import { initAudio, sfx } from './audio.js';
 
 export const newSeed = () => Math.floor(Math.random()*1e9);
@@ -41,7 +43,7 @@ export function startCity(level, seed){
   state.view = state.me; camFocus.copy(viewed().pos);
   Object.assign(state, { phase:'explore', crystalFound:false, takeover:0, surge:0, hordeAlive:0, cityKills:0, cityTime:0, spawnTimer:3, flowTimer:0, exitT:0, exitIn:0 });
   fxLight.intensity = 0; resetTakeover(); resetUniques();
-  if (!client){ updateFlow(); setupThreats(level); populate(city, level); }
+  if (!client){ updateFlow(); setupThreats(level); populate(city, level); supplyDrops(); }
   $('cityName').textContent = `City ${level}: ${city.name}`;
   if (state.mode !== 'play') return;
   banner(`City ${level}`, city.name);
@@ -64,6 +66,14 @@ function placePlayers(city){
     }
     p.pos.set((x+0.5)*TILE, 0, (z+0.5)*TILE); p.vel.set(0,0,0); p.g.position.copy(p.pos); p.tp++;
     p.lastTile = -1; p.crafting = false; p.aiming = false; p.interact.target = null; p.interact.p = 0;
+  }
+}
+// Supply drop upgrades: a weapon find (one city's luck better) tossed out next to each player who took one.
+function supplyDrops(){
+  for (const p of players) for (;p.supply > 0;p.supply--){
+    const w = rollWeapon(1, undefined, p);
+    spawnDrop('weapon', w, 0, p.pos.x + 2.2, p.pos.z + 2.2, null, { x:p.pos.x, z:p.pos.z });
+    floatText(`Supply drop: ${weaponTitle(w)}!`, 'r-' + w.rarity, p);
   }
 }
 export function revivePlayer(p, hp){
@@ -174,61 +184,108 @@ function updateExit(dt){
   if (Math.ceil(EXIT_WAIT - state.exitT) < before && state.exitT < EXIT_WAIT) sfx.tick(Math.ceil(EXIT_WAIT - state.exitT));
   if (state.exitT >= EXIT_WAIT) completeCity();
 }
-// Every player gets their own three upgrades to pick from (different cards for each while there are
-// enough to go round); the living heal 40%, the dead pick too and come back next city. The next city
-// starts once everyone has picked. Remote players get their cards on their own screen (host.js);
-// dev-tools companions pick at random right away.
-export function completeCity(){
+// Every player gets their own three upgrade cards (ones that fit their weapons, different for each while
+// there are enough to go round); the living heal 40%, the dead pick too and come back next city. A player
+// picks a card (and the weapon / modifier it works on), sees what came of it, then presses Continue; the
+// next city starts once everyone has. Remote players play theirs on their own screen (host.js);
+// companions pick at random right away. every = dev tools: deal you every card that fits.
+export function completeCity(every){
   state.mode = 'upgrade'; mouse.down = false;
-  let pool = [];
+  const taken = new Set();
   for (const p of players){
-    Object.assign(p, { crafting:false, aiming:false, picked:null });
+    Object.assign(p, { crafting:false, aiming:false, picked:false, ready:false });
     if (!p.dead) p.hp = Math.min(p.maxHp, p.hp + p.maxHp*0.4);
-    if (pool.length < 3) pool = UPGRADES.slice().sort(() => Math.random() - 0.5);
-    p.offer = pool.splice(0, 3);
+    p.offer = dealCards(p, taken, every && p === me()); for (const id of p.offer) taken.add(id);
   }
   emit(['mode', 'upgrade']);
   const P = me();
-  showUpgrades(P, P.offer.map(u => u.name), (P0, u) => pickUpgrade(P0, UPGRADES.find(o => o.name === u)));
+  showUpgrades(P, P.offer, c => { const r = pickUpgrade(P, c); if (r) showUpgradeResult(r); }, () => readyUp(P));
   for (const p of players){
-    if (p.remote) emitTo(p, ['upg', p.offer.map(u => u.name), state.cityKills, state.cityTime]);
-    else if (p !== P) pickUpgrade(p, mpick(p.offer));
+    if (p.remote) emitTo(p, ['upg', p.offer, state.cityKills, state.cityTime]);
+    else if (p !== P){ pickUpgrade(p, autoChoice(p)); readyUp(p); }
   }
 }
-// The upgrade screen for player P (this machine's) with the named offers; pick(P, name) takes one.
-export function showUpgrades(P, names, pick){
+// ---------- Upgrade screen ----------
+// For player P (this machine's): the cards, then the weapon a card works on, then (Gunsmith) the
+// modifier, then what came of it. choose(choice) plays the choice (here, or sent to the host, which
+// answers with showUpgradeResult); ready() is Continue.
+let upg = null;
+export function showUpgrades(P, ids, choose, ready){
   $('clearTitle').textContent = `${world.city.name} cleared`;
   $('clearStats').innerHTML = statHTML([[`City ${state.level}`, 'Cleared'], [state.cityKills, 'Kills here'], [fmtTime(state.cityTime), 'Time here'],
     P.dead ? ['Turned', `Back with ${REVIVE*100}% health`] : [Math.ceil(P.hp)+' / '+P.maxHp, 'Health']]);
   $('upgradeNote').textContent = '';
-  const wrap = $('upgradeCards'); wrap.innerHTML = '';
-  let done = false;
-  for (const name of names){
-    const u = UPGRADES.find(o => o.name === name), b = document.createElement('button'); b.className = 'upg';
-    b.innerHTML = `<div class="ic">${u.icon}</div><b>${u.name}</b><span>${u.desc}</span>`;
-    b.addEventListener('click', () => {
-      if (done) return;
-      done = true;
-      for (const c of wrap.children) c.disabled = c !== b;
-      b.classList.add('picked');
-      pick(P, name);
-    });
-    wrap.appendChild(b);
-  }
+  upg = { P, ids, choose, ready, busy:false };
+  upgCards();
   showScreen('upgradeScreen');
-  setTimeout(() => { const f = wrap.querySelector('button'); if (f) f.focus(); }, 50);
 }
-export function pickUpgrade(p, u){
-  if (state.mode !== 'upgrade' || p.picked || !u) return;
-  p.picked = u; u.apply(p); p.reloadT = 0;
-  const waiting = players.filter(o => !o.picked);
+function upgStep(lead, cls, back){
+  $('upgradeLead').innerHTML = lead;
+  const wrap = $('upgradeCards'); wrap.className = cls; wrap.innerHTML = '';
+  const nav = $('upgradeNav'); nav.innerHTML = '';
+  if (back) nav.appendChild(upgButton('btn ghost', '← Back', back));
+  setTimeout(() => { const f = wrap.querySelector('button:not(:disabled)'); if (f) f.focus(); }, 50);
+  return wrap;
+}
+function upgButton(cls, html, click){
+  const b = document.createElement('button'); b.className = cls; b.innerHTML = html;
+  b.addEventListener('click', () => { if (!upg.busy) click(b); });
+  return b;
+}
+function upgCards(){
+  const wrap = upgStep('Pick one upgrade for your weapons. You also recover 40% of your health.', 'cards');
+  for (const id of upg.ids){
+    const u = card(id);
+    wrap.appendChild(upgButton('upg', `<div class="ic">${u.icon}</div><b>${u.name}</b><span>${u.desc}</span>`, () => u.on ? upgWeapon(u) : upgPlay([u.id, -1, -1])));
+  }
+}
+function upgWeapon(u){
+  const P = upg.P, wrap = upgStep(`${u.icon} <b>${u.name}</b>: which weapon?`, 'cards', upgCards);
+  for (const i of targets(P, u)){
+    const w = P.weapons[i], tag = i === P.cur ? '<span class="wc-held">In hand</span>' : '';
+    wrap.appendChild(upgButton('upg-w', weaponCard(w, tag, '', false, P), () => u.mod ? upgMod(u, i) : upgPlay([u.id, i, -1])));
+  }
+}
+function upgMod(u, i){
+  const w = upg.P.weapons[i], wrap = upgStep(`${u.icon} <b>${u.name}</b>: which modifier of your ${weaponTitle(w)} gets replaced?`, 'cards', () => upgWeapon(u));
+  w.mods.forEach((m, k) => wrap.appendChild(upgButton('upg upg-mod ' + (m.s > 0 ? 'pos' : 'neg'), `<b>${m.s > 0 ? '▲' : '▼'} ${modText(m, w.id)}</b><span>Replace it with a random new one</span>`, () => upgPlay([u.id, i, k]))));
+}
+function upgPlay(c){
+  upg.busy = true;
+  upgStep(`${card(c[0]).icon} <b>${card(c[0]).name}</b>…`, 'cards');
+  upg.choose(c);
+}
+// What the picked card did: r = { icon, name, text, w } (from applyCard, here or from the host).
+export function showUpgradeResult(r){
+  if (!upg) return;
+  upg.busy = false;
+  const wrap = upgStep(`${r.icon} <b>${r.name}</b>`, 'upg-result');
+  wrap.innerHTML = `<p class="upg-text">${r.text}</p>` + (r.w ? weaponCard(r.w, '', '', false, upg.P) : '');
+  const go = upgButton('btn', 'Continue', b => { b.disabled = true; upg.busy = true; upg.ready(); });
+  $('upgradeNav').appendChild(go);
+  setTimeout(() => go.focus(), 50);
+}
+// Player p plays choice c ([card, slot, modifier], validated): returns the result (sent to a remote
+// player's screen too), or null if it wasn't a valid choice.
+export function pickUpgrade(p, c){
+  if (state.mode !== 'upgrade' || p.picked || !validChoice(p, c)) return null;
+  p.picked = true; p.reloadT = 0;
+  const r = applyCard(p, c);
+  if (p.remote) emitTo(p, ['upgr', r]);
+  return r;
+}
+// Continue: once everyone has, the next city starts.
+export function readyUp(p){
+  if (state.mode !== 'upgrade' || !p.picked || p.ready) return;
+  p.ready = true;
+  const waiting = players.filter(o => !o.ready);
   if (waiting.length){
     const note = `Waiting for ${waiting.map(o => o.name).join(', ')}…`;
-    if (me().picked) $('upgradeNote').textContent = note;
+    if (me().ready) $('upgradeNote').textContent = note;
     emit(['wait', note]);
     return;
   }
-  state.mode = 'play'; showScreen(null);
+  state.mode = 'play'; showScreen(null); upg = null;
   startCity(state.level + 1, newSeed());
 }
 function statHTML(rows){ return rows.map(([v,l]) => `<div><b>${v}</b>${l}</div>`).join(''); }

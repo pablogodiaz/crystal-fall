@@ -170,6 +170,17 @@ body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--text)
 .upg:disabled:hover{border-color:var(--line)}
 .upg.picked:disabled{opacity:1;border-color:var(--hazard)}
 .upg .cost{display:block;margin-top:8px;font-weight:700;color:var(--text)}
+/* Upgrade screen steps: weapon cards as buttons, modifiers to replace, the result */
+.upg-w{appearance:none;border:0;background:none;padding:0;text-align:left;cursor:pointer;font:inherit;border-radius:8px}
+.upg-w .wcard{height:100%;box-sizing:border-box;transition:border-color .12s}
+.upg-w:hover .wcard{border-color:var(--hazard);border-left-color:var(--rc)}
+.upg-w:focus-visible{outline:3px solid var(--crystal);outline-offset:3px}
+.upg-w .wc-desc{max-width:none}
+.upg.upg-mod.pos b{color:var(--good)} .upg.upg-mod.neg b{color:var(--bad)} .upg.upg-mod b{margin-top:0}
+.upg-result{margin-top:18px;display:flex;flex-direction:column;gap:12px;align-items:flex-start}
+.upg-result .upg-text{margin:0;font-size:16px;font-weight:600;line-height:1.4}
+.upg-result .wcard{min-width:260px;max-width:360px}
+#upgradeNav:empty{display:none}
 .statline{display:flex;gap:20px;flex-wrap:wrap;font-size:14px;color:var(--muted);margin-top:10px}
 .statline b{color:var(--text);font-size:18px;display:block}
 .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}

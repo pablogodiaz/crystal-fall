@@ -3,7 +3,9 @@
 
 // Each gun draws from its own reserve (player.ammo[id]). find = [min,max] rounds per ammo find;
 // maxAmmo caps the reserve. The held model is built by gunModel() in assets.js.
-// Standard guns (GUNS) roll a rarity with random modifiers when found (weapons.js); uniques never do.
+// Standard guns (GUNS) roll a rarity with random modifiers when found (weapons.js). Uniques are found
+// without any; only the Prototype upgrade adds them, from the unique's own `mods` list (the WMODS that mean
+// something for it: `mag` = its tank/charge/battery, `rate` = charge or brew time, `range` = reach or splash).
 // Uniques: kind = how it fires (combat.js/uniques.js; no kind = a regular gun, like the bow);
 // desc = what its card says. Every number they use is here.
 export const WEAPONS = {
@@ -13,44 +15,44 @@ export const WEAPONS = {
   rifle:   { name:'Hunting rifle', ammo:'rifle rounds', dmg:4,   rate:0.9,   mag:5,  reload:2.0, pellets:1, spread:0,    jitter:0.004, speed:70, life:1.0,  pierce:2, noise:40, maxAmmo:30,  find:[3,6],   sound:'rifle' },
   // Uniques
   // Bow: a gun whose arrows (65% of them, `keep`) stay where they stop and can be picked back up. Nearly silent.
-  bow:     { name:'Compound bow',  ammo:'arrows', unique:true, arrow:true, keep:0.65, dmg:5, rate:0.3, mag:1, reload:0.5, pellets:1, spread:0.08, jitter:0.006, speed:34, life:0.95, pierce:1, noise:3, maxAmmo:24, find:[2,4], start:12, sound:'bow',
+  bow:     { name:'Compound bow',  ammo:'arrows', unique:true, mods:['dmg','rate','reload','acc','range','noise','kb','thrift','crit','pellets','pierce'], arrow:true, keep:0.65, dmg:5, rate:0.3, mag:1, reload:0.5, pellets:1, spread:0.08, jitter:0.006, speed:34, life:0.95, pierce:1, noise:3, maxAmmo:24, find:[2,4], start:12, sound:'bow',
              desc:'Almost silent. Arrows pierce one zombie and can be picked back up where they land' },
   // Flamethrower: hold to spray a cone (range, ±cone rad) for dps (scaled by city like molotovs); everything hit
   // burns for burn s at burnDps. mag = fuel, use = fuel per second. Refuels at gas station pumps, once per station.
-  flamer:  { name:'Flamethrower',  ammo:'fuel', unique:true, kind:'flame', mag:100, use:9, dmg:6, range:6.5, cone:0.32, burn:3, burnDps:1.2, noise:20,
+  flamer:  { name:'Flamethrower',  ammo:'fuel', unique:true, mods:['dmg','mag','range','noise'], kind:'flame', mag:100, use:9, dmg:6, range:6.5, cone:0.32, burn:3, burnDps:1.2, noise:20,
              desc:'Hold to spray fire; anything it touches keeps burning. Fuel only refills at gas station pumps, once per station' },
   // Turncoat flask: thrown at the cursor (like a molotov), zombies within radius turn on their own kind for
   // turn s; then it brews a new dose for cooldown s. Bites deal bite × their damage (scaled by city).
-  potion:  { name:'Turncoat flask', ammo:'doses', unique:true, kind:'potion', mag:1, cooldown:60, radius:3.5, turn:16, bite:0.14, noise:12,
+  potion:  { name:'Turncoat flask', ammo:'doses', unique:true, mods:['rate','range','noise'], kind:'potion', mag:1, cooldown:60, radius:3.5, turn:16, bite:0.14, noise:12,
              desc:'Throw it: zombies in the splash turn on their own kind for 16 s. Brews a new dose every minute' },
   // Arc caster: a bolt to the nearest zombie in front (range, ±cone) that jumps to up to `chain` more within
   // `jump` of each other, each jump doing `fall` of the last; stuns. mag = charge, cost per shot, regen/s after regenDelay s.
-  tesla:   { name:'Arc caster',    ammo:'charge', unique:true, kind:'arc', mag:100, cost:20, rate:0.42, regen:14, regenDelay:1.2, dmg:2.4, range:10, cone:0.5, chain:4, jump:4.5, fall:0.8, stun:0.4, noise:16,
+  tesla:   { name:'Arc caster',    ammo:'charge', unique:true, mods:['dmg','rate','mag','range','noise'], kind:'arc', mag:100, cost:20, rate:0.42, regen:14, regenDelay:1.2, dmg:2.4, range:10, cone:0.5, chain:4, jump:4.5, fall:0.8, stun:0.4, noise:16,
              desc:'Lightning that jumps between up to 5 zombies and stuns them. Recharges by itself' },
   // Gravity well launcher: an orb flies to the cursor (like a throw, max 13 units) at `speed` and opens a well
   // for `time` s that drags zombies within radius toward its middle at up to `pull` u/s (they can't act),
   // then pops, stunning them for `stun` s. No damage. mag = charges, all refilled at the start of every city.
-  gravity: { name:'Gravity well launcher', ammo:'wells', unique:true, kind:'grav', mag:3, speed:12, radius:7, time:4, pull:6, stun:1, noise:14,
+  gravity: { name:'Gravity well launcher', ammo:'wells', unique:true, mods:['mag','noise'], kind:'grav', mag:3, speed:12, radius:7, time:4, pull:6, stun:1, noise:14,
              desc:'Fires a slow orb that opens a gravity well, dragging every zombie nearby into a tight knot for 4 s. Three wells, refilled each city' },
   // Railgun: hold to charge for `charge` s, release to fire a beam that hits everything in a line out to range,
   // through one wall (not two). Releasing early cancels. One slug per shot, reloaded from the reserve.
-  railgun: { name:'Railgun',       ammo:'slugs', unique:true, kind:'rail', mag:1, reload:1.4, charge:1.1, dmg:14, range:45, kb:4, noise:55, maxAmmo:12, find:[1,2], start:6,
+  railgun: { name:'Railgun',       ammo:'slugs', unique:true, mods:['dmg','rate','reload','range','noise','kb'], kind:'rail', mag:1, reload:1.4, charge:1.1, dmg:14, range:45, kb:4, noise:55, maxAmmo:12, find:[1,2], start:6,
              desc:'Hold to charge, release to fire a beam through every zombie in a line, and through one wall. Deafening' },
   // Cryo sprayer: hold to spray frost in a cone (range, ±cone); each zombie in it chills by `chill`/s (slower by up
   // to slow) and freezes solid at 1 for `freeze` s: frozen zombies can't act and shatter at the next hit
   // (fire thaws them). mag = coolant (use per s), reloaded from canisters found like ammo.
-  cryo:    { name:'Cryo sprayer',  ammo:'coolant', unique:true, kind:'cryo', mag:100, use:10, reload:1.6, range:6, cone:0.36, chill:1.7, thaw:0.35, slow:0.7, freeze:4, noise:12,
+  cryo:    { name:'Cryo sprayer',  ammo:'coolant', unique:true, mods:['mag','reload','range','noise'], kind:'cryo', mag:100, use:10, reload:1.6, range:6, cone:0.36, chill:1.7, thaw:0.35, slow:0.7, freeze:4, noise:12,
              maxAmmo:200, find:[12,22], start:100,
              desc:'Hold to spray frost: zombies slow down, then freeze solid. Any hit shatters a frozen one, even a brute' },
   // Crystal shard: each shot (one charge) fans `pellets` violet shards `spread` rad apart that ricochet off walls
   // `bounce` times and pierce `pierce` zombies. mag = charges, only recharged (+refill, up to mag) when you
   // break a city's Crystal.
-  shard:   { name:'Crystal shard', ammo:'shards', unique:true, kind:'shard', mag:24, refill:12, dmg:3, pellets:3, spread:0.09, rate:0.3, speed:34, life:1.6, pierce:5, bounce:3, jitter:0.01, noise:14,
+  shard:   { name:'Crystal shard', ammo:'shards', unique:true, mods:['dmg','rate','mag','acc','range','noise','pellets','pierce'], kind:'shard', mag:24, refill:12, dmg:3, pellets:3, spread:0.09, rate:0.3, speed:34, life:1.6, pierce:5, bounce:3, jitter:0.01, noise:14,
              desc:'Fans out three crystal splinters that pierce through crowds and ricochet off walls. Only recharges when you break a city’s Crystal' },
   // Guardian drone: click to launch or dock it. Flying, it circles you and shoots the nearest zombie it can see
   // within range every `rate` s, whatever you're holding. mag = battery: drains `drain`/s flying (40 s from full),
   // recharges `recharge`/s docked (about 2 min to full); it docks itself when flat and needs `launch` to take off.
-  drone:   { name:'Guardian drone', ammo:'battery', unique:true, kind:'drone', mag:100, drain:2.5, recharge:0.8, launch:25, dmg:1.2, rate:0.45, range:11, speed:44, orbit:2.2, noise:12,
+  drone:   { name:'Guardian drone', ammo:'battery', unique:true, mods:['dmg','rate','mag','range','noise'], kind:'drone', mag:100, drain:2.5, recharge:0.8, launch:25, dmg:1.2, rate:0.45, range:11, speed:44, orbit:2.2, noise:12,
              desc:'Click to launch: it circles you and shoots on its own, even while you hold another weapon. Battery recharges while docked' }
 };
 export const GUNS = ['pistol','shotgun','smg','rifle'];
@@ -79,6 +81,7 @@ export const WEAPON_ODDS = { unique:[0.04,0.006,0.1], luckUnique:2, good:0.5 };
 // Weapon modifiers: [min,max] strength when it rolls good / bad. Applied in weaponStats(), worded in
 // modText() (weapons.js). thrift: good = chance a shot is free, bad = chance it burns an extra round.
 // crit: good = chance of a ×CRIT hit, bad = chance to jam (scaled down for fast-firing guns).
+// w = how often it rolls (default 1); no `bad` = always good; int = whole numbers (extra bullets / zombies pierced).
 export const WMODS = {
   dmg:    { good:[0.12,0.35], bad:[0.1,0.3] },
   rate:   { good:[0.12,0.3],  bad:[0.1,0.25] },
@@ -89,7 +92,9 @@ export const WMODS = {
   noise:  { good:[0.25,0.5],  bad:[0.2,0.5] },
   kb:     { good:[0.5,1],     bad:[0.3,0.6] },
   thrift: { good:[0.15,0.35], bad:[0.1,0.25] },
-  crit:   { good:[0.08,0.18], bad:[0.05,0.12] }
+  crit:   { good:[0.08,0.18], bad:[0.05,0.12] },
+  pellets:{ good:[1,1.7], int:true, w:0.5 },
+  pierce: { good:[1,2.4], int:true, w:0.3 }
 };
 export const CRIT = 2.5;
 
