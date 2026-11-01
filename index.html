@@ -31,7 +31,7 @@
     <div id="crystalBar" class="bar thin hidden"><div class="fill cr" id="crFill"></div></div>
   </div>
   <div id="minimapWrap"><canvas id="minimap" width="184" height="184"></canvas></div>
-  <div id="bigmapWrap" class="hidden"><canvas id="bigmap" width="444" height="444"></canvas><div class="caption">Explored map · release Tab to close</div></div>
+  <div id="bigmapWrap" class="hidden"><canvas id="bigmap" width="444" height="444"></canvas><div class="caption">Explored map · release Tab to close</div><div id="loadout"></div></div>
   <div id="ammo" class="panel">
     <div id="wpnName">Pistol</div>
     <div class="ammoRow"><span id="ammoText" class="display">12</span><small id="ammoSub">/ 36</small></div>
@@ -39,13 +39,14 @@
     <div id="throwLine"><kbd>RMB</kbd><span id="throwText"></span><small>wheel / T</small></div>
   </div>
   <div id="floaters" aria-hidden="true"></div>
+  <div id="wpnTip" class="hidden" aria-hidden="true"></div>
   <div id="toasts" aria-live="polite"></div>
   <div id="inventory"></div>
   <div id="interact" class="hidden">
     <svg viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="18" class="track"/><circle cx="22" cy="22" r="18" class="prog" id="interactRing"/></svg>
     <div class="label"><kbd>E</kbd><span id="interactLabel"></span></div>
   </div>
-  <div id="hint">Hold E to search. F melee, Q swaps guns, hold right click to aim a throw (wheel picks), C crafts. 1–8 use items. Hold Tab for the map.</div>
+  <div id="hint">Hold E to search. F melee, Q swaps guns, G drops one, hold right click to aim a throw (wheel picks), C crafts. 1–8 use items. Hold Tab for the map.</div>
 </div>
 
 <aside id="devtools" class="hidden" aria-label="Dev tools"></aside>
@@ -63,11 +64,12 @@
       <kbd>R</kbd><span>Reload (ammo is limited, scavenge for more)</span>
       <kbd>Hold E</kbd><span>Search cars, dumpsters, crates, doors and shelves (it’s noisy)</span>
       <kbd>F</kbd><span>Melee: hit with the back of your gun (also left click when out of ammo)</span>
-      <kbd>Q</kbd><span>Swap between your two guns</span>
+      <kbd>Q</kbd><span>Swap between your two weapons</span>
+      <kbd>G</kbd><span>Drop the weapon in your hands (you always keep one). Found guns come in Common, Uncommon, Rare and Legendary, each with random good or bad modifiers; Unique weapons are something else entirely</span>
       <kbd>Hold right click</kbd><span>Aim a molotov or pipe bomb, release to throw, left click cancels (mouse wheel or T picks which)</span>
       <kbd>1 – 8</kbd><span>Use an item (right-click a slot to drop it)</span>
       <kbd>C</kbd><span>Craft molotovs and pipe bombs from scrap</span>
-      <kbd>Hold Tab</kbd><span>Map of what you’ve explored</span>
+      <kbd>Hold Tab</kbd><span>Map of what you’ve explored, plus your weapons and their modifiers</span>
       <kbd>Esc</kbd><span>Pause</span>
     </div>
     <button class="btn" id="startBtn">Start run</button>

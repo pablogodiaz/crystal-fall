@@ -20,6 +20,7 @@ import { showScreen, banner, queueBanner, renderCraft } from './hud.js';
 import { interact, updateInteract, updateDrops, updateLandmarks, animateContainers } from './loot.js';
 import { updateThrowables, updateThrowPreview } from './throwables.js';
 import { setupThreats, shuffleThreats, updateSpecials } from './specials.js';
+import { updateUniques, resetUniques } from './uniques.js';
 import { UPGRADES } from './upgrades.js';
 import { initAudio, sfx } from './audio.js';
 
@@ -35,7 +36,7 @@ export function startCity(level, seed){
   camFocus.copy(player.pos);
   Object.assign(state, { phase:'explore', crystalFound:false, takeover:0, surge:0, hordeAlive:0, cityKills:0, cityTime:0, spawnTimer:3, flowTimer:0 });
   updateFlow();
-  interact.target = null; interact.p = 0; fxLight.intensity = 0; resetTakeover();
+  interact.target = null; interact.p = 0; fxLight.intensity = 0; resetTakeover(); resetUniques();
   setupThreats(level);
   populate(city, level);
   $('cityName').textContent = `City ${level}: ${city.name}`;
@@ -188,6 +189,7 @@ export function update(dt){
   if (!dev.freeze) updateZombies(dt);
   if (state.mode !== 'play') return;
   updateBullets(dt);
+  updateUniques(dt);
   updateThrowables(dt);
   if (state.mode !== 'play') return;
   updateSpecials(dt);

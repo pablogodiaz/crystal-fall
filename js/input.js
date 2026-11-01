@@ -6,7 +6,7 @@ import { player } from './player.js';
 import { tryReload, melee } from './combat.js';
 import { toggleMute } from './audio.js';
 import { newRun, togglePause, toggleCraft } from './game.js';
-import { swapWeapon, useSlot, startAim, releaseThrow, cancelAim, cycleThrowable } from './inventory.js';
+import { swapWeapon, dropWeapon, useSlot, startAim, releaseThrow, cancelAim, cycleThrowable } from './inventory.js';
 import { craftFromKey } from './hud.js';
 import { isDevKey, toggleDev, devTypingIn, teleportToCursor } from './devtools.js';
 
@@ -19,6 +19,7 @@ export function initInput(){
     if (e.repeat) return;
     if (e.code === 'KeyR') tryReload();
     if (e.code === 'KeyQ') swapWeapon();
+    if (e.code === 'KeyG') dropWeapon();
     if (e.code === 'KeyF') melee();
     if (e.code === 'KeyT') cycleThrowable(1);
     if (e.code === 'KeyC') toggleCraft();

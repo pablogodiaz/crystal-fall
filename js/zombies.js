@@ -15,6 +15,7 @@ import { dropZombieAmmo } from './loot.js';
 import { queueBlast } from './throwables.js';
 import { rollThreat, updateScreamer, cancelScream, updateSpitter, poseSpecial } from './specials.js';
 import { ZTYPES, ZMODS, SCALE, CRYSTAL, AI } from './threats.js';
+import { WEAPONS } from './items.js';
 import { sfx } from './audio.js';
 
 const SHIRTS = [0x6b4a3a,0x4a5a6b,0x5a5a4a,0x7a3a3a,0x3a4a3a,0x6a6a72,0x8a7a5a];
@@ -82,7 +83,7 @@ export function spawnZombieAt(x,z,horde,alert,guard,exclude,rise = mr(RISE[0], R
     // Senses (see the Senses section): mode, last known target lx/lz, memory left, sight, path.
     mode:'idle', alert:false, tracked:false, lx:x, lz:z, mem:0, sees:false, direct:false, percT:Math.random()*0.25, searchT:0, giveUp:0, fk:-1, ff:null,
     mark:m.mark, markT:0,
-    dead:false, fuse:0, los:false, losT:Math.random()*0.2, windup:0, screamed:false, spitT:0, spitCd:mr(1,2.5), stun:0, side:Math.random() < 0.5 ? -1 : 1, rise, riseT:rise };
+    turned:0, foe:null, foeT:0, dead:false, fuse:0, los:false, losT:Math.random()*0.2, windup:0, screamed:false, spitT:0, spitCd:mr(1,2.5), stun:0, side:Math.random() < 0.5 ? -1 : 1, rise, riseT:rise };
   if (alert || horde) Object.assign(zz, { mode:'hunt', alert:true, mem:AI.memory, lx:player.pos.x, lz:player.pos.z, tracked:!!horde });
   if (mods.explosive) zz.warn = makeWarnRing();
   if (rise > 0){
@@ -200,7 +201,7 @@ function updateMark(z, dt){
 // It knows exactly where you are (it saw you, got hit, heard a scream). tracked = keeps knowing
 // without needing sight (the takeover).
 export function alertZombie(z, tracked){
-  if (z.dead) return;
+  if (z.dead || z.turned > 0) return;
   if (z.mode !== 'hunt') mark(z, 'spotted');
   setMode(z, 'hunt'); z.mem = AI.memory; z.lx = player.pos.x; z.lz = player.pos.z;
   if (tracked) z.tracked = true;
@@ -212,7 +213,7 @@ export function alertNear(x, z, r){ for (const o of zombies) if (Math.hypot(o.po
 // home are ignored unless forced (pipe-bomb beeps).
 export function makeNoise(x, z, r, force){
   for (const o of zombies){
-    if (o.dead || o.tracked || (o.mode === 'hunt' && o.sees)) continue;
+    if (o.dead || o.tracked || o.turned > 0 || (o.mode === 'hunt' && o.sees)) continue;
     const d = Math.hypot(o.pos.x-x, o.pos.z-z);
     if (d >= r || (d > r*AI.muffle && !lineOfSight(o.pos.x, o.pos.z, x, z))) continue;
     if (o.mode === 'hunt'){ o.lx = x; o.lz = z; o.mem = Math.max(o.mem, AI.memory*0.6); o.percT = 0; continue; }
@@ -298,7 +299,49 @@ function wander(z, dt, cx, cz, R){
   }
   return [z.wx, z.wz];
 }
-// cause = 'bullet' | 'melee' | 'blast' | 'fire' (fire is damage over time: no blood burst or hit
+// ---------- Turned (Turncoat flask) ----------
+// A turned zombie glows pink with a ♥ over its head and, for z.turned seconds, hunts the nearest
+// other zombie (z.foe) instead of you: it can't hurt you, your bullets, melee, fire and lightning pass
+// it by (blasts still don't care). With nobody to fight it tags along near you. A zombie it bites
+// fights back (foe = the biter, for foeT seconds). Afterwards it forgets everything and walks home.
+const TURN_EM = 0x7a1a68;
+export function turnZombie(z, t){
+  if (z.dead) return;
+  if (!(z.turned > 0)){ z.em0 = z.em.slice(); z.em.fill(TURN_EM); z.mats.forEach(m => m.emissive.setHex(TURN_EM)); }
+  z.turned = t; z.foe = null; z.foeT = 0; z.fuse = 0; z.spitT = 0; z.stun = 0;
+  if (z.windup > 0) cancelScream(z);
+  setMode(z, 'idle'); z.sees = false;
+  z.mark.material = SH.markMats.turned; z.mark.scale.setScalar(0.7); z.mark.visible = true; z.markT = 0;
+}
+function unturn(z){
+  z.turned = 0; z.foe = null; z.mark.visible = false;
+  if (z.em0){ z.em = z.em0; z.mats.forEach((m, j) => m.emissive.setHex(z.em[j])); }
+  setMode(z, 'return'); z.giveUp = AI.giveUp*2;
+}
+// Who z is fighting right now (null = nobody: business as usual).
+function foeOf(z, dt){
+  if (z.turned > 0){
+    z.foeT -= dt;
+    if (!z.foe || z.foe.dead || z.foe.turned > 0 || z.foeT <= 0){
+      z.foeT = 0.6; z.foe = null; let best = 20;
+      for (const o of zombies){
+        if (o === z || o.dead || o.rise > 0 || o.turned > 0) continue;
+        const d = Math.hypot(o.pos.x - z.pos.x, o.pos.z - z.pos.z); if (d < best){ best = d; z.foe = o; }
+      }
+    }
+    return z.foe;
+  }
+  if (z.foe){ z.foeT -= dt; if (z.foe.dead || !(z.foe.turned > 0) || z.foeT <= 0) z.foe = null; }
+  return z.foe;
+}
+function bite(z, foe){
+  const dx = foe.pos.x - z.pos.x, dz = foe.pos.z - z.pos.z, l = Math.hypot(dx, dz) || 1;
+  z.atkCd = 1;
+  damageZombie(foe, z.dmg*(z.turned > 0 ? WEAPONS.potion.bite : WEAPONS.potion.bite*0.7)*(1 + SCALE.hp*(state.level-1)), dx/l*0.6, dz/l*0.6, 'bite');
+  if (!foe.dead && !(foe.turned > 0) && z.turned > 0){ foe.foe = z; foe.foeT = 4; }
+}
+
+// cause = 'bullet' | 'melee' | 'blast' | 'fire' | 'bite' (fire is damage over time: no blood burst or hit
 // sound); it also picks the death animation. (dx,dz) = hit direction and knockback.
 // Armored zombies take frontMul damage from hits landing within frontArc of where they face.
 // Returns true if the shield took the hit (bullets stop there instead of piercing).
@@ -359,25 +402,37 @@ export function updateZombies(dt){
     const z = zombies[i];
     const dx = p.x - z.pos.x, dz = p.z - z.pos.z, dist = Math.hypot(dx,dz) || 0.0001;
     z.g.visible = dist < 50;  // well off-screen (and out of the shadow camera): skip rendering it
-    updateMark(z, dt);
+    if (!(z.turned > 0)) updateMark(z, dt);
     if (z.rise > 0){ updateRise(z, dt); continue; }
-    if (z.tracked && !dev.ignored){ z.sees = true; z.lx = p.x; z.lz = p.z; }
+    if (z.turned > 0){ z.turned -= dt; if (z.turned <= 0) unturn(z); }
+    const turned = z.turned > 0, foe = foeOf(z, dt);
+    if (turned || foe){}  // busy fighting (or on your side): no senses
+    else if (z.tracked && !dev.ignored){ z.sees = true; z.lx = p.x; z.lz = p.z; }
     else {
       z.percT -= dt;
       if (z.percT <= 0){ z.percT = mr(0.2, 0.3); perceive(z, dist, dx, dz); }
       think(z, dt, dist);
     }
     // Idle zombies far off-screen skip crowd separation and animation.
-    const far = dist > 48 && z.mode === 'idle';
+    const far = dist > 48 && z.mode === 'idle' && !turned && !foe;
     let desX = 0, desZ = 0, spd = z.speed, hold = false, mv = null, dir = null;
     if (z.stun > 0) z.stun -= dt;
     const stunned = z.stun > 0;
     // Specials: a winding-up screamer roots in place; an alerted spitter picks its own spacing.
-    if (stunned){}
+    if (stunned || turned || foe){}
     else if (z.type === 'screamer') hold = updateScreamer(z, dt, dist);
     else if (z.type === 'spitter') mv = updateSpitter(z, dt, dist, dx, dz);
     const lx = lure ? lure.x - z.pos.x : 0, lz = lure ? lure.z - z.pos.z : 0, ld = lure ? Math.hypot(lx,lz) : 1e9;
+    let fd = 1e9;
     if (hold || stunned){}
+    else if (foe){
+      // Close in on the zombie it's fighting: straight at it nearby, around buildings further out.
+      const fx = foe.pos.x - z.pos.x, fz = foe.pos.z - z.pos.z; fd = Math.hypot(fx, fz) || 0.001;
+      z.direct = fd < 6; dir = fd < 2.5 ? [fx/fd, fz/fd] : steerTo(z, foe.pos.x, foe.pos.z);
+    } else if (turned){
+      // Nobody left to fight: stays near you.
+      if (dist > 3.5){ z.direct = dist < 8; dir = steerTo(z, p.x, p.z); } else { dir = wander(z, dt, p.x, p.z, 2.5); spd *= AI.speed.idle; }
+    }
     else if (mv){ desX = mv[0]; desZ = mv[1]; spd *= mv[2]; }
     else if ((z.mode === 'hunt' || z.mode === 'search') && ld < 32 && dist > 3.5){
       // A beeping pipe bomb pulls hunting and searching zombies off the player.
@@ -416,7 +471,7 @@ export function updateZombies(dt){
     resolveCircle(z.pos, z.r);
     const vl = Math.hypot(z.vel.x, z.vel.z);
     if (stunned){}
-    else if (hold || mv) z.g.rotation.y = lerpAngle(z.g.rotation.y, Math.atan2(dx, dz), Math.min(1, dt*8));
+    else if ((hold || mv) && !foe && !turned) z.g.rotation.y = lerpAngle(z.g.rotation.y, Math.atan2(dx, dz), Math.min(1, dt*8));
     else if (vl > 0.2) z.g.rotation.y = lerpAngle(z.g.rotation.y, Math.atan2(z.vel.x, z.vel.z), Math.min(1, dt*8));
     if (far) continue;
     z.phase += dt*(vl*2.4 + 0.5);
@@ -425,11 +480,13 @@ export function updateZombies(dt){
     z.arms[0].rotation.x = -0.1 + Math.sin(z.phase*0.5)*0.15; z.arms[1].rotation.x = -0.1 - Math.sin(z.phase*0.5+1)*0.15;
     z.b.rotation.z = Math.sin(z.phase*0.5)*0.06;
     z.atkCd -= dt;
-    if (nd < minD + 0.35 && z.atkCd <= 0 && !stunned && !dev.ignored){ z.atkCd = 1.0; hurtPlayer(z.dmg, z); if (state.mode !== 'play') return; }
+    if (foe && !stunned && z.atkCd <= 0 && fd < z.r + foe.r + 0.4) bite(z, foe);
+    if (nd < minD + 0.35 && z.atkCd <= 0 && !stunned && !turned && !dev.ignored){ z.atkCd = 1.0; hurtPlayer(z.dmg, z); if (state.mode !== 'play') return; }
     if (z.flash > 0){ z.flash -= dt; if (z.flash <= 0) z.mats.forEach((m,j) => m.emissive.setHex(z.em[j])); }
     if (z.mods.explosive){
       // Arms a short fuse next to the player, blinking white, then detonates.
-      if (!z.fuse && !stunned && nd < minD + E.trigger){ z.fuse = E.fuse; sfx.fuse(); }
+      // A turned exploder lights its fuse next to the zombie it's fighting instead.
+      if (!z.fuse && !stunned && (turned ? fd < z.r + E.trigger : nd < minD + E.trigger)){ z.fuse = E.fuse; sfx.fuse(); }
       if (z.fuse > 0){
         z.fuse -= dt;
         z.mats[0].emissive.setHex(Math.floor(z.fuse*16) % 2 ? 0xffffff : 0xff5000); z.mats[0].emissiveIntensity = 2;
@@ -444,6 +501,7 @@ export function updateZombies(dt){
       z.arms[0].rotation.x = z.arms[1].rotation.x = 0.3;
       if (Math.random() < dt*4) burst(new THREE.Vector3(z.pos.x, 2.1*z.g.scale.y, z.pos.z), 'spark', 1, 0.8);
     } else if (z.stun < 0){ z.stun = 0; z.b.rotation.x = 0; }
+    if (z.flash <= 0 && turned && Math.random() < dt*3) burst(new THREE.Vector3(z.pos.x, 1.9*z.g.scale.y, z.pos.z), 'brew', 1, 0.6);
     if (z.alert){ z.groan -= dt; if (z.groan <= 0){ z.groan = mr(5,11); if (dist < 14) sfx.groan(); } }
   }
 }

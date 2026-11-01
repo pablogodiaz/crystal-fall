@@ -1,17 +1,18 @@
 // ---------- Inventory & weapons ----------
 // Item stacks in player.inv (INV_SLOTS slots of { id, n } or null), two weapon slots in
-// player.weapons ({ id, mag } or null), reserve ammo per weapon in player.ammo.
+// player.weapons (weapon instances, see weapons.js, or null), reserve ammo per weapon type in player.ammo.
 // All of it lives on `player`, so it carries over between cities.
 import { WEAPONS, ITEMS, RECIPES, THROWABLES } from './items.js';
 import { state } from './state.js';
 import { player, refreshGun } from './player.js';
 import { spawnDrop } from './loot.js';
 import { throwItem } from './throwables.js';
-import { toast } from './hud.js';
+import { toast, floatText } from './hud.js';
+import { weaponStats, weaponTitle } from './weapons.js';
 import { sfx } from './audio.js';
 
 export const curWeapon = () => player.weapons[player.cur];
-export const magSize = w => Math.round(WEAPONS[w.id].mag * player.magMul);
+export const magSize = w => weaponStats(w).mag;
 export const carried = () => player.weapons.filter(Boolean).map(w => w.id);
 export function countItem(id){ let n = 0; for (const s of player.inv) if (s && s.id === id) n += s.n; return n; }
 
@@ -28,25 +29,37 @@ export function removeItem(id, n){
     const k = Math.min(n, s.n); s.n -= k; n -= k; if (!s.n) player.inv[i] = null;
   }
 }
-// Returns how many rounds fit under the reserve cap.
+// Returns how many rounds fit under the reserve cap (0 for weapons without reserve ammo).
 export function addAmmo(id, n){
-  const k = Math.max(0, Math.min(n, WEAPONS[id].maxAmmo - player.ammo[id]));
+  const k = Math.max(0, Math.min(n, (WEAPONS[id].maxAmmo || 0) - player.ammo[id]));
   player.ammo[id] += k; return k;
 }
-// 'new' = took a free weapon slot, 'ammo' = already carried (its rounds go to the reserve), 'full' = no room.
-export function giveWeapon(id, mag){
-  if (mag === undefined) mag = WEAPONS[id].mag;
-  if (carried().includes(id)){ addAmmo(id, mag); return 'ammo'; }
+// Puts a weapon instance in a free slot. Every find is its own gun (rarity and modifiers), so a
+// second shotgun is a second gun, not ammo. Returns false when both slots are taken.
+export function giveWeapon(w){
   const i = player.weapons.indexOf(null);
-  if (i < 0) return 'full';
-  player.weapons[i] = { id, mag };
-  return 'new';
+  if (i < 0) return false;
+  player.weapons[i] = w;
+  // A bow comes with a quiver: its first arrows go to the reserve.
+  const W = WEAPONS[w.id]; if (W.start && !w.started){ w.started = true; addAmmo(w.id, W.start); }
+  return true;
 }
 // Swaps the held weapon for one on the ground; returns the weapon put down.
-export function replaceWeapon(id, mag){
+export function replaceWeapon(w){
   const old = curWeapon();
-  player.weapons[player.cur] = { id, mag }; player.reloadT = 0; player.fireCd = 0.3; refreshGun();
+  player.weapons[player.cur] = w; player.reloadT = 0; player.fireCd = 0.3; refreshGun();
+  const W = WEAPONS[w.id]; if (W.start && !w.started){ w.started = true; addAmmo(w.id, W.start); }
   return old;
+}
+// G: put the held weapon on the ground and switch to the other one (you always keep one).
+export function dropWeapon(){
+  if (state.mode !== 'play') return;
+  const o = 1 - player.cur;
+  if (!player.weapons[o]) return toast('That’s your only weapon');
+  const w = curWeapon();
+  player.weapons[player.cur] = null; player.cur = o; player.reloadT = 0; player.fireCd = 0.3; player.aiming = false; refreshGun();
+  spawnDrop('weapon', w, 0, player.pos.x, player.pos.z, true);
+  sfx.swap(); floatText(`Dropped ${weaponTitle(w)}`, 'dim');
 }
 export function swapWeapon(){
   if (state.mode !== 'play') return;

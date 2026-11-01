@@ -29,7 +29,7 @@ function sTone(f1, f2, dur, type, vol){
   return o;
 }
 // [noise dur, noise lowpass, noise vol, thump freq, thump vol] per weapon.
-const SHOTS = { pistol:[0.14,1900,0.55,180,0.12], shotgun:[0.32,1200,0.8,120,0.2], smg:[0.08,2400,0.36,220,0.07], rifle:[0.42,2800,0.8,140,0.22] };
+const SHOTS = { pistol:[0.14,1900,0.55,180,0.12], shotgun:[0.32,1200,0.8,120,0.2], smg:[0.08,2400,0.36,220,0.07], rifle:[0.42,2800,0.8,140,0.22], bow:[0.12,700,0.18,320,0.03] };
 export const sfx = {
   shot: kind => { const p = SHOTS[kind] || SHOTS.pistol; sNoise(p[0], p[1], p[2]); sTone(p[3], 60, 0.08, 'square', p[4]); },
   hit: () => sTone(140, 60, 0.07, 'sine', 0.25),
@@ -63,5 +63,11 @@ export const sfx = {
   pulse: () => { sTone(70, 35, 1.2, 'sine', 0.5); sNoise(0.9, 700, 0.4); sTone(880, 1320, 0.6, 'sine', 0.1); sTone(1175, 1760, 0.7, 'triangle', 0.06); },
   // Takeover countdown, last n seconds: higher and louder toward zero.
   tick: n => sTone(1400 - n*50, 1400 - n*50, 0.07, 'square', 0.05 + (10 - n)*0.006),
+  // Unique weapons and weapon quirks.
+  flame: () => sNoise(0.16, mr(500,800), 0.16),
+  zap: () => { sNoise(0.14, 6000, 0.22); sTone(2200, 180, 0.16, 'sawtooth', 0.06); sTone(120, 60, 0.12, 'square', 0.05); },
+  brew: () => { sTone(520, 1040, 0.25, 'sine', 0.08); setTimeout(() => sTone(780, 1560, 0.3, 'sine', 0.06), 120); },
+  refuel: () => { sNoise(0.9, 400, 0.25); setTimeout(() => sTone(300, 600, 0.2, 'triangle', 0.1), 700); },
+  jam: () => sTone(900, 820, 0.04, 'square', 0.08),
   alarm: () => { for (let i=0;i<8;i++) setTimeout(() => sTone(i%2 ? 700 : 950, i%2 ? 700 : 950, 0.26, 'square', 0.07), i*280); }
 };

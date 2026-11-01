@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { TILE, N } from './config.js';
 import { scene, camera } from './renderer.js';
-import { SH } from './assets.js';
+import { SH, gunModel } from './assets.js';
 import { WEAPONS, INV_SLOTS } from './items.js';
 import { world, keys, mouse, mouseNDC, dev } from './state.js';
 import { resolveCircle, reveal } from './grid.js';
@@ -29,7 +29,7 @@ export const player = { pos:new THREE.Vector3(), vel:new THREE.Vector3(), radius
   const armGeo = new THREE.BoxGeometry(0.14,0.14,0.55);
   const a1 = new THREE.Mesh(armGeo, jacket); a1.position.set(0.28,1.18,0.25);
   const a2 = new THREE.Mesh(armGeo, jacket); a2.position.set(-0.12,1.18,0.28); a2.rotation.y = 0.5;
-  const gun = new THREE.Mesh(new THREE.BoxGeometry(0.12,0.14,0.55), dark); gun.position.set(0.22,1.22,0.62);
+  const gun = new THREE.Group(); gun.position.set(0.22,1.22,0.35);  // filled with the held weapon's model by refreshGun()
   inner.add(body, head, cap, bp, a1, a2, gun);
   // Melee swoosh: a flat arc in front of the player, shown during the strike.
   const swish = new THREE.Mesh(new THREE.RingGeometry(0.75,1.75,18,1,-Math.PI/2-0.95,1.9),
@@ -39,23 +39,27 @@ export const player = { pos:new THREE.Vector3(), vel:new THREE.Vector3(), radius
   const ring = new THREE.Mesh(new THREE.RingGeometry(0.55,0.68,28), new THREE.MeshBasicMaterial({ color:0xf2e6c8, transparent:true, opacity:0.45, depthWrite:false }));
   ring.rotation.x = -Math.PI/2; ring.position.y = 0.1; g.add(ring);
   const lamp = new THREE.PointLight(0xffe2b0, 0.55, 10, 2); lamp.position.y = 3; g.add(lamp);
-  player.g = g; player.inner = inner; player.legs = legs; player.gun = gun; player.arms = [a1, a2]; player.swish = swish; player.gunZ = 0.62;
+  player.g = g; player.inner = inner; player.legs = legs; player.gun = gun; player.arms = [a1, a2]; player.swish = swish; player.gunZ = 0.35;
   scene.add(g);
 })();
-// Base stats for a fresh run; upgrades modify these in place. Weapon stats live in WEAPONS;
-// dmgMul/fireMul/magMul/reloadMul/pellets/pierce are upgrade modifiers applied on top.
+// Base stats for a fresh run; upgrades modify these in place. Weapon stats live in WEAPONS (plus each
+// gun's rarity modifiers); dmgMul/fireMul/magMul/reloadMul/pellets/pierce are upgrade modifiers on top
+// (weaponStats in weapons.js). Weapons are instances (see weapons.js); the starting pistol is a Common.
 export function resetPlayerStats(){
   Object.assign(player, { hp:100, maxHp:100, speed:4.6, stamina:1, staminaDelay:0, staminaRate:1, winded:false, boost:0,
     reloadT:0, fireCd:0, meleeT:0, meleeCd:0, meleeHit:false,
     dmgMul:1, fireMul:1, magMul:1, reloadMul:1, pellets:0, pierce:0, regen:0,
     bleeding:false, throwSel:'molotov', aiming:false, bleedFx:0, stepT:0,
-    weapons:[{ id:'pistol', mag:12 }, null], cur:0, ammo:{ pistol:36, shotgun:0, smg:0, rifle:0 },
+    weapons:[{ id:'pistol', rarity:'common', mods:[], mag:12, uid:Math.random(), cd:0, idle:0 }, null], cur:0,
+    ammo:Object.assign(Object.fromEntries(Object.keys(WEAPONS).map(id => [id, 0])), { pistol:36 }), flameT:0,
     inv:[{ id:'bandage', n:1 }, { id:'drink', n:1 }].concat(new Array(INV_SLOTS-2).fill(null)) });
 }
-// Barrel length follows the held weapon.
+// The model in the player's hands follows the held weapon (and its rarity accent).
+let shownGun = null;
 export function refreshGun(){
-  const k = WEAPONS[player.weapons[player.cur].id].gun;
-  player.gun.scale.z = k; player.gunZ = 0.35 + 0.275*k; poseMelee(0);
+  const w = player.weapons[player.cur];
+  if (shownGun !== w){ shownGun = w; player.gun.clear(); player.gun.add(gunModel(w.id, w.rarity)); }
+  poseMelee(0);
 }
 // Melee pose for swing progress k (0 = rest): wind up with the gun turned across the chest and
 // pulled back, then drive it forward stock-first with a body twist, then recover.
@@ -132,7 +136,7 @@ export function updatePlayer(dt){
   if (player.reloadT > 0){
     player.reloadT -= dt;
     if (player.reloadT <= 0){
-      const w = curWeapon(), k = Math.min(magSize(w) - w.mag, player.ammo[w.id]);
+      const w = curWeapon(), k = Math.max(0, Math.min(magSize(w) - w.mag, player.ammo[w.id]));
       player.reloadT = 0; w.mag += k; player.ammo[w.id] -= k;
     }
   }
@@ -143,7 +147,7 @@ export function updatePlayer(dt){
     if (!player.meleeHit && k >= MELEE_HIT){ player.meleeHit = true; meleeStrike(); }
     poseMelee(player.meleeT > 0 ? k : 0);
   }
-  if (mouse.down) fire();
+  if (mouse.down) fire(dt);
   if (player.regen > 0 && player.hp < player.maxHp) player.hp = Math.min(player.maxHp, player.hp + player.regen*1.2*dt);
   if (player.bleeding){
     player.bleedFx -= dt;

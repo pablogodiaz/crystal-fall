@@ -3,11 +3,12 @@ import * as THREE from 'three';
 import { TILE, N, T, DISTRICTS } from './config.js';
 import { $, fmtTime } from './utils.js';
 import { camera } from './renderer.js';
-import { WEAPONS, ITEMS, RECIPES, LANDMARKS, INV_SLOTS } from './items.js';
+import { WEAPONS, ITEMS, RECIPES, LANDMARKS, INV_SLOTS, RARITY } from './items.js';
 import { CRYSTAL } from './threats.js';
 import { state, world, zombies, drops, pickups, keys } from './state.js';
 import { player } from './player.js';
 import { useSlot, dropSlot, craft, countItem, magSize, selectedThrowable } from './inventory.js';
+import { weaponStats, weaponDps, weaponTitle, modText } from './weapons.js';
 import { interact, dropName } from './loot.js';
 import { blockIndex } from './grid.js';
 
@@ -89,18 +90,18 @@ export function updateHUD(dt, t){
   if (hudCache.status !== st){ hudCache.status = st; $('status').innerHTML = st; }
   setText('killText', state.kills + (state.kills === 1 ? ' kill' : ' kills'));
   setText('timeText', fmtTime(state.runTime));
-  const w = player.weapons[player.cur], alt = player.weapons[1 - player.cur], reserve = player.ammo[w.id];
-  setText('wpnName', WEAPONS[w.id].name);
-  if (player.reloadT > 0){ setText('ammoText', '…'); setText('ammoSub', 'Reloading'); }
-  else { setText('ammoText', String(w.mag)); setText('ammoSub', w.mag + reserve === 0 ? 'Empty: melee' : '/ ' + reserve); }
-  $('ammoSub').classList.toggle('empty', w.mag + reserve === 0 && player.reloadT <= 0);
-  setText('wpnAlt', alt ? `Q ⇄ ${WEAPONS[alt.id].name} (${alt.mag} / ${player.ammo[alt.id]})` : `Mag ${magSize(w)}. Second slot empty`);
+  const w = player.weapons[player.cur], alt = player.weapons[1 - player.cur], [aBig, aSub, aEmpty] = ammoState(w);
+  setText('wpnName', weaponTitle(w));
+  if (hudCache.rar !== w.rarity){ hudCache.rar = w.rarity; $('wpnName').dataset.r = w.rarity; }
+  setText('ammoText', aBig); setText('ammoSub', aSub);
+  $('ammoSub').classList.toggle('empty', aEmpty);
+  setText('wpnAlt', alt ? `Q ⇄ ${weaponTitle(alt)} (${shortAmmo(alt)})` : WEAPONS[w.id].kind ? 'Second slot empty' : `Mag ${magSize(w)}. Second slot empty`);
   const th = selectedThrowable(), thn = countItem(th);
   setText('throwText', `${ITEMS[th].icon} ${ITEMS[th].name} ×${thn}`);
   $('throwLine').classList.toggle('none', !thn);
   renderInventory();
   updateInteractPrompt();
-  updateFloaters(dt); updateTags();
+  updateFloaters(dt); updateTags(); updateWeaponTip();
   let obj, sub = '';
   if (state.phase === 'explore'){
     if (!state.crystalFound){ obj = 'Find the Crystal'; sub = 'Follow the violet light. Gunfire draws the dead.'; }
@@ -122,10 +123,81 @@ export function updateHUD(dt, t){
   // Full map while Tab is held.
   const big = !!keys.Tab && state.mode === 'play';
   $('bigmapWrap').classList.toggle('hidden', !big);
-  if (big){ const n = world.city.n; if (world.mmDirty) paintTiles(); drawMap(bctx, bm.width, bm.width/n, n/2, n/2, t, true); }
+  if (big){ const n = world.city.n; if (world.mmDirty) paintTiles(); drawMap(bctx, bm.width, bm.width/n, n/2, n/2, t, true); renderLoadout(); }
   // Which district you're in (roads count toward the block south-east of them).
   const D = DISTRICTS[world.city.blocks[blockIndex(player.pos.x, player.pos.z)].district];
   setText('district', D.name + (D.note ? ` · ${D.note}` : ''));
+}
+
+// ---------- Weapons ----------
+// [big number, line under it, warn] for the ammo panel, by kind of weapon.
+function ammoState(w){
+  const W = WEAPONS[w.id];
+  if (W.kind === 'flame') return [String(Math.ceil(w.mag)), w.mag > 0 ? '% fuel' : 'No fuel: melee', w.mag <= 0];
+  if (W.kind === 'arc') return [String(Math.floor(w.mag)), w.mag >= W.cost ? '% charge' : 'Recharging', w.mag < W.cost];
+  if (W.kind === 'potion') return w.cd > 0 ? [String(Math.ceil(w.cd)), 's brewing', true] : ['Ready', 'click to throw', false];
+  const reserve = player.ammo[w.id];
+  if (player.reloadT > 0) return ['…', 'Reloading', false];
+  return [String(w.mag), w.mag + reserve === 0 ? 'Empty: melee' : '/ ' + reserve, w.mag + reserve === 0];
+}
+function shortAmmo(w){
+  const W = WEAPONS[w.id];
+  if (W.kind === 'flame') return `${Math.ceil(w.mag)}% fuel`;
+  if (W.kind === 'arc') return `${Math.floor(w.mag)}% charge`;
+  if (W.kind === 'potion') return w.cd > 0 ? `${Math.ceil(w.cd)} s` : 'ready';
+  return `${w.mag} / ${player.ammo[w.id]}`;
+}
+// Card for a weapon: name, rarity, key stats, modifiers (green good, red bad), what a unique does.
+// Shared by the ground tooltip and the Tab loadout. tag = chip next to the name, extra = lines after.
+const f1 = v => String(+v.toFixed(1));
+function statCells(w, all){
+  const W = WEAPONS[w.id], S = weaponStats(w), c = (k, v) => `<span><small>${k}</small><b>${v}</b></span>`;
+  if (W.kind === 'flame') return c('Damage', f1(S.dmg) + '/s') + c('Range', W.range) + c('Fuel', Math.ceil(w.mag) + '%');
+  if (W.kind === 'arc') return c('Damage', f1(S.dmg)) + c('Jumps', W.chain) + c('Rate', f1(1/S.rate) + '/s') + c('Charge', Math.floor(w.mag) + '%');
+  if (W.kind === 'potion') return c('Splash', W.radius) + c('Turned', W.turn + ' s') + c('Dose', w.cd > 0 ? Math.ceil(w.cd) + ' s' : 'Ready');
+  return c('Damage', f1(S.dmg) + (S.pellets > 1 ? '×' + S.pellets : '')) + c('Rate', f1(1/S.rate) + '/s') + c('Mag', S.mag) + c('Reload', f1(S.reload) + ' s')
+    + (all ? c('Ammo', `${w.mag} / ${player.ammo[w.id]}`) : '');
+}
+function weaponCard(w, tag = '', extra = '', all = false){
+  const W = WEAPONS[w.id];
+  const mods = w.mods.map(m => `<li class="${m.s > 0 ? 'pos' : 'neg'}">${modText(m)}</li>`).join('');
+  return `<div class="wcard" data-r="${w.rarity}"><div class="wc-top"><b>${W.name}</b>${tag}<span class="wc-rar">${RARITY[w.rarity].name}</span></div>`
+    + `<div class="wc-stats">${statCells(w, all)}</div>`
+    + (mods ? `<ul class="wc-mods">${mods}</ul>` : w.rarity === 'common' ? '<div class="wc-none">No modifiers</div>' : '')
+    + (W.desc ? `<p class="wc-desc">${W.desc}</p>` : '') + extra + '</div>';
+}
+// Tooltip over the nearest weapon on the ground: its card, damage per second against the gun in your
+// hands, and how to take it.
+let tipSig = '';
+function updateWeaponTip(){
+  const el = $('wpnTip');
+  let best = null, bd = 3.2;
+  if (state.mode === 'play') for (const d of drops){
+    if (d.kind !== 'weapon') continue;
+    const dd = Math.hypot(d.px - player.pos.x, d.pz - player.pos.z); if (dd < bd){ bd = dd; best = d; }
+  }
+  if (!best){ if (tipSig){ tipSig = ''; el.classList.add('hidden'); } return; }
+  const held = player.weapons[player.cur], free = player.weapons.includes(null);
+  const sig = [best.w.uid, held.uid, free, best.held, player.dmgMul, player.fireMul, player.pellets].join();
+  if (sig !== tipSig){
+    tipSig = sig;
+    const a = weaponDps(best.w), b = weaponDps(held), diff = a !== null && b !== null ? a - b : null;
+    const cmp = diff === null ? '' : `<div class="wc-cmp">DPS <b>${f1(a)}</b> <span class="${diff >= 0 ? 'pos' : 'neg'}">${diff >= 0 ? '▲' : '▼'} ${f1(Math.abs(diff))}</span> vs your ${weaponTitle(held)}</div>`;
+    const act = best.held ? 'Step off it and back on to take it' : free ? 'Walk over it to pick it up' : `Hold <kbd>E</kbd> to swap for your ${weaponTitle(held)}`;
+    el.innerHTML = weaponCard(best.w, '', cmp + `<div class="wc-act">${act}</div>`);
+    el.classList.remove('hidden');
+  }
+  const [x, y] = toScreen(best.px, 1.3, best.pz);
+  el.style.transform = `translate(${x.toFixed(1)}px, ${(y - 30).toFixed(1)}px) translate(-50%, -100%)`;
+}
+// Both weapon slots, shown bottom right while the full map is open (Tab).
+let loadSig = '';
+function renderLoadout(){
+  const sig = player.weapons.map(w => w ? [w.uid, w.mag|0, Math.ceil(w.cd), player.ammo[w.id]].join(':') : '-').join()
+    + [player.cur, player.dmgMul, player.fireMul, player.magMul, player.reloadMul, player.pellets, player.pierce].join();
+  if (sig === loadSig) return; loadSig = sig;
+  $('loadout').innerHTML = '<div class="lo-title">Your weapons <small>Q swaps · G drops</small></div>' + player.weapons.map((w, i) =>
+    w ? weaponCard(w, i === player.cur ? '<span class="wc-held">In hand</span>' : '', '', true) : '<div class="wcard wc-empty">Empty slot</div>').join('');
 }
 
 // ---------- Inventory bar ----------
@@ -197,7 +269,7 @@ function updateTags(){
   };
   if (state.mode === 'play'){
     const near = (x, z) => Math.hypot(x - player.pos.x, z - player.pos.z) < 2.8;
-    for (const d of drops) if (n < 5 && near(d.px, d.pz)) show(d.px, d.pz, dropName(d));
+    for (const d of drops) if (n < 5 && d.kind !== 'weapon' && near(d.px, d.pz)) show(d.px, d.pz, dropName(d));  // weapons get a card (updateWeaponTip)
     for (const p of pickups) if (n < 5 && near(p.g.position.x, p.g.position.z)) show(p.g.position.x, p.g.position.z, '✚ Health +20');
   }
   for (let i=n;i<tags.length;i++) tags[i].classList.add('hidden');
