@@ -29,9 +29,12 @@ import { crystalFx } from './crystal.js';
 import { toast, floatText, banner, showScreen, renderCraft } from './hud.js';
 import { startCity, newSeed, enterRun, roadFx, showUpgrades, showGameOver, spectate } from './game.js';
 import { ACTS } from './host.js';
+import { clock, syncClock, track, resetTrack, at } from './smooth.js';
 
 const zs = new Map(), ds = new Map(), hs = new Map(), hz = new Map();  // nid -> mirrored zombie / drop / cross / hazard
-let mySlot = -1, myTp = -1, ctlT = 0, lastTick = 0, tickDt = 0.05, pending = null;
+let mySlot = -1, myTp = -1, ctlT = 0, pending = null;
+// The host's clock; other players and zombies are drawn DELAY s behind it, between two of its ticks (smooth.js).
+const hostClock = clock(), DELAY = 0.1;
 const bySlot = s => players.find(p => p.slot === s);
 
 // One-shot actions from this machine's input: sent to the host, or done right here when we are it.
@@ -97,9 +100,7 @@ function applyRoster(list){
 
 // ---------- Ticks ----------
 function tick(m){
-  const now = performance.now()/1000;
-  if (lastTick) tickDt += (Math.min(0.2, now - lastTick) - tickDt)*0.2;
-  lastTick = now;
+  syncClock(hostClock, m.ts); tickT = m.ts;
   for (const e of m.e) handle(e);
   for (const e of m.pe) handle(e);
   for (const s in m.f) applyFull(bySlot(+s), m.f[s]);
@@ -107,27 +108,16 @@ function tick(m){
   for (const e of m.p) applyPlayer(e);
   for (const e of m.z){
     const z = zs.get(e[0]); if (!z) continue;
-    target(z, e[1], e[2], e[3]); z.f = e[4]; mirrorHit(z, e[5]);
+    track(z, m.ts, e[1], e[2], e[3]); z.f = e[4]; mirrorHit(z, e[5]);
   }
 }
-// Ease from where it's drawn now to (x,z,ry) over one tick; snap if it hasn't been updated lately.
-function target(o, x, z, ry){
-  const fresh = performance.now()/1000 - (o.seen || 0) < 0.3;
-  o.seen = performance.now()/1000;
-  const g = o.g;
-  if (!fresh){ o.pos.x = x; o.pos.z = z; g.rotation.y = ry; }
-  o.i0 = [o.pos.x, o.pos.z, g.rotation.y]; o.i1 = [x, z, ry]; o.it = 0;
-}
-function interp(o, dt){
-  if (!o.i1) return 0;
-  const k0 = Math.min(1, o.it/tickDt); o.it += dt;
-  const k = Math.min(1, o.it/tickDt), [x0, z0, r0] = o.i0, [x1, z1, r1] = o.i1;
-  const px = o.pos.x, pz = o.pos.z;
-  o.pos.x = x0 + (x1 - x0)*k; o.pos.z = z0 + (z1 - z0)*k;
-  const d = Math.atan2(Math.sin(r1 - r0), Math.cos(r1 - r0));
-  o.g.rotation.y = r0 + d*k;
-  if (o.vel){ o.vel.x = k > k0 ? (o.pos.x - px)/dt : 0; o.vel.z = k > k0 ? (o.pos.z - pz)/dt : 0; }
-  return k > k0 ? Math.hypot(x1 - x0, z1 - z0)/tickDt : 0;
+let tickT = 0;  // host time of the tick being applied
+// Draws o where it was DELAY s ago on the host (blended between two ticks); returns its speed.
+function smooth(o){
+  const s = at(o, hostClock, DELAY); if (!s) return 0;
+  o.pos.x = s.x; o.pos.z = s.z; o.g.rotation.y = s.r;
+  if (o.vel){ o.vel.x = s.vx; o.vel.z = s.vz; }
+  return Math.hypot(s.vx, s.vz);
 }
 function applyRun(s){
   state.level = s.lv; state.phase = s.ph; state.takeover = s.tk; state.exitT = s.ex; state.exitIn = s.ei;
@@ -163,13 +153,13 @@ function applyPlayer(e){
     // Our own position is ours, unless the host moved us (city start, a correction).
     if (tp !== myTp){ myTp = tp; p.pos.set(x, 0, z); p.vel.set(0, 0, 0); p.g.position.copy(p.pos); camFocus.copy(p.pos); p.lastTile = -1; }
   } else {
-    if (tp !== p.tpSeen){ p.tpSeen = tp; p.seen = 0; }
-    target(p, x, z, a);
-    p.nvx = vx; p.nvz = vz;
+    if (tp !== p.tpSeen){ p.tpSeen = tp; resetTrack(p); }  // teleported: no sliding across the map
+    track(p, tickT, x, z, a);
   }
   if (drone){
-    if (!p.drone){ p.drone = droneModel(); p.g.parent.add(p.drone); }
-    p.drone.visible = true; p.drone.position.set(drone[0], drone[1], drone[2]); p.drone.rotation.y = drone[3];
+    if (!p.drone){ p.drone = droneModel(); p.g.parent.add(p.drone); p.droneY = { trk:null }; }
+    if (!p.drone.visible){ p.drone.visible = true; resetTrack(p.droneY); p.drone.position.set(drone[0], drone[1], drone[2]); }
+    track(p.droneY, tickT, drone[0], drone[2], drone[3]); p.droneY.y = drone[1];
   } else if (p.drone) p.drone.visible = false;
 }
 // Everything the HUD shows about player p (ours, or the one we watch).
@@ -208,7 +198,7 @@ function handle(e){
     case 'z+': {
       if (zs.has(a)) break;
       const z = mirrorSpawn(a, b, c, d, f, g, h, i, j);
-      zs.set(a, z); z.seen = performance.now()/1000;
+      zs.set(a, z);
       const v = viewed(); if (h > 0 && v && Math.hypot(v.pos.x - d, v.pos.z - f) < 22) playSfx('dig');
       break;
     }
@@ -293,7 +283,7 @@ export function clientUpdate(dt, t){
   if (ctlT <= 0 && state.mode !== 'menu'){
     ctlT = CTL;
     const c = p.ctl;
-    send(0, { t:'c', mx:c.mx, mz:c.mz, sp:c.sprint, f:c.fire, u:c.use, ax:r2(c.aim.x), az:r2(c.aim.z), x:r2(p.pos.x), z:r2(p.pos.z), vx:r2(p.vel.x), vz:r2(p.vel.z), tp:myTp, v:viewed().slot });
+    send(0, { t:'c', ts:Math.round(performance.now())/1000, a:Math.round(p.angle*1000)/1000, mx:c.mx, mz:c.mz, sp:c.sprint, f:c.fire, u:c.use, ax:r2(c.aim.x), az:r2(c.aim.z), x:r2(p.pos.x), z:r2(p.pos.z), vx:r2(p.vel.x), vz:r2(p.vel.z), tp:myTp, v:viewed().slot });
   }
   // Rail whine for our own charge (the host only plays it for its own screen).
   if (p.charge > 0 && !p.railStop) p.railStop = playSfx('charge');
@@ -301,9 +291,14 @@ export function clientUpdate(dt, t){
   for (const o of players){
     if (o.dead) continue;
     if (o !== p){
-      const v = interp(o, dt);
+      const v = smooth(o);
       o.g.position.copy(o.pos); o.angle = o.g.rotation.y;
       animateLegs(o, dt, v);
+    }
+    if (o !== p && o.drone && o.drone.visible){
+      const s = at(o.droneY, hostClock, DELAY), d = o.drone;
+      if (s){ d.position.x = s.x; d.position.z = s.z; d.rotation.y = s.r; }
+      d.position.y += (o.droneY.y - d.position.y)*Math.min(1, dt*8);
     }
     if (o.spraying) sprayFx(o, o.spraying, dt);
     if (o.charge > 0) chargeFx(o, o.charge, dt);
@@ -315,7 +310,7 @@ export function clientUpdate(dt, t){
   }
   const v = viewed();
   for (const z of zombies){
-    const vl = interp(z, dt);
+    const vl = smooth(z);
     animateMirror(z, dt, t, Math.hypot(v.pos.x - z.pos.x, v.pos.z - z.pos.z), vl);
   }
   if (play) for (const d of drops) animateDrop(d, dt);

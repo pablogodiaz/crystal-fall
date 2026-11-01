@@ -20,6 +20,7 @@ import { swapWeapon, dropWeapon, useSlot, dropSlot, releaseThrow, cycleThrowable
 import { craftFor, toast, toastAll } from './hud.js';
 import { pickUpgrade } from './game.js';
 import { mpick } from './utils.js';
+import { clock, syncClock, track, resetTrack } from './smooth.js';
 
 let idc = 0;
 export const nextId = () => ++idc;  // network ids: zombies, drops, health crosses, hazards (nid)
@@ -71,7 +72,14 @@ function onMessage(from, m){
     if (p.dead) return;
     const k = p.ctl;
     k.mx = +m.mx || 0; k.mz = +m.mz || 0; k.sprint = !!m.sp; k.fire = !!m.f; k.use = !!m.u; k.aim.set(+m.ax || 0, 1.1, +m.az || 0);
-    p.net = { x:+m.x, z:+m.z, vx:+m.vx || 0, vz:+m.vz || 0, tp:m.tp }; p.ctlAt = performance.now();
+    p.net = { tp:m.tp }; p.ctlAt = performance.now();
+    // Where their machine moved them, stamped with its clock: movePlayer draws it a little in the past,
+    // blended between reports (smooth.js), instead of jumping to each one as it lands.
+    if (Number.isFinite(+m.ts)){
+      syncClock(p.clk || (p.clk = clock()), +m.ts);
+      if (p.trkTp !== p.tp){ p.trkTp = p.tp; resetTrack(p); }  // nothing from before a teleport
+      if (m.tp === p.tp) track(p, +m.ts, +m.x, +m.z, +m.a || 0);
+    }
   } else if (m.t === 'a' && ACTS[m.a]) ACTS[m.a](p, m.v);
 }
 // A client says hello: version check, then a player for them (theirs back if they just dropped out),
@@ -150,9 +158,9 @@ export function hostTick(dt){
 export function flushNow(){
   if (!sending()){ ev = []; return; }
   const e = JSON.stringify(ev); ev = [];
-  const s = JSON.stringify(runState()), pl = JSON.stringify(players.map(playerSnap));
+  const s = JSON.stringify(runState()), pl = JSON.stringify(players.map(playerSnap)), hostT = (performance.now()/1000).toFixed(3);
   for (const c of peers.values()){
-    const msg = `{"t":"k","e":${e},"pe":${JSON.stringify(c.evs)},"s":${s},"p":${pl},"z":${JSON.stringify(zombieSnap(c))},"f":${JSON.stringify(fullFor(c))}}`;
+    const msg = `{"t":"k","ts":${hostT},"e":${e},"pe":${JSON.stringify(c.evs)},"s":${s},"p":${pl},"z":${JSON.stringify(zombieSnap(c))},"f":${JSON.stringify(fullFor(c))}}`;
     c.evs = [];
     send(c.id, msg);
   }

@@ -73,13 +73,20 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     drone, rail charge), `z` (zombies within 64 units of the player they watch: nid, position, facing,
     flags from `zombieFlags`, hp %) and `f` (full HUD state for their player and the one they watch, only
     when it changed). Joining mid-run gets `syncEvents()` (the world as events) in the `w` welcome.
+  - **Smoothing** (`smooth.js`, snapshot interpolation): positions from another machine arrive in steps
+    and at uneven times, so they're never drawn as they land. Every tick (`ts`, host clock) and control
+    message (`ts`, client clock) is stamped; each remote thing keeps a few samples (`track`) and is drawn
+    a little in the past, blended between the two samples around that moment (`at`): remote players on
+    the host 70 ms behind (`REMOTE_DELAY` in `player.js`, their facing comes from the client too), other
+    players, zombies and drones on a client 100 ms behind (`DELAY` in `client.js`). The clock offset
+    (`syncClock`) eases rather than jumps; teleports (`tp`) and gaps over 0.5 s restart the samples.
   - **Client** (`client.js`): never calls `update()`. `startCity(level, seed)` builds the same city
     (skipping `populate`); everything else is mirrored: events spawn/kill zombies (`mirrorSpawn`/
     `mirrorKill`, corpses play out locally), drops (`dropMesh`), health crosses, hazards, throws, acid,
     wells and orbs as **ghosts** (same meshes, no gameplay), ghost bullets (`addBullet(…, { ghost })`, fly
     and stop at walls/zombies in `updateBullets`), searched containers, landmarks, Crystal steps
     (`crystalFx`), the road (`roadFx`), upgrades (`showUpgrades`), game over (`showGameOver`). Snapshots
-    move other players and zombies (eased over one tick); `animateMirror` drives zombie looks from flags.
+    move other players and zombies (smoothed, see below); `animateMirror` drives zombie looks from flags.
     Its own player is predicted with `movePlayer` and reported; knockback arrives as `kick`.
   - **Effects reach clients by themselves:** `burst`, `addDecal`, `addRing`/`shockwave`, `shake` (fx.js) and
     every `sfx.*` call (wrapped in `initHost`) are emitted unless passed `local` (ambient effects of things
@@ -469,7 +476,8 @@ js/
                   mid-run sync, disconnects; nextId() network ids
   client.js       Client session: mirrors the host's world (events, snapshots, interpolation), predicts its
                   own player, act()
-  lobby.js        Host co-op / Join co-op buttons and the lobby card
+  lobby.js        Host co-op / Join co-op buttons and the lobby card, the ?bot autopilot
+  smooth.js       Snapshot interpolation: timestamped samples, clock offset, drawing remote things slightly in the past
   devtools.js     Dev tools panel (` key): cheats, city/phase jumps, teleport, spawning, items, time scale
 features/
   multiplayer.md  Plan for the rest of co-op (networking: relay server, host/client split, messages)

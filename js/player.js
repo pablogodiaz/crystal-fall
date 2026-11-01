@@ -19,6 +19,10 @@ import { makeNoise } from './zombies.js';
 import { updateBot } from './bots.js';
 import { AI, COOP } from './threats.js';
 import { emitTo } from './host.js';
+import { at } from './smooth.js';
+// A remote player is drawn this far behind their machine's reports (30 a second), so there are
+// always two to blend between (smooth.js).
+const REMOTE_DELAY = 0.07;
 
 export const MAX_PLAYERS = 4;
 export const me = () => players[state.me];
@@ -215,13 +219,13 @@ export function movePlayer(p, dt){
   p.pos.x += p.vel.x*dt; p.pos.z += p.vel.z*dt;
   if (!(cheat && dev.noclip)){ resolveCircle(p.pos, p.radius); resolveCircle(p.pos, p.radius); }
   else { const m = world.city.n*TILE; p.pos.x = Math.min(m - 0.1, Math.max(TILE, p.pos.x)); p.pos.z = Math.min(m - TILE, Math.max(TILE, p.pos.z)); }
-  const n = p.net;
-  if (p.remote && n){
-    if (n.tp === p.tp && Math.hypot(n.x - p.pos.x, n.z - p.pos.z) < 4){ p.pos.x = n.x; p.pos.z = n.z; p.vel.x = n.vx; p.vel.z = n.vz; }
-    else if (n.tp === p.tp) p.tp++;  // too far off: their machine snaps back to the host's position
+  const n = p.net, s = p.remote && n && n.tp === p.tp && p.clk ? at(p, p.clk, REMOTE_DELAY) : null;
+  if (s && Math.hypot(s.x - p.pos.x, s.z - p.pos.z) < 4){ p.pos.x = s.x; p.pos.z = s.z; p.vel.x = s.vx; p.vel.z = s.vz; p.angle = s.r; }
+  else {
+    if (s) p.tp++;  // too far off: their machine snaps back to the host's position
+    const ax = c.aim.x - p.pos.x, az = c.aim.z - p.pos.z;
+    if (ax*ax + az*az > 0.04) p.angle = Math.atan2(ax, az);
   }
-  const ax = c.aim.x - p.pos.x, az = c.aim.z - p.pos.z;
-  if (ax*ax + az*az > 0.04) p.angle = Math.atan2(ax, az);
   p.g.position.copy(p.pos);
   p.g.rotation.y = p.angle;
   animateLegs(p, dt, Math.hypot(p.vel.x, p.vel.z));
