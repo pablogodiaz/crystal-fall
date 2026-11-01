@@ -11,7 +11,9 @@ import { isBlockedTile } from './grid.js';
 import { player, aimPoint } from './player.js';
 import { damageZombie, stunZombie, makeNoise } from './zombies.js';
 import { hurtPlayer, hitCrystal, CRYSTAL_R } from './combat.js';
-import { selectedThrowable, countItem } from './inventory.js';
+import { selectedThrowable, countItem, curWeapon } from './inventory.js';
+import { splashPotion } from './uniques.js';
+import { WEAPONS } from './items.js';
 import { burst, shockwave, addDecal } from './fx.js';
 import { sfx } from './audio.js';
 
@@ -20,7 +22,7 @@ let flash = 0;
 
 // Flight path of a throw toward the cursor: max 13 units, landing short of the first wall in the way.
 // T = flight time; arcY(k, T) = height at progress k. Shared by the throw and the aim preview.
-function throwPath(){
+export function throwPath(){
   const px = player.pos.x, pz = player.pos.z;
   let dx = aimPoint.x - px, dz = aimPoint.z - pz, d = Math.hypot(dx,dz);
   if (d < 0.5){ dx = Math.sin(player.angle); dz = Math.cos(player.angle); d = 1; }
@@ -32,17 +34,21 @@ function throwPath(){
 const arcY = (k, T) => 1.3*(1-k) + Math.sin(k*Math.PI)*(1 + T*3) + 0.12;
 export function throwItem(id){
   const p = throwPath();
-  const m = new THREE.Mesh(id === 'molotov' ? SH.bottleGeo : SH.pipeGeo, id === 'molotov' ? SH.bottleMat : SH.pipeMat);
+  const m = id === 'potion' ? new THREE.Mesh(SH.flaskGeo, SH.flaskMat) : new THREE.Mesh(id === 'molotov' ? SH.bottleGeo : SH.pipeGeo, id === 'molotov' ? SH.bottleMat : SH.pipeMat);
   m.position.set(p.sx, 1.3, p.sz); scene.add(m);
   throwns.push(Object.assign({ id, mesh:m, t:0 }, p));
   sfx.throw();
   return true;
 }
 
-// ---------- Aim preview (hold G) ----------
+// The Turncoat flask (a unique weapon) flies like a throwable; it splashes in uniques.js.
+export const throwPotion = () => throwItem('potion');
+
+// ---------- Aim preview (hold right click) ----------
 // Outline of the area the throwable will affect (fire / blast radius) plus a dotted flight arc.
+// Also shown whenever a ready Turncoat flask or a loaded gravity well launcher is in your hands.
 // Drawn without depth testing so it stays visible behind buildings. Built once, never disposed.
-const PREVIEW = { molotov:{ r:FIRE_R, color:0xff8a2a }, pipebomb:{ r:BOMB_R, color:0x8cc8ff } };
+const PREVIEW = { molotov:{ r:FIRE_R, color:0xff8a2a }, pipebomb:{ r:BOMB_R, color:0x8cc8ff }, potion:{ r:WEAPONS.potion.radius, color:0xff5fd2 }, gravity:{ r:WEAPONS.gravity.radius, color:0xa070ff } };
 let preview = null;
 function buildPreview(){
   const mat = new THREE.MeshBasicMaterial({ transparent:true, opacity:0.85, depthTest:false, depthWrite:false, side:THREE.DoubleSide });
@@ -60,9 +66,12 @@ function buildPreview(){
 }
 // Called every frame in play: shows the preview while player.aiming, hides it otherwise.
 export function updateThrowPreview(){
-  const id = player.aiming && state.mode === 'play' ? selectedThrowable() : null;
-  if (player.aiming && !countItem(id)) player.aiming = false;
-  if (!player.aiming || !id){ if (preview) preview.g.visible = false; return; }
+  let id = player.aiming && state.mode === 'play' ? selectedThrowable() : null;
+  if (player.aiming && !countItem(id)){ player.aiming = false; id = null; }
+  const w = state.mode === 'play' && player.weapons && curWeapon();
+  if (!id && w && w.id === 'potion' && w.cd <= 0) id = 'potion';
+  if (!id && w && w.id === 'gravity' && w.mag >= 1) id = 'gravity';
+  if (!id){ if (preview) preview.g.visible = false; return; }
   preview = preview || buildPreview();
   const p = throwPath(), P = PREVIEW[id];
   preview.mat.color.setHex(P.color); preview.fillMat.color.setHex(P.color);
@@ -76,7 +85,8 @@ export function updateThrowPreview(){
 }
 function land(o){
   const x = o.ex, z = o.ez;
-  if (o.id === 'molotov'){
+  if (o.id === 'potion'){ burst(new THREE.Vector3(x, 0.4, z), 'brew', 6, 2); splashPotion(x, z); }
+  else if (o.id === 'molotov'){
     const m = new THREE.Mesh(SH.fireGeo, SH.fireMat); m.rotation.x = -Math.PI/2; m.position.set(x, 0.12, z); m.scale.setScalar(FIRE_R);  // above block slabs (top at 0.08) and decals
     scene.add(m);
     hazards.push({ kind:'fire', x, z, mesh:m, t:FIRE_TIME, tick:0 });

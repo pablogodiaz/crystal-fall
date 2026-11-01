@@ -6,14 +6,16 @@
 // in buildPanel() and list them in CLAUDE.md.
 import * as THREE from 'three';
 import { TILE, N, walkable, DISTRICTS } from './config.js';
-import { WEAPONS, ITEMS, LANDMARKS } from './items.js';
+import { WEAPONS, ITEMS, LANDMARKS, GUNS, UNIQUES, RARITY } from './items.js';
 import { ZTYPES, ZMODS, THREAT_BASE, THREAT_POOL, AI } from './threats.js';
 import { $, clamp, fmtTime } from './utils.js';
 import { camera, camFocus } from './renderer.js';
 import { state, world, zombies, dev, mouseNDC } from './state.js';
 import { player, refreshGun } from './player.js';
-import { addItem, countItem, giveWeapon, replaceWeapon, magSize } from './inventory.js';
-import { spawnZombieAt, findSpawnNear, killZombie, alertZombie } from './zombies.js';
+import { addItem, countItem, giveWeapon, replaceWeapon, magSize, curWeapon } from './inventory.js';
+import { makeWeapon, rollWeapon, rollRarity, rollMods, RARITIES, weaponTitle } from './weapons.js';
+import { spawnDrop } from './loot.js';
+import { spawnZombieAt, findSpawnNear, killZombie, alertZombie, turnZombie, freezeZombie } from './zombies.js';
 import { hitCrystal } from './combat.js';
 import { foundCrystal } from './crystal.js';
 import { updateFlow, reveal, blockIndex } from './grid.js';
@@ -91,13 +93,31 @@ function heal(){
   if (state.mode === 'dead'){ state.mode = 'play'; showScreen(null); }
   player.hp = player.maxHp; player.bleeding = false;
 }
-function refillAmmo(){ for (const w of player.weapons) if (w){ w.mag = magSize(w); player.ammo[w.id] = WEAPONS[w.id].maxAmmo; } }
-function giveGun(id){
+// Full mags, full reserves, full fuel and charge, the flask brewed.
+function refillAmmo(){ for (const w of player.weapons) if (w){ w.mag = magSize(w); w.cd = 0; player.ammo[w.id] = WEAPONS[w.id].maxAmmo || 0; } }
+// rarity: a RARITIES entry or 'random' (rolled with this city's odds); modifiers are random.
+function giveGun(id, rarity){
   ensureRun();
-  const r = giveWeapon(id);
-  if (r === 'full' && player.weapons[player.cur].id !== id) replaceWeapon(id, WEAPONS[id].mag);
-  const w = player.weapons.find(w => w && w.id === id); w.mag = magSize(w);
-  player.ammo[id] = WEAPONS[id].maxAmmo; refreshGun();
+  if (rarity === 'random') rarity = rollRarity();
+  const w = makeWeapon(id, rarity, rollMods(RARITY[rarity] ? RARITY[rarity].mods : 0));
+  if (!giveWeapon(w)) replaceWeapon(w);
+  w.mag = magSize(w); player.ammo[id] = WEAPONS[id].maxAmmo || 0; refreshGun();
+  toast(`+ ${weaponTitle(w)}`, 'good');
+}
+// New modifiers for the held gun, same rarity.
+function rerollHeld(){
+  ensureRun();
+  const w = curWeapon(); if (WEAPONS[w.id].kind || w.rarity === 'unique') return toast('Uniques have no modifiers');
+  w.mods = rollMods(RARITY[w.rarity].mods); w.mag = Math.min(w.mag, magSize(w));
+}
+// A ring of random weapon finds around you (with luck), to try the tooltip and pickups.
+function scatterWeapons(n, luck){
+  ensureRun(); closeOverlays();
+  for (let i=0;i<n;i++){
+    const a = i/n*Math.PI*2, x = player.pos.x + Math.sin(a)*2.6, z = player.pos.z + Math.cos(a)*2.6;
+    const g = walkable(world.city.grid[Math.floor(z/TILE)*N + Math.floor(x/TILE)]);
+    spawnDrop('weapon', rollWeapon(luck), 0, g ? x : player.pos.x, g ? z : player.pos.z, !g);
+  }
 }
 function giveItem(id, fill){
   ensureRun();
@@ -244,8 +264,20 @@ function buildPanel(){
   s = section(root, 'Items & weapons');
   r = row(s, 'dv-grid');
   for (const id in ITEMS) btn(r, `${ITEMS[id].icon} ${ITEMS[id].name}`, e => giveItem(id, e.shiftKey), 'Click +1, shift-click a full stack');
+  r = row(s);
+  const rar = h('select'); for (const k of ['random', ...RARITIES]){ const o = h('option', '', k === 'random' ? 'Random rarity' : RARITY[k].name); o.value = k; rar.appendChild(o); }
+  rar.addEventListener('change', () => rar.blur()); r.appendChild(rar);
   r = row(s, 'dv-grid');
-  for (const id in WEAPONS) btn(r, WEAPONS[id].name, () => giveGun(id), 'Give it (replaces the held gun when both slots are full)');
+  for (const id of GUNS) btn(r, WEAPONS[id].name, () => giveGun(id, rar.value), 'Give it at the picked rarity with random modifiers (replaces the held gun when both slots are full)');
+  for (const id of UNIQUES) btn(r, '★ ' + WEAPONS[id].name, () => giveGun(id, 'unique'), 'Unique weapon (replaces the held gun when both slots are full)');
+  r = row(s);
+  btn(r, 'Reroll mods', rerollHeld, 'New random modifiers for the gun in your hands');
+  btn(r, 'Scatter 6 guns', () => scatterWeapons(6, 0), 'Random weapon finds on the ground around you (this city’s odds)');
+  btn(r, 'Lucky ×6', () => scatterWeapons(6, 8), 'Same with armory-grade luck (more rares, legendaries and uniques)');
+  r = row(s);
+  btn(r, 'Refill gas pumps', () => { if (world.city) for (const l of world.city.landmarks) l.refueled = false; }, 'Every gas station can refuel the flamethrower again');
+  btn(r, 'Turn nearby', () => { for (const z of zombies) if (Math.hypot(z.pos.x - player.pos.x, z.pos.z - player.pos.z) < 8 && !(z.rise > 0)) turnZombie(z, WEAPONS.potion.turn); }, 'Zombies within 8 units turn on their own kind (Turncoat flask)');
+  btn(r, 'Freeze nearby', () => { for (const z of zombies) if (Math.hypot(z.pos.x - player.pos.x, z.pos.z - player.pos.z) < 8) freezeZombie(z, WEAPONS.cryo.freeze); }, 'Zombies within 8 units freeze solid (Cryo sprayer): any hit shatters them');
   r = row(s);
   btn(r, 'Refill ammo', () => { ensureRun(); refillAmmo(); });
   btn(r, 'Fill pack', () => { ensureRun(); for (const id in ITEMS) addItem(id, Math.max(0, ITEMS[id].max - countItem(id))); }, 'Tops every item up to one full stack');

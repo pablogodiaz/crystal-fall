@@ -67,14 +67,77 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   to 40%. Tunables are the constants above `updatePlayer` in `player.js`. WASD is screen-relative on the isometric grid;
   mouse aims on a plane at gun height. Upgrades (`js/upgrades.js`) mutate player stats directly;
   weapon upgrades are modifiers (`dmgMul`, `fireMul`, `magMul`, `reloadMul`, `pellets`, `pierce`)
-  applied on top of every gun's base stats.
-- **Weapons** (`WEAPONS` in `js/items.js`): pistol (start), shotgun, SMG, hunting rifle. Two weapon
-  slots (`player.weapons`, `player.cur`), Q swaps. Ammo is finite: each gun has its own reserve
-  (`player.ammo[id]`, capped by `maxAmmo`); reloads draw from it. Each gun has its own noise
-  radius (alerts zombies). Ammo finds (searches, zombie drops) are biased by `AMMO_ODDS` (`ammoType`
-  in `loot.js`): 55% the held gun, 25% your other gun (a gun with a full reserve is skipped; with
-  one gun it gets both shares), 20% any gun, so new weapons don't dilute what you need.
-- **Melee:** F any time (left click falls back to it when the held gun has no mag or reserve): a
+  applied on top of every gun's base stats and rarity modifiers (`weaponStats` in `weapons.js`;
+  uniques only take `dmgMul`/`fireMul`).
+- **Weapons** (`WEAPONS` in `js/items.js`, instances in `js/weapons.js`): standard guns (`GUNS`:
+  pistol (start), shotgun, SMG, hunting rifle) and uniques (`UNIQUES`). Two weapon slots
+  (`player.weapons`, `player.cur`), Q swaps, G drops the held one (`dropWeapon`; you always keep one).
+  A slot holds a weapon *instance* `{ id, rarity, mods, mag, uid, cd, idle }` (`makeWeapon`), so two
+  shotguns are two different guns. Ammo is finite: each gun type has its own reserve
+  (`player.ammo[id]`, capped by `maxAmmo`; uniques without `find` have none); reloads draw from it.
+  Each gun has its own noise radius (alerts zombies). Ammo finds (searches, zombie drops) are biased
+  by `AMMO_ODDS` (`ammoType` in `loot.js`): 55% the held gun, 25% your other gun (a gun with a full
+  reserve or no reserve ammo is skipped; with one gun it gets both shares), 20% any standard gun.
+  A find that lands on a unique's ammo (arrows, slugs, coolant) only stays that with
+  `AMMO_ODDS.unique` (25%); otherwise it goes to a standard gun you carry, so unique ammo stays rare.
+  - **Rarity** (`RARITY`, `rollWeapon`/`rollRarity`/`rollMods`): every found standard gun is Common,
+    Uncommon, Rare or Legendary with 0/1/2/3 random modifiers from `WMODS` (all different: damage,
+    fire rate, magazine, reload, accuracy, range, noise, knockback, ammo use, crits). Each modifier is
+    good or bad 50/50 (`WEAPON_ODDS.good`) with its own strength range, so an Uncommon can beat a
+    Legendary. `thrift` good = chance a shot is free, bad = chance it wastes a round; `crit` good =
+    chance of a ×`CRIT` hit (orange bullet), bad = chance to jam (scaled down for fast guns).
+    Rarity weights shift toward the rarer tiers each city; `luck` on a container (`LOOT[].luck`:
+    lockers, police cars, army trucks, military crates, the armory; `LUCK_SHOP` for the gun shop)
+    counts as extra cities. `weaponTitle` = "Rare Shotgun" (Commons and uniques: plain name).
+    Colours: `--r-*` tokens in `style.css` (`data-r` attribute sets `--rc`), `RARITY[].hex`/`SH.rar*`
+    in the world.
+  - **Uniques** (`unique: true`, rolled instead of a gun with `WEAPON_ODDS.unique` odds, ×2 from
+    lucky sources, only ones you don't carry; no modifiers, `kind` = how they fire, `fireUnique` in
+    `js/uniques.js`): **flamethrower** (`flame`: hold to spray a fire cone, `mag` = fuel, ignites
+    zombies (`burning`), hurts the Crystal; refuels only at gas station pumps, hold E, once per
+    station (`l.refueled`, pump targets cached on `city.pumps`)), **Turncoat flask** (`potion`:
+    thrown like a molotov via `throwPotion`; zombies in the splash are *turned* for 16 s, then a
+    60 s brew (`w.cd`); a radius preview shows while it's ready in your hands), **Arc caster**
+    (`arc`: chain lightning to up to 5 zombies, stuns, `mag` = charge that recharges after
+    `regenDelay`), **compound bow** (a regular gun with `arrow`: nearly silent, pierces, comes with
+    `start` arrows, and `keep` of its arrows land as pickups (`dropArrow`)), **gravity well launcher**
+    (`grav`: one orb per click (`w.latch`) flies to the cursor via `throwPath` and opens a well for 4 s
+    that drags zombies toward its middle and keeps them dazed (`stunZombie`), its noise drawing more in,
+    then pops and stuns; 3 charges, refilled in `resetUniques` at every city start; radius preview while
+    loaded), **railgun** (`rail`: hold to charge `w.charge` (`chargeRail`), release to fire
+    (`updateRail` watches `mouse.down`; early release fizzles): a beam hitting everything within
+    `r + 0.35` of the line, through the first wall it meets and stopped by the second, cause `'rail'`
+    (ignores riot shields); slugs reload from a reserve like a gun), **cryo sprayer** (`cryo`: shares
+    the flamethrower's `spray`/`puff` code; frost calls `chillZombie`; coolant reloads from canisters
+    found like ammo, rarely), **Crystal shard** (`shard`: each shot fans 3 shards (`pellets`, plus the
+    Spread shot upgrade) piercing 5 zombies; shards are bullets with `bounce`, reflected off walls
+    in `updateBullets` (their hit set clears on each bounce); `rechargeShards` from `breakCrystal` is the
+    only refill) and **guardian drone** (`drone`: click toggles `w.out`; flying, one shared
+    `droneModel()` circles you and shoots the nearest visible zombie whatever you hold, draining its
+    battery in 40 s; recharges docked in about 2 min and needs `launch` (25%) to take off; dropping or
+    swapping it away docks it).
+  - **Frozen zombies** (Frozen section of `zombies.js`): `z.chill` 0..1 slows them (up to `slow`) and
+    wears off; at 1 `freezeZombie`: an ice block (`SH.iceGeo`, child of `z.g`), blue glow (`setGlow`,
+    shared with turned zombies), no moving/attacking/fuses for `freeze` s (the update loop skips them,
+    only you shove them; wells still drag them). Any non-fire hit shatters them (`damageZombie` kills
+    with cause `'blast'`), fire thaws them.
+  - **Turned zombies** (Turned section of `zombies.js`, `turnZombie`): pink glow and a ♥ mark;
+    they hunt the nearest other zombie (`z.foe`, flow fields like everything else) and bite it
+    (`WEAPONS.potion.bite` × their damage, cause `'bite'`); bitten zombies fight back for 4 s. They
+    never hurt you; your bullets, melee, flames and lightning pass them by (blasts don't). With no
+    foe they follow you. When it wears off they walk home.
+  - **Models** (`gunModel` in `assets.js`): one shared-geometry model per weapon, with a stripe
+    in its rarity colour; the same model is held by the player (`refreshGun`) and spins on the
+    ground (1.8×, rarity ring, a light beam from Rare up).
+  - **Tooltip / loadout** (`hud.js`): the nearest weapon on the ground within 3.2 units gets a card
+    (`weaponCard`: stats, modifiers green/red, unique description, DPS against your held gun, how
+    to take it). Holding Tab shows both slots' cards bottom right of the full map (`#loadout`).
+  - **Pickups:** weapons are never picked up by walking over them. Every weapon find is tossed out
+    of the container onto the ground (with a sting sound and a "Found: …" floater) so it can't go
+    unnoticed; hold E next to it to pick it up into a free slot, or to swap it for the one in your
+    hands. After any E action, E must be released before the next one starts (`interact.lock`).
+- **Melee:** F any time (left click falls back to it when the held gun has no mag or reserve, or
+  a unique can't fire: no fuel, brewing, recharging): a
   0.4 s butt-stroke animation (`poseMelee` in `player.js`); the blow lands 42% in (`meleeStrike`),
   hitting zombies (and the Crystal) in a ±1 rad cone within ~1.7 units for 1 damage (× `dmgMul`)
   plus knockback.
@@ -89,7 +152,9 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
 - **Looting** (`js/loot.js`): containers are car trunks, dumpsters, crates, doors on some
   buildings (labelled shop/house/warehouse by building style) and the props inside walk-in landmarks. Hold E within range for 1.5 s (2.5 s at landmarks); a progress ring shows on screen.
   Searching makes noise (`makeNoise`) that can alert nearby zombies; trunks can set off a car alarm.
-  Loot tables are in `LOOT` (`js/items.js`), rolled with `Math.random` at search time.
+  Loot tables are in `LOOT` (`js/items.js`), rolled with `Math.random` at search time. `weapon`
+  entries roll a weapon instance (`rollWeapon(luck)`); most containers have a small chance, crates,
+  lockers and military gear more.
 - **Landmarks** (`LANDMARKS` in `items.js`, ASCII `TEMPLATES` + `LM_SPEC` + `placeLandmarks`/`stamp`
   in `cityGen.js`): every city has a police station, a supermarket and a hardware store, plus 1–2
   pharmacies and 1–2 gas stations. New kinds unlock as the run goes on (`LANDMARKS[].from`, with a
@@ -102,7 +167,7 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     between them included. Walls are full `T.BUILDING` tiles around `T.FLOOR` tiles with an open
     entrance; loot is in searchable props inside, not at a door. Supermarket: shelf aisles
     (`shelf` containers), checkouts, a parking lot with cars and carts, `2 + ceil(level/2)` shoppers
-    inside. Police station: armory (`armory`: a gun you don't have + ammo), lockers, desks, two cells
+    inside. Police station: armory (`armory`: a lucky weapon roll, usually a gun type you don't have, + ammo), lockers, desks, two cells
     behind bars (`T.BARS`: blocks walking, shots and sight pass) where a prisoner may be stuck, a
     yard with flashing police cars (`cruiser` trunks), a flag; `3 + level` guards, half inside and
     half by the entrance. Hospital: an open ward with beds, a dispensary and hall lined with
@@ -114,8 +179,8 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     ammo-heavy, maybe a gun); `3 + ceil(level/2)` soldier guards inside (riot-gear odds like police).
   - **Door-searched** (pharmacy: bandages, medkits, green cross; hardware store: scrap, maybe a pipe
     bomb, lumber yard and a crate; gas station: molotovs, scrap, maybe a drink, canopy over pumps and
-    a price pylon; gun shop: three ammo finds and a 40% chance of a gun you don't have, dark walls
-    and barred windows): one block, a solid shop searched through its awninged front door.
+    a price pylon; gun shop: three ammo finds and a 60% chance of a weapon, usually a gun type you don't have, dark walls
+    and barred windows; its gun rolls with `LUCK_SHOP`): one block, a solid shop searched through its awninged front door.
   - Discovered once the tile in front of the door/entrance is revealed, then shown on the map;
     dimmed there once everything in it (`l.cts`) is searched.
 - **Crafting** (C, `RECIPES`): molotov (3 scrap) burns a 2.6-unit area for 6 s, also damaging the
@@ -207,6 +272,10 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   brutes (`heal` in `ZTYPES`) or when below 40% HP), otherwise ~7% a small ammo box (14% during
   the takeover, `CRYSTAL.ammoDrop`, so the takeover's nonstop fighting stays possible). An
   exploder's own detonation gives no kill and no drop.
+- **Ground drops spread out** (`freeSpot` in `loot.js`): every drop (and health cross) lands on the
+  nearest spot at least 1 unit from other drops/crosses, on an open tile in sight of where it fell,
+  so piles fan out instead of stacking. Drops given a `from` point (search results) are tossed there
+  in a short arc (`d.fly`) and can't be picked up mid-air.
 - **Pickup feedback:** everything you collect (ground drops, search results, health crosses) floats
   up over the player as "+1 🩹 Bandage" (`floatText` in `hud.js`; several at once rise one after
   another). Ground drops and health crosses within 2.8 units get a small name tag below them
@@ -236,15 +305,18 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   - Zombies: spawn ×1–50 of any type with any modifiers near you (`dev.spawn` overrides
     `rollThreat`), hunting or not, rising or standing; kill all (no kills/drops; exploders still
     blow), calm all, alert all; freeze zombies (skips `updateZombies`).
-  - Items & weapons: +1 of any item (shift-click: a full stack), any gun (replaces the held one when
-    both slots are full) with full ammo, refill ammo, fill/empty the pack. Upgrades: apply any.
+  - Items & weapons: +1 of any item (shift-click: a full stack), any gun at a picked rarity (or
+    random) with random modifiers, any unique (both replace the held one when both slots are full)
+    with full ammo; reroll the held gun's modifiers; scatter 6 random weapon finds around you (normal
+    or lucky odds, for the tooltip); refill ammo (also fuel, charge and the flask); refill every gas
+    pump; turn or freeze the zombies near you; fill/empty the pack. Upgrades: apply any.
   - World: time scale (stopped, 0.25–3×; >1 runs several capped `update` steps per frame), camera
     zoom, hide HUD.
   - Using anything sets `state.cheated` (a violet "Dev" chip under the stamina bar; the best run
     isn't saved). The player cheats in `SAVED` are remembered in `localStorage['crystal-fall-dev']`;
     time scale, zoom, freeze and click-teleport reset on reload.
 - **Controls:** WASD/arrows move, mouse aims, hold left click to fire, Shift sprints, R reloads,
-  F melee, Q swaps guns, hold right click to aim + release to throw (wheel/T picks molotov or pipe bomb, left click cancels), hold E searches, 1–8 use items (right-click a slot drops it), C crafts, hold Tab for the map, Esc/P pauses,
+  F melee, Q swaps guns, G drops the held one, hold right click to aim + release to throw (wheel/T picks molotov or pipe bomb, left click cancels), hold E searches, 1–8 use items (right-click a slot drops it), C crafts, hold Tab for the map, Esc/P pauses,
   M mutes, `` ` `` opens the dev tools.
 
 ## Folder structure
@@ -256,15 +328,18 @@ js/
   main.js         Boot (input, best score, menu city) and the requestAnimationFrame loop
   config.js       Grid constants: TILE, B/N (largest city), CITY_BLOCKS/cityBlocks() (size per city),
                   tile types T, walkable()/seeThrough(), DIRS8, names, palettes, DISTRICTS, LAYOUT, POP
-  items.js        Pure data: WEAPONS, ITEMS, RECIPES, LOOT tables, LANDMARKS (no imports)
+  items.js        Pure data: WEAPONS (guns + uniques), RARITY, WMODS, ITEMS, RECIPES, LOOT tables,
+                  LANDMARKS (no imports)
+  weapons.js      Weapon instances: makeWeapon, rarity/modifier/unique rolls, weaponStats, titles,
+                  modifier text
   threats.js      Pure data: zombie types (ZTYPES), modifiers (ZMODS), unlock pool/order, banner tips,
                   Crystal pulse and takeover tuning (CRYSTAL), zombie senses (AI)
   utils.js        Seeded RNG (rng/rand/randi/pick), mr/mri/mpick (Math.random), clamp, lerpAngle, fmtTime, $
   state.js        Shared mutable state: `state`, `world`, `dev` (dev tools flags), entity arrays, input state
   renderer.js     WebGLRenderer, scene, orthographic camera, lights (incl. pooled muzzle/fx lights), updateCamera(),
                   setTint() (takeover violet)
-  assets.js       Shared geometries/materials (SH, incl. landmark props and ?/! marks), window, corrugated
-                  and checker textures, carMat()
+  assets.js       Shared geometries/materials (SH, incl. landmark props and ?/!/♥ marks), window, corrugated
+                  and checker textures, carMat(), gunModel() (weapon models, rarity materials)
   audio.js        Procedural WebAudio SFX (sfx.*), initAudio(), toggleMute()
   cityGen.js      Pure procedural city generation from a seed: districts, blocks, landmark templates,
                   wrecks, containers
@@ -275,18 +350,26 @@ js/
   player.js       Player mesh, base stats + starting kit, movement/sprint/stamina, aim/reload, melee pose, bleeding
   zombies.js      Zombie meshes (incl. type/modifier tells, ?/! mark), spawning + rising from the ground,
                   senses (sight, hearing via makeNoise/alertNear, memory, leash), steering (flow fields,
-                  pipe-bomb lure), damage (armor), stun, explosive fuse and warning ring, death
+                  pipe-bomb lure), turned zombies (Turncoat flask), frozen zombies (cryo), damage (armor),
+                  stun, explosive fuse
+                  and warning ring, death
                   (ragdoll corpses, gibs)
   specials.js     Threat unlocks and rolls, screamer/spitter behaviour, acid, "New threat" banners
-  combat.js       Firing per weapon, melee start/strike, bullets, hurtPlayer/drainHp, Crystal hits
+  combat.js       Firing per weapon (rarity modifiers: crits, jams, free/wasted rounds), melee start/strike,
+                  bullets (and arrows), hurtPlayer/drainHp, Crystal hits
+  uniques.js      Unique weapons: flamethrower + cryo sprayer (spray cones, puffs, burning, refuel),
+                  Turncoat flask splash, Arc caster (chain lightning bolts), gravity wells (orbs, pull),
+                  railgun (charge, beam), Crystal shard (fire, recharge), guardian drone; cooldowns/recharges
   crystal.js      Crystal found/pulse/break, its animation, takeover end, violet tint + screen wave
-  inventory.js    Item stacks, weapon slots, ammo reserves, using/dropping items, crafting
-  loot.js         Hold-E searching, loot rolls, ground drops, landmark discovery
-  throwables.js   Molotov fire zones, pipe bombs (lure + stun blast), exploder explosion()/queueBlast()
+  inventory.js    Item stacks, weapon slots (give/replace/drop), ammo reserves, using/dropping items, crafting
+  loot.js         Hold-E searching (and gas-pump refuels, weapon swaps), loot rolls, ground drops (weapon
+                  models, arrows), landmark discovery
+  throwables.js   Molotov fire zones, pipe bombs (lure + stun blast), the flask's flight, exploder
+                  explosion()/queueBlast()
   fx.js           Particles, decals (blood/dirt/scorch), shockwave rings, health pickups, building fade,
                   walk-in landmark cutaway
-  hud.js          HUD bars/text, weapon panel, inventory bar, interact prompt, floating pickup text,
-                  drop name tags, toasts, minimap + full map, district line,
+  hud.js          HUD bars/text, weapon panel, weapon cards (ground tooltip, Tab loadout), inventory bar,
+                  interact prompt, floating pickup text, drop name tags, toasts, minimap + full map, district line,
                   craft screen, banner, showScreen()
   upgrades.js     Upgrade definitions
   game.js         Game flow: startCity/newRun, populate(), takeover countdown + spawning, exit, death,
@@ -314,6 +397,7 @@ js/
   `throwns`, `hazards`, `spits`, `puddles`, `rings`, …) are
   mutated in place (`push`/`splice`/`length = 0`), never reassigned.
   Exception: `utils.js` owns `rng`, which only it reassigns via `seedRng()`.
+  Weapons are instances on `player.weapons` and on ground drops (`d.w`); mutate them in place.
 - **Flow-field cache:** `flowTo()` fields are keyed by tile; call `clearFlowCache()` whenever the
   grid changes (`startCity`, `openRoad`). Zombies hold their own reference, so evicted fields are
   never recycled.
@@ -373,7 +457,10 @@ No automated test suite. The dev tools (`` ` ``) shortcut most of this: jump to 
 landmark, spawn the threat you changed, skip the takeover. To verify changes, serve locally and play a city through:
 explore (check districts feel different, walk into the police station and supermarket; from City
 3/4/6 the hospital, gun shop and army outpost) → search
-containers/landmarks → lose a hunting zombie by breaking line of sight, check it walks home →
+containers/landmarks (weapon finds: rarity colours, the ground tooltip, Tab loadout; "Scatter 6 guns" in the dev
+tools) → try each unique (flamethrower + a gas pump refuel, flask, arc caster, bow arrows, gravity well,
+railgun through a wall, cryo then shatter, shards bouncing + recharging on a Crystal break, drone) →
+lose a hunting zombie by breaking line of sight, check it walks home →
 shoot Crystal (pulse from City 3) → survive the takeover
 (set `state.takeover` low to skip ahead) → exit → pick upgrade → next
 city (inventory and guns should carry over); also craft, throw, swap guns, pause and death.

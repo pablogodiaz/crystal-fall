@@ -13,6 +13,7 @@ import { spawnZombieAt, findSpawnNear, alertZombie, alertNear } from './zombies.
 import { burst } from './fx.js';
 import { banner } from './hud.js';
 import { sfx } from './audio.js';
+import { rechargeShards } from './uniques.js';
 
 export function foundCrystal(){
   state.crystalFound = true;
@@ -52,6 +53,7 @@ export function breakCrystal(){
   world.mmDirty = true;
   burst(cr.pos.clone(), 'crystal', 40, 7);
   sfx.shatter(); setTimeout(sfx.roar, 500);
+  rechargeShards();  // a Crystal shard in your pack drinks from it
   state.shake = 0.8;
   ring(x, 1.8, z, 40, 1.2, 0.8); ring(x, 0.14, z, 110, 2.4, 0.7, SH.blastRingGeo);
   screenWave(1.6, true);
