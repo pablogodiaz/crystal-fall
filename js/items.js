@@ -129,13 +129,17 @@ export const ITEMS = {
   drink:    { name:'Energy drink', icon:'🥤', max:4, desc:'Refills stamina; sprinting costs 60% less for 20 s' },
   scrap:    { name:'Scrap',       icon:'🔩', max:12, desc:'Crafting material (C)' },
   molotov:  { name:'Molotov',     icon:'🍾', max:3,  desc:'Throw at the cursor: sets the area on fire' },
-  pipebomb: { name:'Pipe bomb',   icon:'💣', max:3,  desc:'Throw at the cursor: beeps to lure the dead, then a blast stuns them' }
+  pipebomb: { name:'Pipe bomb',   icon:'💣', max:3,  desc:'Throw at the cursor: beeps to lure the dead, then a blast stuns them' },
+  planks:   { name:'Planks',      icon:'🪵', max:8,  desc:'Crafting material (C); hold E at a damaged barricade or wooden fence to repair it' },
+  barricade:{ name:'Barricade',   icon:'🚧', max:3,  desc:'Use to board up the tile in front of you. Zombies have to break it down' }
 };
 // Thrown with G from wherever they sit in the pack; the mouse wheel / T picks which one.
 export const THROWABLES = ['molotov','pipebomb'];
+// cost = materials (item id -> count).
 export const RECIPES = [
-  { id:'molotov', scrap:3, desc:'Burns everything in a small area for 6 s.' },
-  { id:'pipebomb', scrap:4, desc:'Draws zombies to it for 3.5 s, then stuns everything nearby. No damage.' }
+  { id:'molotov', cost:{ scrap:3 }, desc:'Burns everything in a small area for 6 s.' },
+  { id:'pipebomb', cost:{ scrap:4 }, desc:'Draws zombies to it for 3.5 s, then stuns everything nearby. No damage.' },
+  { id:'barricade', cost:{ planks:2, scrap:1 }, desc:'Boards up a tile in front of you. Zombies can see and get shot through it, but must break it down to pass.' }
 ];
 
 // Searchable containers. time = seconds holding E; noise = alert radius while searching.
@@ -145,9 +149,10 @@ export const RECIPES = [
 // cruiser/ambulance/humvee = the trunks of landmark vehicles.
 export const LOOT = {
   trunk:    { name:'car trunk',  time:1.5, noise:10, rolls:[1,2], empty:0.2,  table:[['ammo',4],['scrap',3],['drink',1],['bandage',1.5],['molotov',0.3],['weapon',0.25]] },
-  dumpster: { name:'dumpster',   time:1.5, noise:9,  rolls:[1,2], empty:0.25, table:[['scrap',4],['drink',2],['ammo',1.5],['bandage',1]] },
-  crate:    { name:'crate',      time:1.5, noise:8,  rolls:[2,3], empty:0,    table:[['ammo',5],['scrap',4],['weapon',0.8],['molotov',0.4],['pipebomb',0.4]] },
-  door:     { name:'house',      time:1.5, noise:8,  rolls:[1,2], empty:0.2,  table:[['drink',1.5],['bandage',2],['ammo',3],['scrap',1.5],['medkit',0.4],['weapon',0.15]] },
+  dumpster: { name:'dumpster',   time:1.5, noise:9,  rolls:[1,2], empty:0.25, table:[['scrap',4],['drink',2],['ammo',1.5],['bandage',1],['planks',1.2]] },
+  crate:    { name:'crate',      time:1.5, noise:8,  rolls:[2,3], empty:0,    table:[['ammo',5],['scrap',4],['weapon',0.8],['molotov',0.4],['pipebomb',0.4],['planks',1.5]] },
+  door:     { name:'house',      time:1.5, noise:8,  rolls:[1,2], empty:0.2,  table:[['drink',1.5],['bandage',2],['ammo',3],['scrap',1.5],['medkit',0.4],['weapon',0.15],['planks',1.2]] },
+  lumber:   { name:'lumber pile', time:1.5, noise:8, rolls:[1,1], empty:0,    table:[['planks',1]] },
   shelf:    { name:'shelf',      time:1.2, noise:6,  rolls:[1,2], empty:0.15, table:[['drink',4],['bandage',1.5],['scrap',1.5],['molotov',0.3]] },
   locker:   { name:'locker',     time:1.5, noise:8,  rolls:[1,2], empty:0.1,  luck:1, table:[['ammo',6],['bandage',1.5],['pipebomb',0.5],['medkit',0.3],['weapon',0.6]] },
   desk:     { name:'desk',       time:1.2, noise:5,  rolls:[1,1], empty:0.3,  table:[['ammo',3],['bandage',1],['drink',1],['scrap',1]] },

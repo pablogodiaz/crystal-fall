@@ -7,7 +7,8 @@ import { mr } from './utils.js';
 import { scene, fxLight } from './renderer.js';
 import { SH } from './assets.js';
 import { state, world, zombies, throwns, hazards, players } from './state.js';
-import { isBlockedTile, isOpaqueTile } from './grid.js';
+import { isBlockedTile, isOpaqueTile, groundAt } from './grid.js';
+import { blastBreaks } from './breakables.js';
 import { me } from './player.js';
 import { damageZombie, stunZombie, makeNoise } from './zombies.js';
 import { hurtPlayer, hitCrystal, CRYSTAL_R } from './combat.js';
@@ -55,12 +56,12 @@ export function throwMesh(id, sx, sz, ex, ez, T, ghost){
 }
 // Fire zones and pipe bombs on the ground (host: with their gameplay fields; clients: ghosts).
 export function fireMesh(x, z, t, nid, ghost){
-  const m = new THREE.Mesh(SH.fireGeo, SH.fireMat); m.rotation.x = -Math.PI/2; m.position.set(x, 0.12, z); m.scale.setScalar(FIRE_R);  // above block slabs (top at 0.08) and decals
+  const m = new THREE.Mesh(SH.fireGeo, SH.fireMat); m.rotation.x = -Math.PI/2; m.position.set(x, groundAt(x, z) + 0.12, z); m.scale.setScalar(FIRE_R);  // above block slabs (top at 0.08) and decals
   scene.add(m);
   const h = { kind:'fire', x, z, mesh:m, t, tick:0, nid, ghost }; hazards.push(h); return h;
 }
 export function bombMesh(x, z, t, nid, ghost){
-  const g = new THREE.Group(); g.position.set(x, 0, z);
+  const g = new THREE.Group(); g.position.set(x, groundAt(x, z), z);
   const pipe = new THREE.Mesh(SH.pipeGeo, SH.pipeMat); pipe.rotation.z = Math.PI/2; pipe.position.y = 0.12;
   const led = new THREE.Mesh(SH.beepGeo, SH.beepMat); led.position.y = 0.26;
   g.add(pipe, led); scene.add(g);
@@ -136,6 +137,7 @@ export function explosion(x, z, R, zDmg, pDmg, noise){
     const pd = Math.hypot(p.pos.x - x, p.pos.z - z);
     if (!p.dead && pd < R) hurtPlayer(p, pDmg*(1 - pd/(R*1.1)), null);
   }
+  blastBreaks(x, z, R, 12);
   const p = new THREE.Vector3(x, 0.6, z);
   burst(p, 'fire', 24, 8); burst(p, 'spark', 16, 9); burst(p, 'dust', 16, 6);
   shockwave(x, z, R, 0xff6a1a); addDecal(x, z, R*0.75, SH.scorchMat);

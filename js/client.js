@@ -15,7 +15,8 @@ import { state, world, net, players, zombies, drops, pickups, hazards, puddles, 
 import { onNet, connect, disconnect, send, VERSION } from './net.js';
 import { playSfx, initAudio } from './audio.js';
 import { me, viewed, addPlayer, removePlayer, readLocal, movePlayer, animateLegs, refreshGun, poseMelee, resetPlayerStats } from './player.js';
-import { reveal, updateFlow } from './grid.js';
+import { reveal, updateFlow, groundAt, toGround } from './grid.js';
+import { mirrorBreak } from './breakables.js';
 import { updateBot } from './bots.js';
 import { mirrorSpawn, mirrorKill, mirrorHit, animateMirror } from './zombies.js';
 import { addBullet, hurtFx, updateBullets, MELEE_TIME } from './combat.js';
@@ -115,7 +116,7 @@ let tickT = 0;  // host time of the tick being applied
 // Draws o where it was DELAY s ago on the host (blended between two ticks); returns its speed.
 function smooth(o){
   const s = at(o, hostClock, DELAY); if (!s) return 0;
-  o.pos.x = s.x; o.pos.z = s.z; o.g.rotation.y = s.r;
+  o.pos.x = s.x; o.pos.z = s.z; o.pos.y = groundAt(s.x, s.z); o.g.rotation.y = s.r;
   if (o.vel){ o.vel.x = s.vx; o.vel.z = s.vz; }
   return Math.hypot(s.vx, s.vz);
 }
@@ -151,7 +152,7 @@ function applyPlayer(e){
   }
   if (mine){
     // Our own position is ours, unless the host moved us (city start, a correction).
-    if (tp !== myTp){ myTp = tp; p.pos.set(x, 0, z); p.vel.set(0, 0, 0); p.g.position.copy(p.pos); camFocus.copy(p.pos); p.lastTile = -1; }
+    if (tp !== myTp){ myTp = tp; toGround(p.pos.set(x, 0, z)); p.vel.set(0, 0, 0); p.g.position.copy(p.pos); camFocus.copy(p.pos); p.lastTile = -1; }
   } else {
     if (tp !== p.tpSeen){ p.tpSeen = tp; resetTrack(p); }  // teleported: no sliding across the map
     track(p, tickT, x, z, a);
@@ -260,6 +261,7 @@ function handle(e){
     case 'upgr': showUpgradeResult(a); if (net.bot) setTimeout(() => act('ready'), 1000); break;
     case 'wait': $('upgradeNote').textContent = a; break;
     case 'over': showGameOver(a, b, c, d); break;
+    case 'br+': case 'brh': case 'br-': mirrorBreak(e); break;
   }
 }
 

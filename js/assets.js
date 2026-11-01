@@ -59,7 +59,8 @@ export const SH = {};
     dirt: new THREE.MeshBasicMaterial({ color:0x5a4630 }),
     ice: new THREE.MeshBasicMaterial({ color:0xcff4ff }),
     void: new THREE.MeshBasicMaterial({ color:0xa070ff }),
-    brew: new THREE.MeshBasicMaterial({ color:0xff6ad5 })
+    brew: new THREE.MeshBasicMaterial({ color:0xff6ad5 }),
+    wood: new THREE.MeshBasicMaterial({ color:0x9a7448 })
   };
   SH.decalGeo = new THREE.CircleGeometry(0.55, 10);
   SH.decalMat = new THREE.MeshBasicMaterial({ color:0x3d0707, transparent:true, opacity:0.75, depthWrite:false });

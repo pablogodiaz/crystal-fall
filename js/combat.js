@@ -10,6 +10,8 @@ import { state, world, zombies, bullets, dev } from './state.js';
 import { isOpaqueTile } from './grid.js';
 import { viewed, cheats } from './player.js';
 import { damageZombie, makeNoise } from './zombies.js';
+import { breakAhead, hitBreak } from './breakables.js';
+import { AI } from './threats.js';
 import { curWeapon, magSize } from './inventory.js';
 import { toast, floatText } from './hud.js';
 import { weaponStats, hasMod } from './weapons.js';
@@ -56,7 +58,7 @@ export function fire(p, dt){
   const fx = W.arrow ? { ignite:hasMod(w, 'firearrow'), keepAll:hasMod(w, 'retriever') } : null;
   for (let i=0;i<n;i++){
     const a = p.angle + (n > 1 ? (i-(n-1)/2)*spread : 0) + mr(-S.jitter,S.jitter);
-    addBullet(W.arrow ? 'arrow' : crit ? 'crit' : 'bullet', p.pos.x + Math.sin(a)*0.9, 1.15, p.pos.z + Math.cos(a)*0.9, a, S.speed*mr(0.94,1.06), S.life,
+    addBullet(W.arrow ? 'arrow' : crit ? 'crit' : 'bullet', p.pos.x + Math.sin(a)*0.9, 1.15 + p.pos.y, p.pos.z + Math.cos(a)*0.9, a, S.speed*mr(0.94,1.06), S.life,
       Object.assign({ damage:S.dmg*(crit ? CRIT : 1), pierce:S.pierce, kb:S.kb, crit, arrow:!!W.arrow, owner:p }, fx));
   }
   if (!W.arrow) muzzle(p.pos.x + Math.sin(p.angle)*1.1, p.pos.z + Math.cos(p.angle)*1.1, crit ? 4.5 : 3);
@@ -117,6 +119,9 @@ export function meleeStrike(p){
     if (d > 1.7 + z.r || z.turned > 0) continue;  // turned zombies are on your side
     if (offAim(p, dx, dz) < 1.0) damageZombie(z, dmg, dx/d*1.8, dz/d*1.8, 'melee', p);
   }
+  // A kick at a fence or barricade in front of you.
+  const fx = Math.sin(p.angle), fz = Math.cos(p.angle), br = breakAhead(p.pos.x, p.pos.z, fx, fz, p.radius + 0.6);
+  if (br) hitBreak(br, AI.kick, fx, fz);
   const crystal = world.crystal;
   if (crystal && crystal.alive){
     const dx = crystal.pos.x - p.pos.x, dz = crystal.pos.z - p.pos.z;

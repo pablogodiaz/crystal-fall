@@ -1,7 +1,7 @@
 // ---------- City scene ----------
 // Turns generated city data into Three.js meshes, and tears it all down again.
 import * as THREE from 'three';
-import { TILE, N } from './config.js';
+import { TILE, N, RAISE } from './config.js';
 import { mr, mpick } from './utils.js';
 import { scene } from './renderer.js';
 import { SH, WIN_TEX, CORR_TEX, CHECKER_TEX, carMat } from './assets.js';
@@ -9,6 +9,8 @@ import { state, world, zombies, dying, bullets, particles, pickups, decals, drop
 import { LOOT, LANDMARKS } from './items.js';
 import { disposeZombie, disposeCorpse } from './zombies.js';
 import { faded } from './fx.js';
+import { groundAt } from './grid.js';
+import { initBreaks } from './breakables.js';
 
 // Per-city geometries/materials/textures, disposed in teardownCity().
 let disposables = [], geoCache = new Map();
@@ -126,6 +128,8 @@ export function buildCityScene(c){
   buildContainers(c, opens);
   world.crystal = buildCrystal(c.crystalTile, state.level);
   world.barricade = buildBarricade(c.exitZ, n);
+  buildRaised(c);
+  initBreaks(c);
 }
 
 // ---------- Cars ----------
@@ -212,6 +216,45 @@ function buildScars(c){
       dummy.updateMatrix(); im.setMatrixAt(k++, dummy.matrix);
     }
     im.castShadow = im.receiveShadow = true; cityGroup.add(im);
+  }
+}
+
+// ---------- Raised ground ----------
+// Hills (grass top, earthy banks sloping in a little), loading docks (concrete with a yellow edge and
+// rubber bumpers) and terraces (paving), each with its ramps (wedges) or stairs.
+const LOOK = { knoll:{ top:0x4a5a33, side:0x5a4b38 }, dock:{ top:0x8d8a84, side:0x7a7770 }, terrace:{ top:0x9d968a, side:0x857e72 } };
+function buildRaised(c){
+  const cityGroup = world.cityGroup;
+  for (const r of c.raised){
+    const L = LOOK[r.kind], top = M('top-' + r.kind, L.top, { roughness:1 }), side = M('side-' + r.kind, L.side, { roughness:1, flatShading:true });
+    const w = (r.x1 - r.x0)*TILE, d = (r.z1 - r.z0)*TILE, inset = r.kind === 'knoll' ? 0.3 : 0;
+    const geo = own(box(w, RAISE, d, true)), pos = geo.attributes.position;
+    for (let i=0;i<pos.count;i++) if (pos.getY(i) > 0.01){ pos.setX(i, pos.getX(i) - Math.sign(pos.getX(i))*inset); pos.setZ(i, pos.getZ(i) - Math.sign(pos.getZ(i))*inset); }
+    geo.computeVertexNormals();
+    const m = mesh(geo, [side, side, top, side, side, side], (r.x0*TILE + w/2), 0, (r.z0*TILE + d/2), cityGroup);
+    if (r.kind === 'knoll'){
+      // Stones round its foot.
+      const rnd = srand(r.x0*97 + r.z0);
+      for (let i=0;i<5;i++){ const a = rnd(0, 6.3), s = mesh(SH.rubbleGeo, SH.rubbleMat, m.position.x + Math.cos(a)*(w/2 - 0.1), 0.15, m.position.z + Math.sin(a)*(d/2 - 0.1), cityGroup); s.scale.setScalar(rnd(0.6, 1.1)); }
+    } else if (r.kind === 'dock'){
+      mesh(G('dockEdge' + w, () => box(w, 0.08, 0.3, true)), M('dockEdge', 0xd9a21b), m.position.x, RAISE, m.position.z + d/2 - 0.15, cityGroup, false);
+      for (let k=0;k<r.x1 - r.x0;k++) mesh(G('bumper', () => box(0.4, 0.45, 0.12, true)), M('bumper', 0x1a1a1a), (r.x0 + k + 0.5)*TILE, 0.4, m.position.z + d/2 + 0.06, cityGroup);
+    }
+    for (const [x, z, dir] of r.ramps){
+      const [dx, dz] = [[1,0],[-1,0],[0,1],[0,-1]][dir], cx = (x + 0.5)*TILE, cz = (z + 0.5)*TILE;
+      if (r.kind === 'terrace'){
+        // Four steps climbing toward the top.
+        for (let k=0;k<4;k++){
+          const st = mesh(G('step' + k, () => box(TILE, RAISE*(k + 1)/4, TILE*(4 - k)/4, true)), side, cx + dx*TILE*k/8, 0, cz + dz*TILE*k/8, cityGroup);
+          st.rotation.y = dx ? Math.PI/2 : 0;
+        }
+        continue;
+      }
+      const wg = own(box(TILE, RAISE, TILE, true)), wp = wg.attributes.position;
+      for (let i=0;i<wp.count;i++) if (wp.getY(i) > 0.01 && wp.getX(i)*dx + wp.getZ(i)*dz < 0) wp.setY(i, 0.02);
+      wg.computeVertexNormals();
+      mesh(wg, r.kind === 'knoll' ? [side, side, top, side, side, side] : side, cx, 0, cz, cityGroup);
+    }
   }
 }
 
@@ -457,10 +500,17 @@ const fenceMat = kind => G('fence-' + kind, () => {
   const iron = kind === 'iron';
   const map = canvasTex(64, (g, s) => {
     g.strokeStyle = iron ? '#1c1d20' : '#9aa0a6'; g.fillStyle = g.strokeStyle;
-    if (iron){ for (let x=4;x<s;x+=16){ g.fillRect(x, 6, 3, s - 6); g.beginPath(); g.moveTo(x - 2, 8); g.lineTo(x + 1.5, 0); g.lineTo(x + 5, 8); g.fill(); } g.fillRect(0, 14, s, 3); g.fillRect(0, s - 8, s, 3); }
+    if (kind === 'picket'){
+      // White pickets with pointed tops on two rails.
+      g.fillStyle = '#ece8de'; for (let x=3;x<s;x+=16){ g.fillRect(x, 10, 9, s - 10); g.beginPath(); g.moveTo(x, 10); g.lineTo(x + 4.5, 2); g.lineTo(x + 9, 10); g.fill(); }
+      g.fillRect(0, 18, s, 5); g.fillRect(0, s - 14, s, 5);
+    } else if (kind === 'rail'){
+      // Three weathered rails.
+      g.fillStyle = '#7a5c3a'; for (const y of [6, 26, 46]){ g.fillRect(0, y, s, 9); g.fillStyle = '#6a4e30'; }
+    } else if (iron){ for (let x=4;x<s;x+=16){ g.fillRect(x, 6, 3, s - 6); g.beginPath(); g.moveTo(x - 2, 8); g.lineTo(x + 1.5, 0); g.lineTo(x + 5, 8); g.fill(); } g.fillRect(0, 14, s, 3); g.fillRect(0, s - 8, s, 3); }
     else { g.lineWidth = 2; for (let k=-s;k<s*2;k+=12){ g.beginPath(); g.moveTo(k, 0); g.lineTo(k + s, s); g.stroke(); g.beginPath(); g.moveTo(k + s, 0); g.lineTo(k, s); g.stroke(); } }
-  }, iron ? 1 : 1.5, iron ? 1 : 2.5);
-  return new THREE.MeshStandardMaterial({ map, alphaTest:0.45, side:THREE.DoubleSide, roughness:0.6, metalness:0.4 });
+  }, iron || kind === 'picket' || kind === 'rail' ? 1 : 1.5, iron || kind === 'picket' || kind === 'rail' ? 1 : 2.5);
+  return new THREE.MeshStandardMaterial({ map, alphaTest:0.45, side:THREE.DoubleSide, roughness:kind === 'chain' || iron ? 0.6 : 0.95, metalness:kind === 'chain' || iron ? 0.4 : 0 });
 });
 // Lattice for crane mast and jib (yellow frame with X bracing), repeated rx × ry times.
 const latticeMat = (rx, ry) => std(0xffffff, { map:canvasTex(64, (g, s) => {
@@ -483,7 +533,7 @@ const signTex = kind => G('sign-' + kind, () => {
 function buildProps(c){
   const opens = new Map(), cityGroup = world.cityGroup, fenceAt = new Set(c.props.filter(p => p.kind === 'fence').map(p => p.z*N + p.x));
   for (const p of c.props){
-    const g = new THREE.Group(); g.position.set((p.x+0.5)*TILE, 0, (p.z+0.5)*TILE); g.rotation.y = p.rot || 0; cityGroup.add(g);
+    const g = p.g = new THREE.Group(); g.position.set((p.x+0.5)*TILE, groundAt((p.x+0.5)*TILE, (p.z+0.5)*TILE), (p.z+0.5)*TILE); g.rotation.y = p.rot || 0; cityGroup.add(g);
     let open = null;
     if (p.kind === 'shelf'){
       mesh(SH.shelfGeo, SH.metalMat, 0, 0, 0, g);
@@ -528,7 +578,8 @@ function buildProps(c){
       const s = mesh(G('pylonSign', () => box(1.9, 1.1, 0.22)), signMats(p.lm), 0, 4.6, 0, g);
       s.rotation.y = Math.PI/4 - g.rotation.y;
     } else if (p.kind === 'lumber'){
-      for (let i=0;i<3;i++){ const l = mesh(SH.lumberGeo, SH.lumberMat, mr(-0.08,0.08), i*0.24, mr(-0.08,0.08), g); l.rotation.y = mr(-0.08,0.08); }
+      const ls = []; for (let i=0;i<3;i++){ const l = mesh(SH.lumberGeo, SH.lumberMat, mr(-0.08,0.08), i*0.24, mr(-0.08,0.08), g); l.rotation.y = mr(-0.08,0.08); ls.push(l); }
+      if (p.search) open = () => { ls[2].visible = false; ls[1].rotation.y = 0.5; };
     } else if (p.kind === 'cart'){
       g.position.x += mr(-0.4,0.4); g.position.z += mr(-0.4,0.4);
       mesh(SH.cartGeo, SH.metalMat, 0, 0.3, 0, g);
@@ -578,15 +629,16 @@ function buildProps(c){
       // Posts on the tile centre, a panel toward every neighbouring fence tile (a lone one spans its
       // tile along rot). Chain-link (with a quarantine sign where it closes a road) or cemetery iron.
       g.rotation.y = 0;
-      const iron = p.style === 'iron', H = iron ? 1.3 : 1.9, mat = iron ? fenceMat('iron') : fenceMat('chain'), postM = M('post', 0x2a2c30, { metalness:0.4 });
-      mesh(G('fpost' + H, () => box(0.09, H + 0.08, 0.09, true)), postM, 0, 0, 0, g);
+      const st = p.style, wood = st === 'picket' || st === 'rail', H = { iron:1.3, chain:1.9, picket:1.0, rail:1.1 }[st], mat = fenceMat(st);
+      const postM = wood ? M(st + 'Post', st === 'picket' ? 0xe8e4da : 0x6e5235) : M('post', 0x2a2c30, { metalness:0.4 });
+      mesh(G('fpost' + H + wood, () => wood ? box(0.14, H + 0.1, 0.14, true) : box(0.09, H + 0.08, 0.09, true)), postM, 0, 0, 0, g);
       // A straight run ends flush with its tile's edge (gates, gaps); corners don't stick out.
       const dirs = D4S.filter(([dx, dz]) => fenceAt.has((p.z + dz)*N + p.x + dx)), axisX = dirs.some(d => d[0]), axisZ = dirs.some(d => d[1]);
       const runs = !dirs.length ? (p.rot ? [[0,1],[0,-1]] : [[1,0],[-1,0]]) : axisX && axisZ ? dirs : axisX ? [[1,0],[-1,0]] : [[0,1],[0,-1]];
       for (const [dx, dz] of runs){
         const pn = mesh(G('fpanel' + H, () => { const q = new THREE.PlaneGeometry(TILE/2, H); q.translate(TILE/4, H/2, 0); return q; }), mat, 0, 0, 0, g, false);
         pn.rotation.y = Math.atan2(-dz, dx);
-        const rl = mesh(G('frail', () => box(TILE/2, 0.05, 0.05)), postM, dx*TILE/4, H, dz*TILE/4, g, false); rl.rotation.y = pn.rotation.y;
+        if (!wood){ const rl = mesh(G('frail', () => box(TILE/2, 0.05, 0.05)), postM, dx*TILE/4, H, dz*TILE/4, g, false); rl.rotation.y = pn.rotation.y; }
       }
       if (p.sign){ const sg = mesh(G('qsign', () => new THREE.PlaneGeometry(1.3, 0.62)), signTex('quarantine'), 0, 1.1, 0, g, false); sg.rotation.y = p.rot ? 0 : Math.PI/2; }
     } else if (p.kind === 'jersey'){
@@ -703,7 +755,7 @@ const awningMat = type => awningCache[type] || (awningCache[type] = std(LANDMARK
 
 // Searchable containers. Adds runtime fields to each: px/pz/range (interaction point), time, noise,
 // name, searched, glint (floating marker), open() (visual once searched).
-const GLINT_Y = { shelf:2.0, locker:2.5, armory:2.4, desk:1.6, medcab:2.5, milcrate:1.5 };
+const GLINT_Y = { shelf:2.0, locker:2.5, armory:2.4, desk:1.6, medcab:2.5, milcrate:1.5, lumber:1.4 };
 function buildContainers(c, opens){
   const cityGroup = world.cityGroup;
   for (const ct of c.containers){

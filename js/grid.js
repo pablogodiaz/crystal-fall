@@ -1,5 +1,6 @@
 // ---------- Grid queries: collision, flow field, fog of war ----------
-import { TILE, N, walkable, seeThrough, DIRS8 } from './config.js';
+import { TILE, N, T, RAISE, walkable, seeThrough, DIRS8 } from './config.js';
+import { AI } from './threats.js';
 import { clamp } from './utils.js';
 import { world, players } from './state.js';
 
@@ -11,11 +12,43 @@ export function isBlockedTile(tx,tz){
   if (tx < 0 || tz < 0 || tx >= N || tz >= N) return true;
   return !walkable(world.city.grid[tz*N+tx]);
 }
-// Pushes a circle at p (radius r) out of any blocked tiles.
+// ---------- Raised ground ----------
+// Height of the ground at world point (x,z): 0, RAISE on raised tiles, a slope across ramps
+// (city.rampDir = the D4 direction you climb in).
+const D4 = [[1,0],[-1,0],[0,1],[0,-1]];
+export function groundAt(x, z){
+  const c = world.city; if (!c || !c.level) return 0;
+  const tx = Math.floor(x/TILE), tz = Math.floor(z/TILE);
+  if (tx < 0 || tz < 0 || tx >= N || tz >= N) return 0;
+  const l = c.level[tz*N+tx];
+  if (l !== 1) return l ? RAISE : 0;
+  const [dx, dz] = D4[c.rampDir[tz*N+tx]], fx = x/TILE - tx, fz = z/TILE - tz;
+  return RAISE*(dx > 0 ? fx : dx < 0 ? 1 - fx : dz > 0 ? fz : 1 - fz);
+}
+// Level (0 ground, 1 ramp, 2 raised) of something standing at height y.
+export const levelOf = y => y < RAISE*0.3 ? 0 : y > RAISE*0.7 ? 2 : 1;
+export const tileLevel = (tx, tz) => world.city.level ? world.city.level[tz*N+tx] : 0;
+// Snaps a position's height to the ground under it (after a teleport or a spawn).
+export function toGround(p){ p.y = groundAt(p.x, p.z); return p; }
+// True if someone at height y can walk in a straight line from (x0,z0) to (x1,z1): nothing blocking
+// on the way and no ledge to climb (fences and raised ground let sight through but not feet).
+export function walkClear(x0, z0, x1, z1, y = 0){
+  let lv = levelOf(y);
+  const n = Math.ceil(Math.hypot(x1-x0, z1-z0)/0.5);
+  for (let i=1;i<=n;i++){
+    const k = i/n, tx = Math.floor((x0 + (x1-x0)*k)/TILE), tz = Math.floor((z0 + (z1-z0)*k)/TILE);
+    if (isBlockedTile(tx, tz)) return false;
+    const l = tileLevel(tx, tz); if (l > lv + 1) return false; lv = l;
+  }
+  return true;
+}
+// Pushes a circle at p (radius r) out of any blocked tiles, and out of raised tiles it can't step up
+// onto from its height p.y; then sets p.y to the ground under it (stepping up a ramp, dropping off a ledge).
 export function resolveCircle(p, r){
   const tx0 = Math.floor((p.x-r)/TILE), tx1 = Math.floor((p.x+r)/TILE), tz0 = Math.floor((p.z-r)/TILE), tz1 = Math.floor((p.z+r)/TILE);
+  const L = world.city.level, lv = levelOf(p.y);
   for (let tz=tz0;tz<=tz1;tz++) for (let tx=tx0;tx<=tx1;tx++){
-    if (!isBlockedTile(tx,tz)) continue;
+    if (!isBlockedTile(tx,tz) && !(L && L[tz*N+tx] > lv + 1)) continue;
     const minX = tx*TILE, maxX = minX+TILE, minZ = tz*TILE, maxZ = minZ+TILE;
     const cx = clamp(p.x,minX,maxX), cz = clamp(p.z,minZ,maxZ);
     const dx = p.x-cx, dz = p.z-cz, d2 = dx*dx+dz*dz;
@@ -26,31 +59,60 @@ export function resolveCircle(p, r){
       if (m === l) p.x = minX - r; else if (m === rr) p.x = maxX + r; else if (m === t) p.z = minZ - r; else p.z = maxZ + r;
     }
   }
+  if (L) p.y = groundAt(p.x, p.z);
 }
 // Tiles bullets fly and zombies see through (open ground and cell bars).
 export function isOpaqueTile(tx,tz){
   if (tx < 0 || tz < 0 || tx >= N || tz >= N) return true;
   return !seeThrough(world.city.grid[tz*N+tx]);
 }
-// BFS from tile (sx,sz) into field (-1 = unreachable). A blocked start (a crate, a door) seeds
-// its walkable neighbours instead, so noises made at containers can still be walked to.
+// Distance field from tile (sx,sz) into field (-1 = unreachable): how far each tile is from it on
+// foot. Steps cost 1, but stepping onto a fence or barricade costs extra (it has to be broken down:
+// breakCost() from its health), so a field leads through one only when walking round is longer. Edges
+// follow the raised-ground rule (no climbing a ledge; dropping off one is fine). Most steps cost 1, so
+// it's a BFS with the dearer steps held back in `held` until their turn (a small Dijkstra).
+// A blocked start (a crate, a door) seeds its walkable neighbours instead, so noises made at
+// containers can still be walked to.
+const held = [];
+export const breakCost = b => 1 + Math.ceil(b.hp*AI.breakCost);
 function bfs(field, sx, sz){
   field.fill(-1);
-  const grid = world.city.grid;
+  const c = world.city, grid = c.grid, L = c.level, br = world.breaks;
   let head = 0, tail = 0;
+  held.length = 0;
   if (isBlockedTile(sx,sz)){
     for (let k=0;k<4;k++){
       const nx = sx + DIRS8[k][0], nz = sz + DIRS8[k][1];
       if (!isBlockedTile(nx,nz)){ field[nz*N+nx] = 1; bfsQueue[tail++] = nz*N+nx; }
     }
   } else { field[sz*N+sx] = 0; bfsQueue[tail++] = sz*N+sx; }
-  while (head < tail){
-    const cur = bfsQueue[head++], cx = cur % N, cz = (cur - cx)/N, cd = field[cur];
+  let hi = -1;  // index of the cheapest held-back step (-1: none)
+  const pickHeld = () => { hi = -1; for (let i=0;i<held.length;i++) if (hi < 0 || held[i][1] < held[hi][1]) hi = i; };
+  for (;;){
+    let cur;
+    // Next: the queue's head, unless a held-back breakable is due first.
+    if (hi >= 0 && (head >= tail || held[hi][1] <= field[bfsQueue[head]])){
+      const [id, d] = held[hi]; held[hi] = held[held.length-1]; held.length--; pickHeld();
+      if (field[id] !== -1 && field[id] <= d) continue;
+      field[id] = d; cur = id;
+    } else if (head < tail) cur = bfsQueue[head++];
+    else break;
+    const cx = cur % N, cz = (cur - cx)/N, cd = field[cur], cl = L ? L[cur] : 0;
     for (let k=0;k<4;k++){
       const nx = cx + DIRS8[k][0], nz = cz + DIRS8[k][1];
       if (nx < 0 || nz < 0 || nx >= N || nz >= N) continue;
       const ni = nz*N+nx;
-      if (field[ni] !== -1 || !walkable(grid[ni])) continue;
+      if (field[ni] !== -1) continue;
+      // Someone on ni walks to cur: they can't climb more than one level.
+      if (L && cl > L[ni] + 1) continue;
+      const g = grid[ni];
+      if (g === T.FENCE){
+        const b = br && br.get(ni); if (!b) continue;
+        held.push([ni, cd + breakCost(b)]);
+        if (hi < 0 || cd + breakCost(b) < held[hi][1]) hi = held.length - 1;
+        continue;
+      }
+      if (!walkable(g)) continue;
       field[ni] = cd + 1; bfsQueue[tail++] = ni;
     }
   }

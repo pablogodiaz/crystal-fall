@@ -8,7 +8,7 @@ import { scene } from './renderer.js';
 import { SH } from './assets.js';
 import { ZTYPES, ZMODS, THREAT_BASE, THREAT_POOL, SHUFFLE_INTRO, INTRO_FORCED, SPOT_RANGE } from './threats.js';
 import { state, zombies, spits, puddles, dev, players } from './state.js';
-import { isBlockedTile, lineOfSight } from './grid.js';
+import { isBlockedTile, lineOfSight, groundAt } from './grid.js';
 import { viewed, crowd, cheats } from './player.js';
 import { spawnZombieAt, findSpawnNear, alertZombie, alertNear } from './zombies.js';
 import { hurtPlayer } from './combat.js';
@@ -140,7 +140,7 @@ function splash(o){
 }
 export function puddleMesh(x, z, t, nid, ghost){
   const S = ZTYPES.spitter;
-  const m = new THREE.Mesh(SH.fireGeo, SH.acidPoolMat); m.rotation.x = -Math.PI/2; m.position.set(x, 0.11, z); m.scale.setScalar(S.puddleR);  // above slabs and decals, below fire
+  const m = new THREE.Mesh(SH.fireGeo, SH.acidPoolMat); m.rotation.x = -Math.PI/2; m.position.set(x, groundAt(x, z) + 0.11, z); m.scale.setScalar(S.puddleR);  // above slabs and decals, below fire
   scene.add(m); const h = { mesh:m, x, z, t, tick:0, nid, ghost }; puddles.push(h); return h;
 }
 // Acid in flight and puddles, looks only: clients run this on their copies (ghosts).

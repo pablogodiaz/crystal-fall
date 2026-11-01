@@ -10,6 +10,7 @@ import { viewed } from './player.js';
 import { floatText } from './hud.js';
 import { freeSpot } from './loot.js';
 import { emit, emitTo, sfxFor, nextId } from './host.js';
+import { groundAt } from './grid.js';
 
 // Shared effects (burst, addDecal, rings, shake) are sent to clients too, unless `local` (effects
 // clients make themselves: ambient particles of things they mirror, corpses, the menu).
@@ -22,14 +23,14 @@ export function burst(pos, kind, n, spd, local){
     m.position.copy(pos); m.scale.setScalar(mr(0.6,1.4));
     const a = Math.random()*Math.PI*2, s = mr(0.3,1)*spd;
     scene.add(m);
-    particles.push({ m, vx:Math.sin(a)*s, vy:mr(1.5,4.5), vz:Math.cos(a)*s, life:mr(0.35,0.8) });
+    particles.push({ m, vx:Math.sin(a)*s, vy:mr(1.5,4.5), vz:Math.cos(a)*s, life:mr(0.35,0.8), fl:groundAt(pos.x, pos.z) + 0.12 });
   }
 }
 export function updateParticles(dt){
   for (let i=particles.length-1;i>=0;i--){
     const p = particles[i]; p.life -= dt;
     p.vy -= 12*dt; p.m.position.x += p.vx*dt; p.m.position.y += p.vy*dt; p.m.position.z += p.vz*dt;
-    if (p.m.position.y < 0.12){ p.m.position.y = 0.12; p.vx *= 0.6; p.vz *= 0.6; p.vy = 0; }
+    if (p.m.position.y < p.fl){ p.m.position.y = p.fl; p.vx *= 0.6; p.vz *= 0.6; p.vy = 0; }
     if (p.life < 0.2) p.m.scale.multiplyScalar(0.9);
     if (p.life <= 0){ scene.remove(p.m); particles.splice(i,1); }
   }
@@ -42,7 +43,7 @@ export function addDecal(x, z, s = 1, mat = SH.decalMat, local){
   const m = new THREE.Mesh(SH.decalGeo, mat);
   m.rotation.x = -Math.PI/2; m.rotation.z = Math.random()*6;
   const t = world.city.grid[Math.floor(z/TILE)*N + Math.floor(x/TILE)];
-  m.position.set(x, t === T.ROAD ? 0.02 + Math.random()*0.004 : 0.09 + Math.random()*0.004, z);
+  m.position.set(x, groundAt(x, z) + (t === T.ROAD ? 0.02 + Math.random()*0.004 : 0.09 + Math.random()*0.004), z);
   m.scale.set(s*mr(0.8,1.6), s*mr(0.7,1.3), 1);
   scene.add(m); decals.push(m);
   if (decals.length > 80) scene.remove(decals.shift());
@@ -81,7 +82,7 @@ export function spawnPickup(x,z){
   return p;
 }
 export function pickupMesh(x, z, nid){
-  const g = new THREE.Group(); g.position.set(x,0,z);
+  const g = new THREE.Group(); g.position.set(x, groundAt(x, z), z);
   const c = new THREE.Group(); c.position.y = 0.8;
   c.add(new THREE.Mesh(SH.crossA, SH.crossMat), new THREE.Mesh(SH.crossB, SH.crossMat));
   const ring = new THREE.Mesh(SH.ringGeo, SH.healGlow); ring.rotation.x = -Math.PI/2; ring.position.y = 0.12;

@@ -6,12 +6,27 @@ export const TILE = 2, B = 14, N = 7*B + 4;
 // City size by city number: [from city, blocks], last match wins (must not exceed B).
 export const CITY_BLOCKS = [[1, 10], [3, 12], [6, 14]];
 export const cityBlocks = level => CITY_BLOCKS.reduce((b, [from, n]) => level >= from ? n : b, CITY_BLOCKS[0][1]);
-// OBSTACLE blocks walking, sight and shots; BARS, LOW (fences, jersey barriers, sandbags, graves) and
-// WATER block walking only.
-export const T = { ROAD:0, BUILDING:1, WALL:2, BARRICADE:3, EXIT:4, SIDEWALK:5, GRASS:6, PLAZA:7, OBSTACLE:8, CRYSTAL:9, FLOOR:10, BARS:11, LOW:12, WATER:13 };
+// OBSTACLE blocks walking, sight and shots; BARS, LOW (jersey barriers, sandbags, graves), WATER and
+// FENCE (fences and plank barricades, which zombies can break down: breakables.js) block walking only.
+export const T = { ROAD:0, BUILDING:1, WALL:2, BARRICADE:3, EXIT:4, SIDEWALK:5, GRASS:6, PLAZA:7, OBSTACLE:8, CRYSTAL:9, FLOOR:10, BARS:11, LOW:12, WATER:13, FENCE:14 };
 export const walkable = t => t === 0 || t === 4 || t === 5 || t === 6 || t === 7 || t === 10;
-// Bullets and sight also pass through cell bars, low obstacles and water.
-export const seeThrough = t => walkable(t) || t === 11 || t === 12 || t === 13;
+// Bullets and sight also pass through cell bars, low obstacles, water and fences.
+export const seeThrough = t => walkable(t) || t === 11 || t === 12 || t === 13 || t === 14;
+// Raised ground (hills, loading docks, terraces): city.level per tile is 0 ground, 1 ramp/stairs,
+// 2 raised (RAISE units up). Anyone can step up one level (onto a ramp, off a ramp onto the top) or
+// drop down any amount; nobody climbs straight from the ground onto raised tiles.
+export const RAISE = 1.1;
+// Breakable fences and barricades (T.FENCE, breakables.js), by style: hp, wood (molotov fire burns it;
+// planks repair it), name for prompts. Zombie AI tuning for them is in AI (threats.js).
+export const BREAKABLES = {
+  picket: { hp:8,  wood:true, name:'picket fence' },
+  rail:   { hp:9,  wood:true, name:'farm fence' },
+  chain:  { hp:20, name:'chain-link fence' },
+  iron:   { hp:28, name:'iron fence' },
+  planks: { hp:24, wood:true, name:'barricade' }
+};
+// Plank barricades: repair = health a plank puts back (hold E with planks in the pack).
+export const BARRICADE = { repair:12, takeDown:1.2, build:0.4 };
 export const DIRS8 = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
 export const CITY_NAMES = ['Ashford','Greyhaven','Millbrook','Port Sable','Redwater','Hollow Pines','Cinder Bay','Northgate','Dunmore','Ravenfield','Saltmarsh','Kingsreach'];
 export const PALETTE = [0x8a7f72,0x7b8088,0x9a8a74,0x6f7a72,0x8c6f62,0x7d7468,0x5f6670,0x86796a];

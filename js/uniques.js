@@ -459,7 +459,7 @@ function fireShard(p, w){
   const n = S.pellets, kill = shardKill(p, w);
   for (let i=0;i<n;i++){
     const a = p.angle + (i - (n-1)/2)*S.spread + mr(-S.jitter, S.jitter);
-    addBullet('shard', p.pos.x + Math.sin(a)*0.9, 1.15, p.pos.z + Math.cos(a)*0.9, a, W.speed*mr(0.95,1.05), S.life, { damage:S.dmg, pierce:S.pierce, kb:1, bounce:W.bounce, owner:p, kill });
+    addBullet('shard', p.pos.x + Math.sin(a)*0.9, 1.15 + p.pos.y, p.pos.z + Math.cos(a)*0.9, a, W.speed*mr(0.95,1.05), S.life, { damage:S.dmg, pierce:S.pierce, kb:1, bounce:W.bounce, owner:p, kill });
   }
   muzzle(p.pos.x + Math.sin(p.angle)*1.1, p.pos.z + Math.cos(p.angle)*1.1, 1.8);
   sfx.shard(); makeNoise(p.pos.x, p.pos.z, S.noise);

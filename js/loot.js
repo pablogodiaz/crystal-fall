@@ -6,7 +6,7 @@ import { mr, mri, mpick } from './utils.js';
 import { scene } from './renderer.js';
 import { SH, gunModel } from './assets.js';
 import { world, drops, pickups, players } from './state.js';
-import { isBlockedTile, lineOfSight } from './grid.js';
+import { isBlockedTile, lineOfSight, groundAt } from './grid.js';
 import { WEAPONS, ITEMS, LOOT, LANDMARKS, GUNS, AMMO_ODDS, LUCK_SHOP } from './items.js';
 import { addItem, addAmmo, giveWeapon, replaceWeapon, carried, curWeapon } from './inventory.js';
 import { rollWeapon, weaponTitle } from './weapons.js';
@@ -16,6 +16,7 @@ import { burst } from './fx.js';
 import { toast, toastAll, floatText } from './hud.js';
 import { sfx } from './audio.js';
 import { emit, sfxFor, nextId } from './host.js';
+import { breakJobs, jobLabel, finishJob } from './breakables.js';
 const r2 = v => Math.round(v*100)/100;
 
 // What E would act on right now is per player, p.interact = { target, p, label, noiseT, lock }; the
@@ -46,7 +47,7 @@ function freshGun(p){ const own = carried(p), f = GUNS.filter(w => w !== 'pistol
 function rollEntry(k, luck, p){
   if (k === 'ammo') return ammoRoll(ammoType(p));
   if (k === 'weapon') return { weapon:rollWeapon(luck, undefined, p) };
-  return { item:k, n:k === 'scrap' ? mri(1,3) : 1 };
+  return { item:k, n:k === 'scrap' ? mri(1,3) : k === 'planks' ? mri(1,3) : 1 };
 }
 // Door-searched landmarks give fixed loot; walk-in ones are looted from their shelves and lockers.
 function landmarkLoot(type, p){
@@ -57,7 +58,7 @@ function landmarkLoot(type, p){
     if (Math.random() < 0.6) out.push({ weapon:rollWeapon(LUCK_SHOP, freshGun(p), p) });
     return out;
   }
-  const out = [{ item:'scrap', n:mri(5,8) }];
+  const out = [{ item:'scrap', n:mri(5,8) }, { item:'planks', n:mri(3,5) }];
   if (Math.random() < 0.5) out.push({ item:'pipebomb', n:1 });
   return out;
 }
@@ -131,7 +132,7 @@ export const dropEvent = d => ['d+', d.nid, d.kind, d.w || d.id, d.n, r2(d.px), 
 // The drop itself at its spot (sx,sz), tossed in from `from` if given.
 export function dropMesh(kind, id, n, sx, sz, held, from, nid){
   const w = kind === 'weapon' ? id : null;
-  const g = new THREE.Group(); g.position.set(sx, 0, sz);
+  const g = new THREE.Group(); g.position.set(sx, groundAt(sx, sz), sz);
   const box = new THREE.Group(); box.position.y = 0.45;
   if (w){ const m = gunModel(w.id, w.rarity); m.scale.setScalar(1.8); m.position.z = -0.7; m.rotation.z = 0.25; box.add(m); }
   else if (kind === 'ammo' && id === 'bow'){ const m = new THREE.Mesh(SH.arrowGeo, SH.arrowMat); m.rotation.set(0.15, 0, 0.6); m.castShadow = true; box.add(m); box.position.y = 0.25; }
@@ -141,7 +142,7 @@ export function dropMesh(kind, id, n, sx, sz, held, from, nid){
   if (w && w.rarity !== 'common' && w.rarity !== 'uncommon') g.add(new THREE.Mesh(SH.beamGeo, SH.rarBeam[w.rarity]));
   scene.add(g);
   const d = { kind, id:w ? w.id : id, w, n, g, box, t:Math.random()*6, held:held || null, px:sx, pz:sz, fly:0, nid };
-  if (from && Math.hypot(from.x - sx, from.z - sz) > 0.3){ d.fly = TOSS; d.fx = from.x; d.fz = from.z; g.position.set(from.x, 0, from.z); }
+  if (from && Math.hypot(from.x - sx, from.z - sz) > 0.3){ d.fly = TOSS; d.fx = from.x; d.fz = from.z; g.position.set(from.x, groundAt(from.x, from.z), from.z); }
   drops.push(d); return d;
 }
 // A spent arrow: joins one already lying close by, otherwise lands as its own pickup.
@@ -181,7 +182,7 @@ export function animateDrop(d, dt){
     // Tossed: an arc from where it came from to its spot. Can't be picked up mid-air.
     d.fly = Math.max(0, d.fly - dt);
     const k = 1 - d.fly/TOSS;
-    d.g.position.set(d.fx + (d.px - d.fx)*k, 0, d.fz + (d.pz - d.fz)*k); d.box.position.y += Math.sin(k*Math.PI)*1.5;
+    const gx = d.fx + (d.px - d.fx)*k, gz = d.fz + (d.pz - d.fz)*k; d.g.position.set(gx, groundAt(gx, gz), gz); d.box.position.y += Math.sin(k*Math.PI)*1.5;
     if (!d.fly) burst(new THREE.Vector3(d.px, 0.3, d.pz), 'dust', 4, 1.5, true);
     return false;
   }
@@ -232,11 +233,13 @@ export function updateInteract(p, dt){
     const d = Math.hypot(t.px - px, t.pz - pz);
     if (d < t.range && d < bd){ best = t; bd = d; }
   }
+  // Fences and barricades: repair a damaged wooden one with a plank, take your own barricade down.
+  for (const [t, d] of breakJobs(p)) if (d < bd){ best = t; bd = d; }
   if (best !== interact.target){ interact.target = best; interact.p = 0; }
   if (!best) return;
   const drop = isDrop(best), free = p.weapons.includes(null);
   interact.label = drop ? (free ? `Pick up ${weaponTitle(best.w)}` : `Swap ${weaponTitle(p.weapons[p.cur])} for ${weaponTitle(best.w)}`)
-    : best.kind === 'refuel' ? 'Refuel the flamethrower' : `Search ${best.name}`;
+    : best.kind === 'refuel' ? 'Refuel the flamethrower' : best.kind === 'repair' || best.kind === 'takedown' ? jobLabel(best) : `Search ${best.name}`;
   if (!held) interact.lock = false;
   if (!held || interact.lock){ interact.p = 0; return; }
   if (drop){
@@ -259,6 +262,7 @@ export function updateInteract(p, dt){
   if (interact.p < 1) return;
   interact.lock = true;
   if (best.kind === 'refuel'){ refuel(p, fl, best.l); interact.target = null; interact.p = 0; }
+  else if (best.kind === 'repair' || best.kind === 'takedown'){ finishJob(p, best); interact.target = null; interact.p = 0; }
   else finishSearch(p, best);
 }
 function finishSearch(p, c){
