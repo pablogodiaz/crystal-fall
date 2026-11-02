@@ -105,6 +105,7 @@ export function generateCity(level, seed){
   for (const b of blocks) if (b.type === 'plaza') buildBlock(c, b);
   const road = new Uint8Array(N*N);
   for (let i=0;i<N*N;i++) road[i] = grid[i] === T.ROAD ? 1 : 0;
+  addHeights(c);
   damage(c, C);
   addCrashes(c, C);
   addClosures(c, C, level);
@@ -121,6 +122,8 @@ function buildBlock(c, b){
   const fill = t => { for (let z=z0;z<z0+5;z++) for (let x=x0;x<x0+5;x++) grid[I(x,z)] = t; };
   const spot = (t, f) => { const x = x0 + randi(0,4), z = z0 + randi(0,4); if (grid[I(x,z)] === t){ grid[I(x,z)] = T.OBSTACLE; f(x, z); } };
   const tree = (x, z) => c.trees.push({ x, z, s:rand(0.8,1.3), m:Math.floor(rng()*3) });
+  // A stack of lumber you can search for planks.
+  const lumber = (x, z) => { c.props.push({ kind:'lumber', x, z, rot:rng() < 0.5 ? 0 : Math.PI/2, search:true }); c.containers.push({ kind:'lumber', x, z }); };
   const dirt = () => { for (let z=z0;z<z0+5;z++) for (let x=x0;x<x0+5;x++) c.overlays.dirt.push([x,z]); };
   const put = (L, h, o) => {
     for (let z=L.z;z<L.z+L.d;z++) for (let x=L.x;x<L.x+L.w;x++) grid[I(x,z)] = T.BUILDING;
@@ -151,6 +154,8 @@ function buildBlock(c, b){
       put(L, rand(2.3,3.3), { style:'house', color:pick(HOUSE_PALETTE), roof:pick(ROOF_PALETTE), win:Math.floor(rng()*3) });
     }
     for (let i=randi(0,2);i>0;i--) spot(T.GRASS, tree);
+    // Picket fences round suburban yards, rail fences round farms (gaps for gates).
+    if (rng() < (t === 'farm' ? 0.45 : 0.3)) for (const side of shuffle([0,1,2,3]).slice(0, randi(1, t === 'farm' ? 3 : 2))) fenceSide(c, b, side, t === 'farm' ? 'rail' : 'picket');
   } else if (t === 'warehouses'){
     fill(T.SIDEWALK);
     const lots = []; splitLots(x0,z0,5,5,lots,2);
@@ -160,8 +165,14 @@ function buildBlock(c, b){
     }
   } else if (t === 'park' || t === 'field'){
     fill(T.GRASS);
-    for (let i=t === 'park' ? randi(3,6) : randi(0,2);i>0;i--) spot(T.GRASS, tree);
+    // A downtown park may be a raised terrace (addHeights): its trees stay round the edge.
+    if (t === 'park' && D === 'downtown' && rng() < 0.6) b.raise = 'terrace';
+    for (let i=t === 'park' ? randi(3,6) : randi(0,2);i>0;i--){
+      if (!b.raise) spot(T.GRASS, tree);
+      else { const k = randi(0,15), [x, z] = k < 5 ? [x0+k, z0] : k < 10 ? [x0+k-5, z0+4] : k < 13 ? [x0, z0+k-9] : [x0+4, z0+k-12]; if (grid[I(x,z)] === T.GRASS){ grid[I(x,z)] = T.OBSTACLE; tree(x, z); } }
+    }
     if (t === 'field' && rng() < 0.3) spot(T.GRASS, (x, z) => c.rubble.push({ x, z }));
+    if (t === 'field' && rng() < 0.4) for (const side of shuffle([0,1,2,3]).slice(0, randi(2,3))) fenceSide(c, b, side, 'rail');
   } else if (t === 'lot'){
     fill(T.SIDEWALK);
     for (let i=D === 'downtown' ? randi(3,5) : D === 'outskirts' ? randi(1,2) : randi(2,4);i>0;i--)
@@ -169,7 +180,7 @@ function buildBlock(c, b){
   } else if (t === 'yard'){
     // Industrial storage: pallets of lumber, plus crates from placeLoot().
     fill(T.SIDEWALK);
-    for (let i=randi(1,3);i>0;i--) spot(T.SIDEWALK, (x, z) => c.props.push({ kind:'lumber', x, z, rot:rng() < 0.5 ? 0 : Math.PI/2 }));
+    for (let i=randi(1,3);i>0;i--) spot(T.SIDEWALK, (x, z) => lumber(x, z));
   } else if (t === 'construction'){
     // Building site on dirt: a steel frame going up, a tower crane, concrete pipes and lumber,
     // chain-link fence along one or two sides (crates from placeLoot()).
@@ -177,7 +188,7 @@ function buildBlock(c, b){
     const fw = randi(2,3), fd = randi(2,3);
     put({ x:x0 + randi(0, 5-fw), z:z0 + randi(0, 5-fd), w:fw, d:fd }, rand(6,12), { style:'frame', color:0x8a8780, floors:randi(2,4) });
     spot(T.SIDEWALK, (x, z) => c.props.push({ kind:'crane', x, z, rot:Math.floor(rng()*4)*Math.PI/2 + rand(-0.3,0.3), h:rand(15,20), jib:rand(9,13) }));
-    for (let i=randi(1,2);i>0;i--) spot(T.SIDEWALK, (x, z) => c.props.push({ kind:rng() < 0.5 ? 'pipes' : 'lumber', x, z, rot:rng() < 0.5 ? 0 : Math.PI/2 }));
+    for (let i=randi(1,2);i>0;i--) spot(T.SIDEWALK, (x, z) => rng() < 0.5 ? c.props.push({ kind:'pipes', x, z, rot:rng() < 0.5 ? 0 : Math.PI/2 }) : lumber(x, z));
     for (let i=randi(1,2);i>0;i--) fenceSide(c, b, Math.floor(rng()*4), 'chain');
   } else if (t === 'cemetery'){
     // Iron fence round the edge with a gate in the middle of each side, graves in the corners and a
@@ -229,6 +240,7 @@ const BASIC_T = new Set(['towers','ruins','houses','farm','warehouses','park','f
 // Keeps the start corner, the exit and landmark entrances clear of anything that blocks a road.
 function clearSpot(c, x, z){
   if (x < 11 && z < 11) return false;
+  if (c.level && c.level[I(x,z)]) return false;
   if (x > c.n - 10 && Math.abs(z - c.exitZ) < 6) return false;
   return c.landmarks.every(l => Math.abs(l.ox - x) + Math.abs(l.oz - z) > 3);
 }
@@ -237,7 +249,7 @@ function reach(c){
   const at = new Uint8Array(N*N), q = [I(2,2)]; at[q[0]] = 1;
   for (let h=0;h<q.length;h++){
     const cx = q[h] % N, cz = (q[h]-cx)/N;
-    for (const [dx,dz] of D4){ const ni = I(cx+dx,cz+dz); if (!at[ni] && walkable(c.grid[ni])){ at[ni] = 1; q.push(ni); } }
+    for (const [dx,dz] of D4){ const ni = I(cx+dx,cz+dz); if (!at[ni] && walkable(c.grid[ni]) && (!c.level || c.level[ni] <= c.level[q[h]] + 1)){ at[ni] = 1; q.push(ni); } }
   }
   return { n:q.length, at };
 }
@@ -251,6 +263,56 @@ function tryBlock(c, cells){
   if (r.n === R.n - lost){ c.reach = r; return true; }
   cells.forEach(([x,z], i) => { c.grid[I(x,z)] = old[i]; });
   return false;
+}
+
+// ---------- Raised ground ----------
+// Grassy hills in parks and fields, loading docks along warehouse fronts, raised terraces in downtown
+// parks (b.raise). The top (level 2) is only reachable up its ramps or stairs (level 1; rampDir = the
+// D4 index you climb toward), so it's a spot to hold with one way up. Kept only if it cuts nothing off.
+// raised = { kind, x0, z0, x1, z1 (top, end-exclusive), ramps:[[x, z, dir]] } for cityScene.
+// Ramp directions are indices into RAMP_DIRS, the order grid.js and cityScene.js read them in.
+const RAMP_DIRS = [[1,0],[-1,0],[0,1],[0,-1]];
+const D4I = (dx, dz) => RAMP_DIRS.findIndex(d => d[0] === dx && d[1] === dz);
+function raise(c, kind, x0, z0, x1, z1, ramps){
+  const { grid } = c, want = kind === 'dock' ? T.SIDEWALK : null;
+  const ok = (x, z) => { const g = grid[I(x,z)]; return !c.level[I(x,z)] && (want ? g === want : g === T.GRASS || g === T.SIDEWALK); };
+  for (let z=z0;z<z1;z++) for (let x=x0;x<x1;x++) if (!ok(x, z)) return false;
+  ramps = ramps.filter(([x, z]) => ok(x, z));
+  if (!ramps.length) return false;
+  const R = c.reach || (c.reach = reach(c)), old = [];
+  for (let z=z0;z<z1;z++) for (let x=x0;x<x1;x++){ old.push(I(x,z)); c.level[I(x,z)] = 2; }
+  for (const [x, z, d] of ramps){ old.push(I(x,z)); c.level[I(x,z)] = 1; c.rampDir[I(x,z)] = d; }
+  const r = reach(c);
+  if (r.n !== R.n){ for (const i of old) c.level[i] = 0; return false; }
+  c.reach = r; c.raised.push({ kind, x0, z0, x1, z1, ramps });
+  return true;
+}
+function addHeights(c){
+  c.level = new Uint8Array(N*N); c.rampDir = new Uint8Array(N*N); c.raised = []; c.reach = null;
+  for (const b of c.blocks){
+    const { x0, z0 } = b, t = b.type;
+    if (b.bx + b.bz <= 1) continue;
+    if (b.raise === 'terrace'){
+      // The middle 3×3 up a flight of steps on two opposite sides.
+      const ax = rng() < 0.5;
+      raise(c, 'terrace', x0+1, z0+1, x0+4, z0+4, ax ? [[x0, z0+2, D4I(1,0)], [x0+4, z0+2, D4I(-1,0)]] : [[x0+2, z0, D4I(0,1)], [x0+2, z0+4, D4I(0,-1)]]);
+    } else if ((t === 'park' && rng() < 0.4) || (t === 'field' && rng() < 0.3) || (t === 'farm' && rng() < 0.2) || (t === 'camp' && rng() < 0.15)){
+      // A hill: a 2×2 to 3×2 top inside the block, a ramp up one side (sometimes two).
+      const w = randi(2,3), d = w === 3 ? 2 : randi(2,3), hx = x0 + 1 + randi(0, 3-w), hz = z0 + 1 + randi(0, 3-d);
+      const sides = shuffle([
+        [hx + randi(0, w-1), hz - 1, D4I(0,1)], [hx + randi(0, w-1), hz + d, D4I(0,-1)],
+        [hx - 1, hz + randi(0, d-1), D4I(1,0)], [hx + w, hz + randi(0, d-1), D4I(-1,0)]]);
+      raise(c, 'knoll', hx, hz, hx + w, hz + d, sides.slice(0, rng() < 0.35 ? 2 : 1));
+    }
+  }
+  // Loading docks: along a warehouse's front (its roll-up door side, +z), a ramp at one end.
+  for (const b of c.buildings){
+    if (b.style !== 'warehouse' || b.cut || rng() > 0.45) continue;
+    const bl = blockAt(c, b.x, b.z), zf = b.z + b.d;
+    if (zf > bl.z0 + 4) continue;
+    const ramps = shuffle([[b.x - 1, zf, D4I(1,0)], [b.x + b.w, zf, D4I(-1,0)]]).filter(([x]) => x >= bl.x0 && x <= bl.x0 + 4);
+    raise(c, 'dock', b.x, zf, b.x + b.w, zf + 1, ramps.slice(0, 1));
+  }
 }
 
 // Collapsed and burnt-out buildings. Broken towers and warehouses stop at `cut` of their height with
@@ -337,11 +399,11 @@ function addClosures(c, C, level){
     const kind = wpick(Object.keys(C.kinds).map(k => [k, C.kinds[k]*(KIND_D[k][dist] ?? 1)]));
     // rot: the line the closure runs along (across the road).
     const rot = ax ? Math.PI/2 : 0, all = lanes.concat(side), cells = [], add = [];
-    const low = (x, z, kd, o) => { cells.push([x, z, T.LOW]); add.push(() => c.props.push(Object.assign({ kind:kd, x, z, rot }, o))); };
+    const low = (x, z, kd, o, tile = T.LOW) => { const under = grid[I(x,z)]; cells.push([x, z, tile]); add.push(() => c.props.push(Object.assign({ kind:kd, x, z, rot, under }, o))); };
     const solid = (x, z, f) => { cells.push([x, z, T.OBSTACLE]); add.push(f); };
     const car = (x, z, o) => solid(x, z, () => c.cars.push(wreck(x, z, rot + Math.PI/2 + rand(-0.9,0.9), o)));
     if (kind === 'barrier'){ const style = dist === 'residential' || dist === 'outskirts' ? 'sawhorse' : 'jersey'; for (const [tx,tz] of all) low(tx, tz, style); }
-    else if (kind === 'fence') for (const [tx,tz] of all) low(tx, tz, 'fence', { style:'chain', sign:tx === lanes[0][0] && tz === lanes[0][1] });
+    else if (kind === 'fence') for (const [tx,tz] of all) low(tx, tz, 'fence', { style:'chain', sign:tx === lanes[0][0] && tz === lanes[0][1] }, T.FENCE);
     else if (kind === 'checkpoint'){
       const ti = randi(0,1);
       lanes.forEach(([tx,tz], i) => i === ti
@@ -379,7 +441,7 @@ function fenceSide(c, b, side, style, mid){
     if (i === gap) continue;
     const [x, z] = side === 0 ? [b.x0+i, b.z0] : side === 1 ? [b.x0+4, b.z0+i] : side === 2 ? [b.x0+i, b.z0+4] : [b.x0, b.z0+i], g = c.grid[I(x,z)];
     if (g !== T.SIDEWALK && g !== T.GRASS) continue;
-    c.grid[I(x,z)] = T.LOW; c.props.push({ kind:'fence', x, z, rot, style });
+    c.grid[I(x,z)] = T.FENCE; c.props.push({ kind:'fence', x, z, rot, style, under:g });
   }
 }
 // Wrecked cars on roads, never blocking both lanes; badly hit cities get many more, some of them
@@ -507,7 +569,7 @@ const TEMPLATES = {
 const TILE_OF = { '.':T.SIDEWALK, ',':T.SIDEWALK, 'g':T.SIDEWALK, 'r':T.SIDEWALK, 'f':T.SIDEWALK, 'G':T.SIDEWALK, '_':T.FLOOR, 'E':T.FLOOR, 'z':T.FLOOR,
   '#':T.BUILDING, 'B':T.BUILDING, 'D':T.BUILDING, '|':T.BARS };
 // Searchable props -> container kind (loot table in items.js LOOT).
-const SEARCH = { s:'shelf', L:'locker', A:'armory', k:'desk', M:'medcab', X:'milcrate' };
+const SEARCH = { s:'shelf', L:'locker', A:'armory', k:'desk', M:'medcab', X:'milcrate', w:'lumber' };
 const PROP = { S:'shelf', s:'shelf', C:'counter', L:'locker', A:'armory', k:'desk', K:'desk', '|':'bars', P:'pump', Y:'pylon', w:'lumber', r:'cart', f:'flag',
   h:'bed', u:'gurney', M:'medcab', '=':'sandbag', T:'tent', W:'tower', X:'milcrate' };
 // Trunks of landmark vehicles: template char -> [car style, container kind, chance].
@@ -643,7 +705,7 @@ function placeLoot(c){
     const D = DISTRICTS[b.district], free = [];
     for (let z=b.z0;z<b.z0+5;z++) for (let x=b.x0;x<b.x0+5;x++){
       const edge = x === b.x0 || x === b.x0+4 || z === b.z0 || z === b.z0+4, g = grid[I(x,z)];
-      if ((g === T.SIDEWALK || g === T.GRASS) && edge) free.push([x,z]);
+      if ((g === T.SIDEWALK || g === T.GRASS) && edge && !c.level[I(x,z)]) free.push([x,z]);
     }
     let n = 0, kind = 'crate';
     const t = b.type, outer = b.district === 'outskirts';
@@ -665,15 +727,11 @@ function placeLoot(c){
   // Car trunks (landmark parking lots already rolled theirs in stamp()).
   for (const cr of cars) if (!cr.tpl && rng() < (cr.burnt ? 0.2 : 0.55)) containers.push({ kind:'trunk', x:cr.x, z:cr.z });
   // Tiles reachable on foot from the start, so doors always face somewhere you can stand.
-  const reach = new Uint8Array(N*N), q = [I(2,2)]; reach[q[0]] = 1;
-  for (let h=0;h<q.length;h++){
-    const cx = q[h] % N, cz = (q[h]-cx)/N;
-    for (const [dx,dz] of D4){ const ni = I(cx+dx,cz+dz); if (!reach[ni] && walkable(grid[ni])){ reach[ni] = 1; q.push(ni); } }
-  }
+  const reachAt = reach(c).at;
   for (const b of buildings){
     if (b.ruined || b.lm || b.style === 'frame' || b.burnt || b.cut || rng() >= (b.style === 'crypt' ? 0.5 : DISTRICTS[b.district].door)) continue;
     const spots = [];
-    for (let z=b.z;z<b.z+b.d;z++) for (let x=b.x;x<b.x+b.w;x++) for (const [dx,dz] of D4) if (reach[I(x+dx,z+dz)]) spots.push({ x, z, dx, dz });
+    for (let z=b.z;z<b.z+b.d;z++) for (let x=b.x;x<b.x+b.w;x++) for (const [dx,dz] of D4) if (reachAt[I(x+dx,z+dz)]) spots.push({ x, z, dx, dz });
     if (!spots.length) continue;
     const s = pick(spots);
     containers.push({ kind:'door', x:s.x, z:s.z, dx:s.dx, dz:s.dz, label:LABEL[b.style] });

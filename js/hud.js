@@ -22,7 +22,7 @@ const tctx = tileLayer.getContext('2d');
 // The HUD shows the player being watched (P = viewed(), set every frame): you, or whoever you're
 // spectating while dead. Actions from it (inventory clicks, crafting) are always for me().
 let P = null;
-const MM_COLORS = { 0:'#3c3f46', 1:'#15171b', 2:'#0b0c0f', 3:'#d64545', 4:'#4ade80', 5:'#6a6862', 6:'#3f5a33', 7:'#8a8273', 8:'#24262b', 9:'#a070ff', 10:'#57534b', 11:'#30333a', 12:'#8a7350', 13:'#2d5670' };
+const MM_COLORS = { 0:'#3c3f46', 1:'#15171b', 2:'#0b0c0f', 3:'#d64545', 4:'#4ade80', 5:'#6a6862', 6:'#3f5a33', 7:'#8a8273', 8:'#24262b', 9:'#a070ff', 10:'#57534b', 11:'#30333a', 12:'#8a7350', 13:'#2d5670', 14:'#b08a4a' };
 let mmTimer = 0, hudCache = {};
 function setText(id, v){ if (hudCache[id] !== v){ hudCache[id] = v; $(id).textContent = v; } }
 function paintTiles(){
@@ -34,6 +34,7 @@ function paintTiles(){
     let ty = city.grid[z*N+x];
     if (ty === T.CRYSTAL && !(crystal && crystal.alive && state.crystalFound)) ty = T.PLAZA;
     tctx.fillStyle = MM_COLORS[ty]; tctx.fillRect(x*MS, z*MS, MS, MS);
+    if (city.level && city.level[z*N+x]){ tctx.fillStyle = city.level[z*N+x] === 2 ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.1)'; tctx.fillRect(x*MS, z*MS, MS, MS); }  // raised ground
   }
 }
 // Draws the explored map into a size×size canvas at s px per tile, centered on tile (cx,cz).
@@ -360,12 +361,14 @@ export function toast(msg, kind, p){
 
 // ---------- Craft screen ----------
 export function renderCraft(){
-  const p = me(), scrap = countItem(p, 'scrap'), wrap = $('craftCards');
-  $('scrapCount').textContent = scrap;
+  const p = me(), wrap = $('craftCards');
+  $('scrapCount').textContent = countItem(p, 'scrap'); $('plankCount').textContent = countItem(p, 'planks');
   wrap.innerHTML = '';
   RECIPES.forEach((r, i) => {
-    const I = ITEMS[r.id], b = document.createElement('button'); b.className = 'upg'; b.disabled = scrap < r.scrap;
-    b.innerHTML = `<div class="ic">${I.icon}</div><b>${i+1}. ${I.name}</b><span>${r.desc}</span><span class="cost">${r.scrap} scrap · you have ${countItem(p, r.id)}</span>`;
+    const I = ITEMS[r.id], b = document.createElement('button'); b.className = 'upg';
+    b.disabled = Object.keys(r.cost).some(k => countItem(p, k) < r.cost[k]);
+    const cost = Object.keys(r.cost).map(k => `${r.cost[k]} ${ITEMS[k].name.toLowerCase()}`).join(' + ');
+    b.innerHTML = `<div class="ic">${I.icon}</div><b>${i+1}. ${I.name}</b><span>${r.desc}</span><span class="cost">${cost} · you have ${countItem(p, r.id)}</span>`;
     b.addEventListener('click', () => craftFromKey(i));
     wrap.appendChild(b);
   });

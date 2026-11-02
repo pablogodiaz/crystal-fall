@@ -9,6 +9,8 @@
 // Gameplay code calls emit/emitTo/sfxFor without caring whether anyone is connected.
 import { state, world, net, players, zombies, drops, pickups, hazards, puddles } from './state.js';
 import { N } from './config.js';
+import { toGround } from './grid.js';
+import { breakSync } from './breakables.js';
 import { WEAPONS } from './items.js';
 import { weaponStats } from './weapons.js';
 import { send, onNet, connect, disconnect, VERSION } from './net.js';
@@ -108,7 +110,7 @@ function hello(id, m){
 function joinRunning(p){
   const a = players.find(o => o !== p && !o.dead);
   if (!a || state.mode === 'dead'){ p.dead = true; p.g.visible = false; return; }
-  p.pos.set(a.pos.x + 0.6, 0, a.pos.z + 0.6); p.vel.set(0, 0, 0); p.g.position.copy(p.pos); p.lastTile = -1;
+  toGround(p.pos.set(a.pos.x + 0.6, 0, a.pos.z + 0.6)); p.vel.set(0, 0, 0); p.g.position.copy(p.pos); p.lastTile = -1;
   if (state.mode === 'upgrade') p.picked = p.ready = true;
 }
 // Disconnected: their player is a companion for LOST s (they can reconnect under the same name),
@@ -216,6 +218,7 @@ function syncEvents(){
   if (cr && cr.pulsed) out.push(['cr', 'pulsed']);
   if (state.phase === 'takeover') out.push(['cr', 'tint']);
   if (state.phase === 'open') out.push(['cr', 'over'], ['road']);
+  out.push(...breakSync());
   for (const z of zombies) out.push(spawnEvent(z));
   for (const d of drops) out.push(dropEvent(d));
   for (const p of pickups) out.push(['h+', p.nid, r2(p.g.position.x), r2(p.g.position.z)]);

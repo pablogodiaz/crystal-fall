@@ -3,6 +3,7 @@
 // the Holster upgrade; weapon instances, see weapons.js, or null), reserve ammo per weapon type in p.ammo. Every player has their
 // own, all of it on the player object, so it carries over between cities.
 import { WEAPONS, ITEMS, RECIPES, THROWABLES } from './items.js';
+import { placeBarricade } from './breakables.js';
 import { refreshGun } from './player.js';
 import { canAct } from './combat.js';
 import { spawnDrop } from './loot.js';
@@ -97,6 +98,8 @@ export function useSlot(p, i){
       if (p.boost > 2 && p.stamina > 0.95) return toast('Already wired', '', p);
       consume(p, i); p.stamina = 1; p.winded = false; p.boost = 20; sfxFor(p, 'use'); return toast('Energized: sprinting is cheap for 20 s', 'good', p);
     case 'scrap': return toast('Press C to craft with scrap', '', p);
+    case 'planks': return toast('Craft a barricade (C), or hold E at a damaged one to repair it', '', p);
+    case 'barricade': if (placeBarricade(p)) consume(p, i); return;
     case 'molotov': case 'pipebomb':
       if (throwItem(p, s.id)) consume(p, i); return;
   }
@@ -141,10 +144,11 @@ export function dropSlot(p, i){
 }
 // Returns an error message, or null on success.
 export function craft(p, id){
-  const r = RECIPES.find(r => r.id === id);
-  if (countItem(p, 'scrap') < r.scrap) return `Needs ${r.scrap} scrap`;
-  removeItem(p, 'scrap', r.scrap);
-  if (!addItem(p, id, 1)){ addItem(p, 'scrap', r.scrap); return 'No room in your pack'; }
+  const r = RECIPES.find(r => r.id === id), need = Object.keys(r.cost);
+  const short = need.find(k => countItem(p, k) < r.cost[k]);
+  if (short) return `Needs ${need.map(k => `${r.cost[k]} ${ITEMS[k].name.toLowerCase()}`).join(' + ')}`;
+  for (const k of need) removeItem(p, k, r.cost[k]);
+  if (!addItem(p, id, 1)){ for (const k of need) addItem(p, k, r.cost[k]); return 'No room in your pack'; }
   sfxFor(p, 'craft');
   return null;
 }

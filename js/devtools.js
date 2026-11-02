@@ -5,7 +5,7 @@
 // Player cheats are remembered in localStorage['crystal-fall-dev'] and only apply to the player you
 // control (P() = me()). Add new tools to a section in buildPanel() and list them in CLAUDE.md.
 import * as THREE from 'three';
-import { TILE, N, walkable, DISTRICTS, CONDITIONS } from './config.js';
+import { TILE, N, walkable, DISTRICTS, CONDITIONS, BREAKABLES } from './config.js';
 import { WEAPONS, ITEMS, LANDMARKS, GUNS, UNIQUES, RARITY, SPECIALS } from './items.js';
 import { ZTYPES, ZMODS, THREAT_BASE, THREAT_POOL, AI } from './threats.js';
 import { $, clamp, fmtTime, mpick } from './utils.js';
@@ -18,12 +18,15 @@ import { spawnDrop } from './loot.js';
 import { spawnZombieAt, findSpawnNear, killZombie, alertZombie, turnZombie, freezeZombie } from './zombies.js';
 import { hitCrystal } from './combat.js';
 import { foundCrystal } from './crystal.js';
-import { updateFlow, reveal, blockIndex } from './grid.js';
+import { updateFlow, reveal, blockIndex, toGround } from './grid.js';
 import { startCity, newRun, newSeed, openRoad, completeCity, killPlayer, revivePlayer, spectate } from './game.js';
 import { showScreen, toast } from './hud.js';
 import { UPGRADES, targets as cardTargets, modChoices, destChoices, cardFits, applyCard, cardOdds, CARD_TIERS } from './upgrades.js';
 import { roster } from './host.js';
 import { cityCondition } from './cityGen.js';
+import { placeBarricade, hitBreak } from './breakables.js';
+// Runs f on every breakable within 12 units of you.
+function nearBreaks(f){ ensureRun(); mark(); const p = P(); for (const b of [...world.breaks.values()]) if (Math.hypot((b.x + 0.5)*TILE - p.pos.x, (b.z + 0.5)*TILE - p.pos.z) < 12) f(b); }
 
 const P = me;
 const PREFS = 'crystal-fall-dev', SAVED = ['god','ammo','stamina','noclip','ignored','oneHit','speed'];
@@ -72,7 +75,7 @@ export function teleport(x, z){
     [tx, tz] = t; x = (tx + 0.5)*TILE; z = (tz + 0.5)*TILE;
   }
   const p = P(); if (p.dead) return toast('You’re dead: revive first', 'bad');
-  p.pos.set(x, 0, z); p.vel.set(0, 0, 0); p.g.position.copy(p.pos); camFocus.copy(p.pos);
+  toGround(p.pos.set(x, 0, z)); p.vel.set(0, 0, 0); p.g.position.copy(p.pos); camFocus.copy(p.pos);
   p.lastTile = -1; reveal(tx, tz, 8); updateFlow();
   mark();
 }
@@ -100,6 +103,15 @@ function targets(){
   for (const k of ['construction','cemetery','camp','pond','crater']){
     const bs = c.blocks.filter(b => b.type === k).map(b => ({ x:b.x0 + 2, z:b.z0 + 2 }));
     if (bs.length) out.push([`▦ ${titleCase(k)} (${bs.length})`, () => { const o = near(bs); tileTp(o.x, o.z); }]);
+  }
+  for (const k of ['knoll','dock','terrace']){
+    const rs = (c.raised || []).filter(r => r.kind === k).map(r => ({ x:r.x0, z:r.z0 }));
+    if (rs.length) out.push([`⛰ ${{ knoll:'Hill', dock:'Loading dock', terrace:'Terrace' }[k]} (${rs.length})`, () => { const o = near(rs); tileTp(o.x, o.z); }]);
+  }
+  const fences = world.breaks ? [...world.breaks.values()] : [];
+  for (const k of ['picket','rail','chain','iron','planks']){
+    const fs = fences.filter(b => b.kind === k);
+    if (fs.length) out.push([`▥ ${BREAKABLES[k].name} (${fs.length})`, () => { const o = near(fs); tileTp(o.x, o.z + 1); }]);
   }
   const broken = c.buildings.filter(b => b.cut).map(b => ({ x:b.x, z:b.z }));
   if (broken.length) out.push([`🏚 Broken building (${broken.length})`, () => { const o = near(broken); tileTp(o.x, o.z); }]);
@@ -353,6 +365,13 @@ function buildPanel(){
   for (const u of UPGRADES) btn(r, `${u.icon} ${u.name}`, () => playCard(u), `${u.tier} card${u.from ? `, dealt from City ${u.from}` : ''}${u.fallback ? ', only dealt in place of one you can’t use' : ''}. ${u.desc}. Plays it now on the held weapon (or the first it fits), random modifier (and target) where it asks`);
   r = row(s, 'dv-grid');
   for (const k in SPECIALS) btn(r, `✦ ${SPECIALS[k].name}`, () => giveSpecial(k), `${WEAPONS[SPECIALS[k].on].name}: ${SPECIALS[k].desc}. Gives the weapon if you don’t carry it`);
+
+  s = section(root, 'Fences & barricades', false);
+  r = row(s);
+  btn(r, 'Put up barricade', () => { ensureRun(); closeOverlays(); placeBarricade(P()); }, 'Boards up the tile in front of you (no item needed)');
+  btn(r, 'Hit fences 50%', () => nearBreaks(b => hitBreak(b, b.max/2, b.x*TILE - P().pos.x, b.z*TILE - P().pos.z)), 'Every fence and barricade within 12 units loses half its health');
+  btn(r, 'Break fences', () => nearBreaks(b => hitBreak(b, 999, b.x*TILE - P().pos.x, b.z*TILE - P().pos.z)), 'Knocks down every fence and barricade within 12 units');
+  s.appendChild(h('small', 'dv-note', 'Zombies bang on a fence when their way to you goes through it. “+1 of any item” has planks and barricades.'));
 
   s = section(root, 'World');
   r = row(s);

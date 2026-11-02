@@ -89,6 +89,8 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     (`crystalFx`), the road (`roadFx`), upgrades (`showUpgrades`, then `showUpgradeResult` from the host's `upgr`), game over (`showGameOver`). Snapshots
     move other players and zombies (smoothed, see below); `animateMirror` drives zombie looks from flags.
     Its own player is predicted with `movePlayer` and reported; knockback arrives as `kick`.
+  - **Fences and barricades:** `br+` (a barricade put up), `brh` (a hit: health left, direction), `br-`
+    (broken, or taken down); `mirrorBreak` applies them, `breakSync` adds them to the mid-run sync.
   - **Effects reach clients by themselves:** `burst`, `addDecal`, `addRing`/`shockwave`, `shake` (fx.js) and
     every `sfx.*` call (wrapped in `initHost`) are emitted unless passed `local` (ambient effects of things
     clients mirror, corpses, gibs, rising dirt, menu). Sounds and messages for one player: `sfxFor(p, name)`,
@@ -156,6 +158,33 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     Nothing blocks near the start, the exit or a landmark entrance (`clearSpot`).
   - Smoke plumes rise from burning wrecks, houses, broken towers and lit barrels (`c.smoke`, one
     instanced mesh animated by `animateCity` in `cityScene.js`).
+- **Raised ground** (`addHeights`/`raise` in `cityGen.js`, `buildRaised` in `cityScene.js`): grassy **hills** in
+  parks, fields, farms and camps (a 2×2–3×2 top, one or two ramps), **loading docks** along warehouse fronts
+  (concrete, a ramp at one end) and **terraces** in downtown parks (the middle 3×3 up two flights of steps).
+  `city.level` per tile: 0 ground, 1 ramp/stairs (`city.rampDir`: index into `[[1,0],[-1,0],[0,1],[0,-1]]`, the
+  way up), 2 raised (`RAISE` = 1.1 up). Anyone can step up one level or drop down any number; nobody climbs
+  from the ground straight onto a raised tile. So the top is a spot to hold with one way up: zombies below
+  can't reach you (attacks need the two heights within 0.6, `shoveFromPlayers`), they have to come up the
+  ramp. Enforced by `resolveCircle` (it reads the mover's height `pos.y`, then sets it to `groundAt`), the
+  path fields (`bfs`) and `descend`, `walkClear` (straight lines); sight, shots and throws ignore heights.
+  Raised tiles get no containers, closures or wrecks; each one is kept only if it cuts nothing off.
+- **Fences and barricades** (`breakables.js`, `BREAKABLES` in `config.js`): every fence is a breakable
+  `T.FENCE` tile (`world.breaks`: tile index → `{ kind, hp, max, under, g }`): picket fences round some
+  suburban yards, rail fences round farms and fields, chain-link (construction sites, camps, quarantine
+  closures), cemetery iron. They stop feet but not sight, shots or throws. Players craft **barricades**
+  (C: 2 planks + 1 scrap; use the item to board up the tile ~1.6 units in front of you, on your level,
+  with nothing standing in it, `placeBarricade`). **Planks** come from lumber piles (searchable stacks in
+  yards, building sites and the hardware store), the hardware store, crates, dumpsters and houses. Hold E
+  at a damaged wooden one to repair it (+12 hp, a plank), or at your own barricade to take it down (a plank
+  back) (`breakJobs`/`finishJob` through `updateInteract`). Melee kicks a fence for `AI.kick`; explosions
+  hit them (`blastBreaks`). A breakable leans more with each hit and topples when broken (`animateBreaks`).
+  - **Zombies and fences:** path fields treat a fence as passable at a cost of `breakCost` = 1 + hp ×
+    `AI.breakCost` tiles (`bfs` in `grid.js`, a BFS that holds the dearer steps back), so a zombie's way
+    leads through one only when going round is longer. When the tile it wants to step into is a breakable
+    (`breakAhead`), it stops and bangs on it (`poseBang`, `z.banging` → `F.bang` for clients) every
+    `AI.bang` s for its dmg × `AI.bangDmg`, each blow a noise (`AI.bangNoise`) that draws more. Breaking or
+    placing one clears the flow cache and every zombie's path (`gridChanged`). Hunters only charge
+    straight at a nearby player when they can walk the line (`walkClear`), otherwise they follow the field.
 - **City loop** (`state.phase`):
   1. `explore` — find the Crystal (violet beam) in the plaza block. It counts as "found" when
      you get within 19 units or shoot it.
@@ -311,7 +340,7 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   plus knockback.
   0.55 s cooldown, small noise radius, blocks firing while swinging.
 - **Inventory:** 8 slots of stackable items (`player.inv`, `ITEMS`): bandage, medkit, energy drink
-  (full stamina + sprint drains 60% less for 20 s via `player.boost`), scrap, molotov, pipe bomb. Keys 1–8 (or click) use a slot, right-click drops the stack. Full pack →
+  (full stamina + sprint drains 60% less for 20 s via `player.boost`), scrap, molotov, pipe bomb, planks, barricade. Keys 1–8 (or click) use a slot, right-click drops the stack. Full pack →
   overflow is dropped on the ground (`drops`), picked up by walking over it. Inventory, weapons,
   ammo and bleeding all live on the player object, so they carry over between cities; only `newRun`
   resets them (`resetPlayerStats(p)`).
@@ -351,7 +380,7 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     and barred windows; its gun rolls with `LUCK_SHOP`): one block, a solid shop searched through its awninged front door.
   - Discovered once the tile in front of the door/entrance is revealed, then shown on the map;
     dimmed there once everything in it (`l.cts`) is searched.
-- **Crafting** (C, `RECIPES`): molotov (3 scrap) burns a 2.6-unit area for 6 s, also damaging the
+- **Crafting** (C, `RECIPES`, each with a `cost` of materials): barricade (2 planks + 1 scrap, see above); molotov (3 scrap) burns a 2.6-unit area for 6 s, also damaging the
   Crystal if it's in the fire; pipe bomb (4 scrap)
   beeps for 3.5 s (its beeps are forced noises; hunting and searching zombies within 32 units walk to it via `world.lure`), then a concussion
   blast (`stunBlast`) stuns zombies within 6 units for up to 2.5 s (`stunZombie`, `z.stun`: frozen,
@@ -388,7 +417,8 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     new position; others go and look, unless it's further than 1.25× their leash from home
     (`force`, the pipe bomb, ignores that). `alertNear` (screams, the Crystal's pulse) tells
     everything in range where you are.
-  - Paths: hunters that see their player descend that player's flow field (`p.dist`, every 0.25 s); everything
+  - Paths: hunters that see their player descend that player's flow field (`p.dist`, every 0.25 s; fields go
+    through fences at a cost and follow the raised-ground rules, see above); everything
     else walks straight to its target when it's in view, or down `flowTo(tile)` (a BFS field toward
     that tile, cached and shared in `grid.js`).
   - Takeover zombies (and everything within `CRYSTAL.breakR` when it breaks) are `tracked`: they
@@ -477,8 +507,10 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   - Threats this city: tick/untick which types and modifiers roll (`state.threatIntro`, reset by
     the next city), plus the run's unlock order.
   - Teleport: start, Crystal, exit, every landmark of the city, the nearest road closure of each kind,
-    the nearest construction site / cemetery / camp / pond / crater, a broken building (snapped to the
-    nearest open tile).
+    the nearest construction site / cemetery / camp / pond / crater, a broken building, the nearest hill /
+    loading dock / terrace and fence of each kind (snapped to the nearest open tile).
+  - Fences & barricades: put up a barricade in front of you (no item needed), hit every fence within 12
+    units for half its health, break them all. Planks and barricades are in "+1 of any item".
   - Zombies: spawn ×1–50 of any type with any modifiers near you (`dev.spawn` overrides
     `rollThreat`), hunting or not, rising or standing; kill all (no kills/drops; exploders still
     blow), calm all, alert all; freeze zombies (skips `updateZombies`).
@@ -526,6 +558,8 @@ js/
   audio.js        Procedural WebAudio SFX (sfx.*), initAudio(), toggleMute()
   cityGen.js      Pure procedural city generation from a seed: condition, districts, blocks, landmark
                   templates, broken buildings, crashes, road closures (reachability-checked), wrecks, containers
+  breakables.js   Fences and plank barricades: damage, breaking down, placing, repair/take-down jobs, the
+                  lean/topple animation, network mirror and sync
   cityScene.js    Builds/tears down the city's Three.js meshes: buildings by style (broken, burnt, frames,
                   crypts), cars (poses), scars (scorch, ponds, craters, debris), smoke, walk-in landmark
                   shells/roofs, props (fences, barriers, bus, crane, graves…), containers, signs, Crystal,
@@ -638,11 +672,15 @@ features/
   `rings` entries (`{ mesh, t, T, r0, r1, op }`) own their material, disposed when they finish.
   Player bodies share geometry and skin/cap/pack materials (`PG` in `player.js`); their jacket, ring and
   swoosh materials are their own, disposed by `removePlayer`.
-- **Tile types:** `walkable` = road, exit, sidewalk, grass, plaza, floor; `seeThrough` adds `BARS`, `LOW`
-  and `WATER` (block walking only). `OBSTACLE`, `BUILDING`, `WALL` block everything. The minimap colours
+- **Tile types:** `walkable` = road, exit, sidewalk, grass, plaza, floor; `seeThrough` adds `BARS`, `LOW`,
+  `WATER` and `FENCE` (block walking only; `FENCE` tiles are breakables in `world.breaks`). `OBSTACLE`, `BUILDING`, `WALL` block everything. The minimap colours
   each type (`MM_COLORS` in `hud.js`), so a new tile type needs a colour there.
+- **Heights:** a player's or zombie's `pos.y` is the ground under it (0 except on raised ground and ramps):
+  `resolveCircle` keeps it up to date, so anything that moves something must go through it, and anything
+  that places something (teleports, spawns, joins) snaps it with `toGround(pos)`. Things drawn on the ground
+  (drops, health crosses, decals, fire, acid, pipe bombs, particles' floor, gibs) add `groundAt(x, z)`.
 - **Units:** grid tiles are `TILE = 2` world units. Tile arrays (`grid`, `explored`, flow fields,
-  `interiorAt`, …) are always `N*N` with `N = 102` (the largest city, `B = 14` blocks) and indexed
+  `interiorAt`, `level`, …) are always `N*N` with `N = 102` (the largest city, `B = 14` blocks) and indexed
   `z*N + x`; a smaller city fills the top-left `n×n` and every tile outside it is `T.WALL`, so
   bounds checks against `N` stay correct. Use `city.n`/`city.b` (not `N`/`B`) for anything about
   the city's extent: its edge walls, exit column, ground planes, loops over its blocks, map
@@ -676,7 +714,9 @@ No automated test suite. The dev tools (`` ` ``) shortcut most of this: jump to 
 landmark, spawn the threat you changed, skip the takeover. To verify changes, serve locally and play a city through:
 explore (check districts feel different and each city condition looks like itself (dev tools: City → Condition):
 dead ends, pileups, checkpoints, buses, collapses, crashes, broken/burnt buildings, smoke, the construction
-site crane, cemetery, camp, pond, crater; walk into the police station and supermarket; from City
+site crane, cemetery, camp, pond, crater; stand on a hill / dock / terrace and check zombies come up the
+ramp and can't hit you from below; craft and place a barricade, watch zombies bang through it (or a fence)
+when the way round is long, repair it, take it down; walk into the police station and supermarket; from City
 3/4/6 the hospital, gun shop and army outpost) → search
 containers/landmarks (weapon finds: rarity colours, the ground tooltip, Tab loadout; "Scatter 6 guns" in the dev
 tools) → try each unique (flamethrower + a gas pump refuel, flask, arc caster, bow arrows, gravity well,

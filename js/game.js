@@ -10,7 +10,8 @@ import { CRYSTAL } from './threats.js';
 import { state, world, zombies, mouse, dev, players, net } from './state.js';
 import { generateCity } from './cityGen.js';
 import { buildCityScene, buildExitMarker, teardownCity, animateCity } from './cityScene.js';
-import { updateFlow, clearFlowCache, blockIndex } from './grid.js';
+import { updateFlow, clearFlowCache, blockIndex, toGround } from './grid.js';
+import { animateBreaks } from './breakables.js';
 import { me, viewed, nearestDist, crowd, residents, zombieCap, resetPlayerStats, refreshGun, updatePlayers } from './player.js';
 import { spawnZombieAt, spawnTurnedPlayer, findSpawnTile, findBlockTile, updateZombies, updateDying } from './zombies.js';
 import { updateBullets } from './combat.js';
@@ -65,7 +66,7 @@ function placePlayers(city){
       const [ox, oz] = START_SPOTS[k++];
       if (walkable(city.grid[(city.start.z + oz)*N + city.start.x + ox])){ x = city.start.x + ox; z = city.start.z + oz; break; }
     }
-    p.pos.set((x+0.5)*TILE, 0, (z+0.5)*TILE); p.vel.set(0,0,0); p.g.position.copy(p.pos); p.tp++;
+    toGround(p.pos.set((x+0.5)*TILE, 0, (z+0.5)*TILE)); p.vel.set(0,0,0); p.g.position.copy(p.pos); p.tp++;
     p.lastTile = -1; p.crafting = false; p.aiming = false; p.interact.target = null; p.interact.p = 0;
   }
 }
@@ -423,7 +424,7 @@ export function animateWorld(dt, t){
   muzzleLight.intensity = Math.max(0, muzzleLight.intensity - dt*30);
   const flip = Math.floor(t*3) % 2;  // police lightbars
   SH.sirenR.emissiveIntensity = flip ? 1.6 : 0.15; SH.sirenB.emissiveIntensity = flip ? 0.15 : 1.6;
-  animateContainers(t); animateCity(dt, t);
+  animateContainers(t); animateCity(dt, t); animateBreaks(dt);
   updateThrowPreview();
   updateParticles(dt);
   updateDying(dt);

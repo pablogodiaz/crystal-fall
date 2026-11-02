@@ -23,7 +23,9 @@ export const world = {
   explored:new Uint8Array(N*N), mmDirty:true,
   lure:null,  // active pipe bomb that alerted zombies walk toward
   // Walk-in landmarks: { shell, roof, key, k } per building (k = cutaway 0..1), and tile -> index+1 inside one.
-  interiors:[], interiorAt:null
+  interiors:[], interiorAt:null,
+  // Fences and barricades zombies can break: tile index -> breakable; broken = city fence tiles gone (breakables.js).
+  breaks:new Map(), broken:[]
 };
 
 // Live entity lists (mutated in place, never reassigned). players: everyone in the session (player.js).

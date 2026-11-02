@@ -79,4 +79,8 @@ export const COOP = { residents:0.5, spawns:0.75, max:260 };
 // sprintNoise = radius of your footsteps while sprinting, every stepT s.
 export const AI = { sight:13, sightHunt:26, feel:3.5, cone:1.9, memory:6, leash:30, guardLeash:9, closeR:9,
   search:4, giveUp:25, wander:7, muffle:0.6, noiseLeash:1.25, sprintNoise:8, stepT:0.3,
-  speed:{ idle:0.3, search:0.75, return:0.55 } };
+  speed:{ idle:0.3, search:0.75, return:0.55 },
+  // Fences and barricades: a path through one costs breakCost tiles per point of its health (so a
+  // zombie bangs one down only when going round is longer); bang = seconds between blows, a blow
+  // deals the zombie's dmg × bangDmg, banging makes bangNoise. Players kick fences for kick.
+  breakCost:0.6, bang:1.1, bangDmg:0.1, bangNoise:12, kick:2 };
