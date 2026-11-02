@@ -172,6 +172,11 @@ body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--text)
 .upg.picked:disabled{opacity:1;border-color:var(--hazard)}
 .upg .cost{display:block;margin-top:8px;font-weight:700;color:var(--text)}
 /* Upgrade screen steps: weapon cards as buttons, modifiers to replace, the result */
+.upg.upg-card{border-color:var(--rc);border-top:3px solid var(--rc)}
+.upg.upg-card:hover{border-color:var(--hazard);border-top-color:var(--rc)}
+.upg.upg-card .ic{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.upg.upg-card .ic em{font:700 10.5px Barlow,sans-serif;font-style:normal;letter-spacing:.06em;text-transform:uppercase;color:var(--rc)}
+.upg.upg-card[data-r=legendary]{box-shadow:0 0 0 1px var(--rc),0 0 18px -4px var(--rc)}
 .upg-w{appearance:none;border:0;background:none;padding:0;text-align:left;cursor:pointer;font:inherit;border-radius:8px}
 .upg-w .wcard{height:100%;box-sizing:border-box;transition:border-color .12s}
 .upg-w:hover .wcard{border-color:var(--hazard);border-left-color:var(--rc)}
