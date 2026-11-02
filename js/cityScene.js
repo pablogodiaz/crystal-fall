@@ -45,19 +45,19 @@ export function buildCityScene(c){
   const road = new THREE.Mesh(own(new THREE.PlaneGeometry(W, W)), std(0x2f3136, { roughness:1 }));
   road.rotation.x = -Math.PI/2; road.position.set(W/2,0,W/2); road.receiveShadow = true; cityGroup.add(road);
 
-  // Block slabs; a landmark's lot (one block, or 2×2 blocks plus the roads between) is one slab.
+  // Ground slabs: one per lot (a block, several merged ones with the streets between, a block grown over a
+  // street, a landmark's lot) and one per street closed to cars.
   const groundMats = {}, gm = { towers:0x67655f, ruins:0x58564f, park:0x3b4a2e, field:0x4b5032, houses:0x45543a, farm:0x4b5032,
     warehouses:0x5c5b56, yard:0x55534d, lot:0x26282c, plaza:0x7a7468, landmark:0x67655f, construction:0x5a5247, cemetery:0x3a4630, camp:0x47483a,
-    pond:0x3b4a2e, crater:0x4a4741 };
+    pond:0x3b4a2e, crater:0x4a4741, walk:0x67655f, path:0x45543a, track:0x4b5032 };
   for (const k in gm) groundMats[k] = std(gm[k], { roughness:1 });
+  const slab = (L, type) => {
+    const m = new THREE.Mesh(G('slab' + L.w + 'x' + L.d, () => new THREE.BoxGeometry(L.w*TILE - 0.12, 0.08, L.d*TILE - 0.12)), groundMats[type]);
+    m.position.set((L.x0 + L.w/2)*TILE, 0.04, (L.z0 + L.d/2)*TILE); m.receiveShadow = true; cityGroup.add(m);
+  };
   const lots = new Set();
-  for (const b of c.blocks){
-    const L = b.lot || { x0:b.x0, z0:b.z0, s:5 };
-    if (lots.has(L)) continue; lots.add(L);
-    const s = L.s*TILE - 0.12;
-    const m = new THREE.Mesh(G('slab' + L.s, () => new THREE.BoxGeometry(s, 0.08, s)), groundMats[b.type]);
-    m.position.set((L.x0 + L.s/2)*TILE, 0.04, (L.z0 + L.s/2)*TILE); m.receiveShadow = true; cityGroup.add(m);
-  }
+  for (const b of c.blocks){ const L = b.lot; if (!lots.has(L)){ lots.add(L); slab(L, b.type); } }
+  for (const s of c.strips) slab(s, s.kind);
   // Ground overlays: parking asphalt, gas station forecourts, shop floors (under the roofs).
   const tiles = (list, mat, y = 0.083, sx = TILE, sz = TILE, ox = 0, oz = 0) => {
     if (!list.length) return;
@@ -66,7 +66,8 @@ export function buildCityScene(c){
     im.receiveShadow = true; cityGroup.add(im);
   };
   const O = c.overlays;
-  tiles(O.lot, SH.lotMat); tiles(O.pad, SH.padMat); tiles(O.dirt, std(0x5a4b38, { roughness:1 }));
+  tiles(O.lot, SH.lotMat); tiles(O.pad, SH.padMat); tiles(O.dirt, std(0x5a4b38, { roughness:1 })); tiles(O.pave, std(0x7f7a70, { roughness:1 }));
+  buildCrops(c);
   buildScars(c);
   for (const type in c.floors){ const L = LANDMARKS[type]; tiles(c.floors[type], std(L.floor, L.checker ? { map:CHECKER_TEX, roughness:0.5 } : { roughness:0.6 })); }
   // Parking stall lines, running along the parked cars (each lot tile carries its lot's front rotation).
@@ -107,10 +108,13 @@ export function buildCityScene(c){
   world.interiors = []; world.interiorAt = new Int8Array(N*N);
   c.interiors.forEach((it, i) => buildInterior(it, i));
   for (const t of c.trees){
-    const g = new THREE.Group(); g.position.set((t.x+0.5)*TILE, 0, (t.z+0.5)*TILE); g.scale.setScalar(t.s);
+    // On raised ground too; a planter's tree stands in a concrete box.
+    const g = new THREE.Group(), x = (t.x+0.5)*TILE, z = (t.z+0.5)*TILE; g.position.set(x, groundAt(x, z), z); cityGroup.add(g);
+    if (t.planter){ mesh(G('planter', () => boxes([[1.5,0.5,1.5,0,0.25,0], [1.3,0.08,1.3,0,0.52,0]])), M('planter', 0x9a958b), 0, 0, 0, g); }
+    const k = new THREE.Group(); k.scale.setScalar(t.s); k.position.y = t.planter ? 0.4 : 0; g.add(k);
     const tr = new THREE.Mesh(SH.trunkGeo, SH.trunkMat); tr.position.y = 0.65; tr.castShadow = true;
     const lf = new THREE.Mesh(SH.leafGeos[(t.x + t.z) % 3], SH.leafMats[t.m]); lf.position.y = 1.75; lf.rotation.y = (t.x % 2)*Math.PI/2; lf.castShadow = true;
-    g.add(tr, lf); cityGroup.add(g);
+    k.add(tr, lf);
   }
   for (const cr of c.cars) cityGroup.add(carMesh(cr));
   for (const r of c.rubble){
@@ -217,20 +221,49 @@ function buildScars(c){
   }
 }
 
+// ---------- Crops ----------
+// Farmed tiles: dark tilled earth with two rows of plants along the field (cabbages, corn, wheat), all in
+// one instanced mesh; colours from a seed so every machine draws them alike.
+function buildCrops(c){
+  if (!c.crops.length) return;
+  const cityGroup = world.cityGroup, rnd = srand(c.crops.length*13 + c.n), col = new THREE.Color();
+  const soil = own(new THREE.InstancedMesh(SH.tilePlane, std(0x3f3326, { roughness:1 }), c.crops.length));
+  const im = own(new THREE.InstancedMesh(G('crop', () => box(0.42, 0.42, 0.42, true)), std(0xffffff, { roughness:1 }), c.crops.length*6));
+  const kinds = [[0x4f7a32, 0.7], [0x6b8a2e, 1.6], [0xb59a3c, 1.1]], fieldKind = new Map();
+  let k = 0;
+  c.crops.forEach(([x, z, ax], i) => {
+    dummy.position.set((x + 0.5)*TILE, 0.083, (z + 0.5)*TILE); dummy.rotation.set(0, 0, 0); dummy.scale.set(TILE, 1, TILE); dummy.updateMatrix(); soil.setMatrixAt(i, dummy.matrix);
+    // One crop per field (neighbouring tiles share it).
+    const key = Math.floor(x/7)*100 + Math.floor(z/7); if (!fieldKind.has(key)) fieldKind.set(key, kinds[Math.floor(rnd(0, 3))]);
+    const [hex, h] = fieldKind.get(key);
+    for (const row of [-0.45, 0.45]) for (const a of [-0.65, 0, 0.65]){
+      const s = rnd(0.75, 1.1);
+      dummy.position.set((x + 0.5)*TILE + (ax ? a : row), 0.08, (z + 0.5)*TILE + (ax ? row : a)); dummy.scale.set(s, h*rnd(0.8, 1.1), s); dummy.updateMatrix();
+      im.setMatrixAt(k, dummy.matrix); im.setColorAt(k++, col.setHex(hex).multiplyScalar(rnd(0.8, 1.1)));
+    }
+  });
+  soil.receiveShadow = true; im.castShadow = im.receiveShadow = true; cityGroup.add(soil, im);
+}
+
 // ---------- Raised ground ----------
-// Hills (grass top, earthy banks sloping in a little), loading docks (concrete with a yellow edge and
-// rubber bumpers) and terraces (paving), each with its ramps (wedges) or stairs.
-const LOOK = { knoll:{ top:0x4a5a33, side:0x5a4b38 }, dock:{ top:0x8d8a84, side:0x7a7770 }, terrace:{ top:0x9d968a, side:0x857e72 } };
+// Hills (grass top, earthy banks), loading docks (concrete with a yellow edge and rubber bumpers),
+// terraces (paving) and railway embankments (gravel, with the old track on top), each with its ramps
+// or stairs. A second tier (tier 2) sits on the first, from RAISE up.
+const LOOK = { knoll:{ top:0x4a5a33, side:0x5a4b38 }, dock:{ top:0x8d8a84, side:0x7a7770 }, terrace:{ top:0x9d968a, side:0x857e72 }, berm:{ top:0x6f685d, side:0x5a4b38 } };
 function buildRaised(c){
   const cityGroup = world.cityGroup;
   for (const r of c.raised){
     const L = LOOK[r.kind], top = M('top-' + r.kind, L.top, { roughness:1 }), side = M('side-' + r.kind, L.side, { roughness:1, flatShading:true });
-    const w = (r.x1 - r.x0)*TILE, d = (r.z1 - r.z0)*TILE, inset = 0;
-    const geo = own(box(w, RAISE, d, true)), pos = geo.attributes.position;
-    for (let i=0;i<pos.count;i++) if (pos.getY(i) > 0.01){ pos.setX(i, pos.getX(i) - Math.sign(pos.getX(i))*inset); pos.setZ(i, pos.getZ(i) - Math.sign(pos.getZ(i))*inset); }
-    geo.computeVertexNormals();
-    const m = mesh(geo, [side, side, top, side, side, side], (r.x0*TILE + w/2), 0, (r.z0*TILE + d/2), cityGroup);
-    if (r.kind === 'knoll'){
+    const w = (r.x1 - r.x0)*TILE, d = (r.z1 - r.z0)*TILE, y0 = (r.tier - 1)*RAISE;
+    const m = mesh(G('raise' + w + 'x' + d, () => box(w, RAISE, d, true)), [side, side, top, side, side, side], (r.x0*TILE + w/2), y0, (r.z0*TILE + d/2), cityGroup);
+    if (r.kind === 'berm'){
+      // Sleepers across the top every 0.8, two rails along it.
+      const ax = w >= d, len = ax ? w : d, parts = [];
+      for (let a=-len/2 + 0.4;a<len/2;a+=0.8) parts.push(ax ? [0.26, 0.15, 1.5, a, RAISE + 0.075, 0] : [1.5, 0.15, 0.26, 0, RAISE + 0.075, a]);
+      mesh(own(boxes(parts)), M('sleeper', 0x4a3a2a), 0, 0, 0, m);
+      mesh(own(boxes([-0.5, 0.5].map(o => ax ? [len - 0.2, 0.16, 0.16, 0, RAISE + 0.23, o] : [0.16, 0.16, len - 0.2, o, RAISE + 0.23, 0]))), M('rail', 0x5a4a40, { metalness:0.5, roughness:0.6 }), 0, 0, 0, m);
+    }
+    if (r.kind === 'knoll' && r.tier === 1){
       // Stones round its foot.
       const rnd = srand(r.x0*97 + r.z0);
       for (let i=0;i<5;i++){ const a = rnd(0, 6.3), s = mesh(SH.rubbleGeo, SH.rubbleMat, m.position.x + Math.cos(a)*(w/2 - 0.1), 0.15, m.position.z + Math.sin(a)*(d/2 - 0.1), cityGroup); s.scale.setScalar(rnd(0.6, 1.1)); }
@@ -242,7 +275,7 @@ function buildRaised(c){
       const [dx, dz] = [[1,0],[-1,0],[0,1],[0,-1]][dir], cx = (x + 0.5)*TILE, cz = (z + 0.5)*TILE;
       // Four steps climbing toward the top (grass-topped on hills).
       for (let k=0;k<4;k++){
-        const st = mesh(G('step' + k, () => box(TILE, RAISE*(k + 1)/4, TILE*(4 - k)/4, true)), r.kind === 'knoll' ? [side, side, top, side, side, side] : side, cx + dx*TILE*k/8, 0, cz + dz*TILE*k/8, cityGroup);
+        const st = mesh(G('step' + k, () => box(TILE, RAISE*(k + 1)/4, TILE*(4 - k)/4, true)), r.kind === 'knoll' || r.kind === 'berm' ? [side, side, top, side, side, side] : side, cx + dx*TILE*k/8, y0, cz + dz*TILE*k/8, cityGroup);
         st.rotation.y = dx ? Math.PI/2 : 0;
       }
     }
@@ -522,6 +555,9 @@ const fenceRun = (st, H) => G('frun-' + st, () => {
   else for (const y of [0.08, H - 0.05]) list.push([L, 0.1, 0.1, L/2, y, 0]);
   return boxes(list);
 });
+// Fence height and post material by style; the post itself.
+const fenceLook = st => ({ H:{ iron:1.3, chain:1.9, picket:1.0, rail:1.1 }[st], postM:st === 'picket' || st === 'rail' ? M(st + 'Post', st === 'picket' ? 0xe8e4da : 0x6e5235) : M('post', 0x2a2c30, { metalness:0.4 }) });
+const fencePost = (st, H) => st === 'picket' || st === 'rail' ? box(0.22, H + 0.12, 0.22, true) : boxes([[0.18, H + 0.08, 0.18, 0, (H + 0.08)/2, 0], [0.26, 0.1, 0.26, 0, H + 0.1, 0]]);
 // Lattice for crane mast and jib (yellow frame with X bracing), repeated rx × ry times.
 const latticeMat = (rx, ry) => std(0xffffff, { map:canvasTex(64, (g, s) => {
   g.strokeStyle = '#d9a21b'; g.lineWidth = 6; g.strokeRect(3, 3, s - 6, s - 6); g.lineWidth = 4;
@@ -543,7 +579,9 @@ const signTex = kind => G('sign-' + kind, () => {
 // A painted sign on a box: the paint on front and back, plain board on the edges.
 const signFaces = kind => { const t = signTex(kind), e = M('signEdge', 0xd9d4c6, { roughness:0.8 }); return [e, e, e, e, t, t]; };
 function buildProps(c){
-  const opens = new Map(), cityGroup = world.cityGroup, fenceAt = new Set(c.props.filter(p => p.kind === 'fence').map(p => p.z*N + p.x));
+  const opens = new Map(), cityGroup = world.cityGroup, fenceAt = new Set(c.props.filter(p => p.kind === 'fence' && !p.broken).map(p => p.z*N + p.x));
+  // A fence runs on into a gate in it or a piece of it lying broken.
+  const linkAt = new Set(c.props.filter(p => p.kind === 'fgate' || (p.kind === 'fence' && p.broken)).map(p => p.z*N + p.x));
   for (const p of c.props){
     const g = p.g = new THREE.Group(); g.position.set((p.x+0.5)*TILE, groundAt((p.x+0.5)*TILE, (p.z+0.5)*TILE), (p.z+0.5)*TILE); g.rotation.y = p.rot || 0; cityGroup.add(g);
     let open = null;
@@ -637,15 +675,39 @@ function buildProps(c){
       // Two posts and the sign over the gap in the sandbags.
       for (const sd of [-1, 1]) mesh(SH.poleGeo, SH.woodMat, sd*2.1, 0, 0, g).scale.set(2, 3.4, 2);
       mesh(G('gateSign', () => box(4.4, 0.7, 0.12)), signMats(p.lm), 0, 3.1, 0, g);
+    } else if (p.kind === 'fence' && p.broken){
+      // A piece knocked down: a snapped post stub, the run lying in the grass (or half over) to one side.
+      g.rotation.y = p.rot ? Math.PI/2 : 0;
+      const st = p.style, { H, postM } = fenceLook(st);
+      mesh(G('fstub' + st, () => box(0.22, 0.4, 0.22, true)), postM, 0, 0, 0, g);
+      const f = new THREE.Group(); f.rotation.x = p.side*p.lean; f.position.y = 0.05; g.add(f);
+      for (const ry of [0, Math.PI]){
+        mesh(fenceRun(st, H), postM, 0, 0, 0, f).rotation.y = ry;
+        if (st === 'chain') mesh(G('chainPanel', () => box(TILE/2, H - 0.1, 0.03)), chainMat(), TILE/4*(ry ? -1 : 1), H/2, 0, f, false);
+      }
+    } else if (p.kind === 'fgate'){
+      // A gate in a fence: hung off the post on the hinge side (p.h points to it), swung open or ajar
+      // (or lying where it fell), with a post at each end of the gap that has fence beside it.
+      g.rotation.y = 0;
+      const st = p.style, { H, postM } = fenceLook(st), [hx, hz] = p.h, L = TILE/2;
+      for (const sd of [1, -1]) if (fenceAt.has((p.z + hz*sd)*N + p.x + hx*sd)) mesh(G('fpost' + st, () => fencePost(st, H)), postM, hx*sd*(L - 0.11), 0, hz*sd*(L - 0.11), g);
+      const pivot = new THREE.Group(); pivot.position.set(hx*(L - 0.11), 0, hz*(L - 0.11)); g.add(pivot);
+      pivot.rotation.y = Math.atan2(hz, -hx) + (p.fallen ? 0 : p.swing*p.ajar*Math.PI/2);
+      const leaf = new THREE.Group(); leaf.scale.x = 0.88; pivot.add(leaf);
+      if (p.fallen){ leaf.rotation.x = p.swing*1.45; leaf.position.y = 0.05; }
+      for (const o of [0, L]){
+        mesh(fenceRun(st, H), postM, o, 0, 0, leaf);
+        if (st === 'chain') mesh(G('chainPanel', () => box(TILE/2, H - 0.1, 0.03)), chainMat(), o + TILE/4, H/2, 0, leaf, false);
+      }
+      mesh(G('gstile' + st, () => box(0.16, H, 0.16, true)), postM, TILE - 0.08, 0, 0, leaf);
     } else if (p.kind === 'fence'){
       // Posts on the tile centre, a panel toward every neighbouring fence tile (a lone one spans its
       // tile along rot). Chain-link (with a quarantine sign where it closes a road) or cemetery iron.
       g.rotation.y = 0;
-      const st = p.style, wood = st === 'picket' || st === 'rail', H = { iron:1.3, chain:1.9, picket:1.0, rail:1.1 }[st];
-      const postM = wood ? M(st + 'Post', st === 'picket' ? 0xe8e4da : 0x6e5235) : M('post', 0x2a2c30, { metalness:0.4 });
-      mesh(G('fpost' + st, () => wood ? box(0.22, H + 0.12, 0.22, true) : boxes([[0.18, H + 0.08, 0.18, 0, (H + 0.08)/2, 0], [0.26, 0.1, 0.26, 0, H + 0.1, 0]])), postM, 0, 0, 0, g);
-      // A straight run ends flush with its tile's edge (gates, gaps); corners don't stick out.
-      const dirs = D4S.filter(([dx, dz]) => fenceAt.has((p.z + dz)*N + p.x + dx)), axisX = dirs.some(d => d[0]), axisZ = dirs.some(d => d[1]);
+      const st = p.style, { H, postM } = fenceLook(st);
+      mesh(G('fpost' + st, () => fencePost(st, H)), postM, 0, 0, 0, g);
+      // A straight run ends flush with its tile's edge (against a wall, a gate); corners don't stick out.
+      const dirs = D4S.filter(([dx, dz]) => fenceAt.has((p.z + dz)*N + p.x + dx) || linkAt.has((p.z + dz)*N + p.x + dx)), axisX = dirs.some(d => d[0]), axisZ = dirs.some(d => d[1]);
       const runs = !dirs.length ? (p.rot ? [[0,1],[0,-1]] : [[1,0],[-1,0]]) : axisX && axisZ ? dirs : axisX ? [[1,0],[-1,0]] : [[0,1],[0,-1]];
       for (const [dx, dz] of runs){
         const ry = Math.atan2(-dz, dx);
@@ -729,6 +791,21 @@ function buildProps(c){
         const f = std(0xff8a2a, { emissive:0xff5a00, emissiveIntensity:1.5, roughness:1 }); f.userData.ph = mr(0, 6); anim.fires.push(f);
         mesh(G('flame', () => boxes([[0.42,0.3,0.42,0,-0.2,0], [0.28,0.25,0.28,0,0.07,0], [0.14,0.2,0.14,0,0.28,0]])), f, 0, 1.15, 0, g, false);
       }
+    } else if (p.kind === 'shipping'){
+      // A shipping container across two tiles (ribbed sides, doors at one end), some with another on top.
+      // Stacked ones fade like a building when they hide the player.
+      g.position.set(p.cx*TILE, 0, p.cz*TILE);
+      const ribs = []; for (let a=-1.6;a<=1.6;a+=0.4) ribs.push([0.16, 1.9, 1.86, a, 0.95, 0]);
+      const geo = G('shipBox', () => boxes([[3.7, 2.0, 1.75, 0, 1.0, 0], ...ribs, [0.1, 1.8, 1.6, 1.86, 0.95, 0], [0.12, 1.8, 0.16, 1.9, 0.95, 0]]));
+      const mats = [std(p.color, { roughness:0.8, metalness:0.2 })], low = mesh(geo, mats[0], 0, 0, 0, g);
+      if (p.top){ mats.push(std(p.top, { roughness:0.8, metalness:0.2 })); const hi = mesh(geo, mats[1], 0, 2.02, 0, g); hi.rotation.y = Math.PI; hi.userData.fadeKey = low; world.buildingMeshes.push(low, hi); }
+      low.userData.mats = mats; low.userData.center = g.position;
+    } else if (p.kind === 'stack'){
+      // A factory smokestack: a tall square chimney with bands, a sooty top; fades like a building.
+      const brick = std(0x6b4434, { roughness:1 }), band = std(0x3a2a24, { roughness:1 }), H = p.h;
+      const st = mesh(own(box(1.3, H, 1.3, true)), brick, 0, 0, 0, g);
+      mesh(own(boxes([[1.6, 0.6, 1.6, 0, 0.3, 0], [1.42, 0.25, 1.42, 0, H*0.45, 0], [1.42, 0.25, 1.42, 0, H*0.8, 0], [1.5, 0.4, 1.5, 0, H - 0.2, 0]])), band, 0, 0, 0, st);
+      st.userData.mats = [brick, band]; st.userData.center = g.position; world.buildingMeshes.push(st);
     } else if (p.kind === 'canopy'){
       // Gas station canopy over the pumps; fades like a building when it hides the player.
       const cw = (p.x1 - p.x0 + 1)*TILE, cd = (p.z1 - p.z0 + 1)*TILE;

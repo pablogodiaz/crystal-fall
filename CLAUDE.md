@@ -112,6 +112,21 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   (74 tiles) in Cities 1–2, 12×12 (88) from City 3, 14×14 (102) from City 6, with a "The cities are
   getting bigger" banner. You start in the north-west corner (tile 2,2); the Crystal's plaza is a
   block with `bx + bz >= b` (far side of the map); the exit is on the east wall (column `n - 1`).
+- **Street layout** (`layoutStreets` in `cityGen.js`, odds per district in `STREETS` in `config.js`): the block
+  grid is broken up so it doesn't read as a grid. Streets are edges of a graph of crossings (`V`/`H`: 0 road,
+  1 gone, 2 closed to cars). Blocks **merge** into big lots (2×1, 1×2, 3×1 rows, 2×2; the streets between them
+  go, a 2×2 swallows its middle crossing too), single blocks **take over a street** beside them (growing by 2
+  tiles: T-junctions and **dead ends**, `city.deadEnds`), and streets **close to cars** (`city.strips`: a paved
+  walk with planters downtown/industrial, a footpath in the suburbs, a dirt track in the outskirts; always
+  walkable). Every change keeps every crossing reachable, every crossing on at least one road (no stranded
+  asphalt) and every lot on a street; border streets and the ones round the start, plaza and landmarks never
+  change. What's built goes on **lots** (`city.lots`: `{ blocks, r:{ x0, z0, w, d }, type, district, paths,
+  ext, raise }`; each block's `b.lot` is its lot's rect). Big lots pick from the district's `merged` table and
+  get things a block can't hold: big towers and factory halls (`splitLots` keeps some lots whole), smokestacks
+  (`stack`), park footpaths where the streets ran (`overlays.pave`), lakes, big hills, railway embankments,
+  crops (`city.crops`, farms also get a barn), shipping containers (`shipping`, 2 tiles, some stacked) in yards,
+  cemeteries full of graves and crypts. `city.blockOf` maps each tile to its block (a block that took over a
+  street owns it); `blockIndex` reads it.
 - **Districts** (`DISTRICTS` + `LAYOUT` in `config.js`, `assignDistricts` in `cityGen.js`): every
   block is downtown (towers, dumpsters, crowded), industrial (warehouses, crate yards, ruins),
   residential/suburbs (houses with stepped roofs on lawns, parks) or outskirts (fields, ruins, sparse
@@ -158,20 +173,29 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     Nothing blocks near the start, the exit or a landmark entrance (`clearSpot`).
   - Smoke plumes rise from burning wrecks, houses, broken towers and lit barrels (`c.smoke`, one
     instanced mesh animated by `animateCity` in `cityScene.js`).
-- **Raised ground** (`addHeights`/`raise` in `cityGen.js`, `buildRaised` in `cityScene.js`): grassy **hills** in
+- **Raised ground** (`addHeights`/`raise`/`bigRaise` in `cityGen.js`, `buildRaised` in `cityScene.js`): grassy **hills** in
   parks, fields, farms and camps (a 2×2–3×2 top, one or two ramps drawn as steps), **loading docks** along warehouse fronts
-  (concrete, a ramp at one end) and **terraces** in downtown parks (the middle 3×3 up two flights of steps).
-  `city.level` per tile: 0 ground, 1 ramp/stairs (`city.rampDir`: index into `[[1,0],[-1,0],[0,1],[0,-1]]`, the
-  way up), 2 raised (`RAISE` = 1.1 up). Anyone can step up one level or drop down any number; nobody climbs
-  from the ground straight onto a raised tile. So the top is a spot to hold with one way up: zombies below
+  (concrete, a ramp at one end, both on long halls) and **terraces** in downtown parks (the middle 3×3 up two flights of steps).
+  Big lots reserve room (`lot.raise`) for **big hills / terraces** (up to 6×5, ramps or stairs up 2–4 sides, trees on top,
+  often a **second tier** inset on top with its own ramp) and **railway embankments** across big fields (a long 1-wide
+  ridge with sleepers and rails, ramps at both ends). `city.level` per tile: 0 ground, 1 ramp/stairs (`city.rampDir`:
+  index into `[[1,0],[-1,0],[0,1],[0,-1]]`, the way up), 2 raised (`RAISE` = 1.1 up), 3 ramp on a tier, 4 second
+  tier (2×`RAISE`): even = flat at level/2 × `RAISE` (`groundAt`, `levelOf`). Raised records carry `tier` (1/2).
+  Anyone can step up one level or drop down any number; nobody climbs straight up onto a tier. So the top is a spot to hold with one way up: zombies below
   can't reach you (attacks need the two heights within 0.6, `shoveFromPlayers`), they have to come up the
   ramp. Enforced by `resolveCircle` (it reads the mover's height `pos.y`, then sets it to `groundAt`), the
   path fields (`bfs`) and `descend`, `walkClear` (straight lines); sight, shots and throws ignore heights.
   Raised tiles get no containers, closures or wrecks; each one is kept only if it cuts nothing off.
 - **Fences and barricades** (`breakables.js`, `BREAKABLES` in `config.js`): every fence is a breakable
   `T.FENCE` tile (`world.breaks`: tile index → `{ kind, hp, max, under, g }`): picket fences round some
-  suburban yards, rail fences round farms and fields, chain-link (construction sites, camps, quarantine
-  closures), cemetery iron. They stop feet but not sight, shots or throws. Players craft **barricades**
+  suburban yards, rail fences round farms and fields, chain-link (construction sites, camps, yards, quarantine
+  closures), cemetery iron. Fences are built as **rings** round a lot (`fenceRing`): buildings and trees on the
+  edge interrupt them, each stretch gets a **gate** (`fgate` prop on an open tile: hung off a post, swung open,
+  ajar or fallen), and some sides have a stretch **knocked down** (fence props with `broken`: walkable scenery,
+  a snapped post and the run lying on the ground, not in `world.breaks`). Rule: **every fence end meets
+  something** (a building, wall, tree, car, water, raised ground, gate, another fence); `tidyFences` (the last
+  generation pass) fills any gap to the next solid thing with broken pieces, or lays one past the end, or
+  knocks the end down. They stop feet but not sight, shots or throws. Players craft **barricades**
   (C: 2 planks + 1 scrap; use the item to board up the tile ~1.6 units in front of you, on your level,
   with nothing standing in it, `placeBarricade`). **Planks** come from lumber piles (searchable stacks in
   yards, building sites and the hardware store), the hardware store, crates, dumpsters and houses. Hold E
@@ -517,8 +541,10 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   - Threats this city: tick/untick which types and modifiers roll (`state.threatIntro`, reset by
     the next city), plus the run's unlock order.
   - Teleport: start, Crystal, exit, every landmark of the city, the nearest road closure of each kind,
-    the nearest construction site / cemetery / camp / pond / crater, a broken building, the nearest hill /
-    loading dock / terrace and fence of each kind (snapped to the nearest open tile).
+    the nearest construction site / cemetery / camp / pond / crater, big lot of each type, dead end, pedestrian
+    street / footpath / dirt track, a broken building, the nearest hill / loading dock / terrace / embankment /
+    second tier, fence of each kind, gate, broken fence, shipping containers and smokestack (snapped to the
+    nearest open tile).
   - Fences & barricades: put up a barricade in front of you (no item needed), hit every fence within 12
     units for half its health, break them all; turn off player vaulting (`dev.noVault`) or runners climbing
     (`dev.noClimb`); stun yourself. Planks and barricades are in "+1 of any item".
@@ -581,8 +607,9 @@ js/
                   geometry), squareFrame(), corrugated
                   and checker textures, carMat(), gunModel() (weapon models, rarity materials)
   audio.js        Procedural WebAudio SFX (sfx.*), initAudio(), toggleMute()
-  cityGen.js      Pure procedural city generation from a seed: condition, districts, blocks, landmark
-                  templates, broken buildings, crashes, road closures (reachability-checked), wrecks, containers
+  cityGen.js      Pure procedural city generation from a seed: condition, districts, street layout (merged
+                  lots, dead ends, closed streets), lots, fences (rings, gates, broken bits), landmark templates,
+                  raised ground, broken buildings, crashes, road closures (reachability-checked), wrecks, containers
   breakables.js   Fences and plank barricades: damage, breaking down, placing, repair/take-down jobs, the
                   lean/topple animation, network mirror and sync
   cityScene.js    Builds/tears down the city's Three.js meshes: buildings by style (broken, burnt, frames,
@@ -678,8 +705,9 @@ features/
 - **Two RNGs:** city layout uses the seeded `rng`/`rand`/`randi`/`pick` (deterministic per seed);
   everything else (AI, FX, spawns, loot rolls, upgrade choice) uses `Math.random`/`mr`/`mri`/`mpick`.
   Don't mix them up — calling seeded helpers outside `cityGen.js` changes generated cities.
-  Generation order: condition → districts → plaza → landmarks → district blocks → `damage` → `addCrashes`
-  → `addClosures` → `addWrecks` → `placeLoot` (dumpsters, crates, trunks, doors). Cosmetic details that
+  Generation order: condition → districts → plaza → landmarks → `layoutStreets` → lots (`buildLot`) → closed
+  streets (`buildStrip`) → `addHeights` → `damage` → `addCrashes` → `addClosures` → `addWrecks` → `placeLoot`
+  (dumpsters, crates, trunks, doors) → `tidyFences`. Cosmetic details that
   should look the same on every machine (rubble heaps, graves, broken-building holes) take a seed stored
   in the city data and `srand` in `cityScene.js`, not `Math.random`.
 - **City data gets runtime fields.** `buildCityScene` adds `px/pz/range/time/noise/searched/glint/open`
@@ -710,9 +738,9 @@ features/
   `z*N + x`; a smaller city fills the top-left `n×n` and every tile outside it is `T.WALL`, so
   bounds checks against `N` stay correct. Use `city.n`/`city.b` (not `N`/`B`) for anything about
   the city's extent: its edge walls, exit column, ground planes, loops over its blocks, map
-  scaling. Roads are the tiles where `(t-1) % 7 < 2`. World→tile is `Math.floor(pos/TILE)`; tile
+  scaling. Roads lie where `(t-1) % 7 < 2`, but only where `layoutStreets` kept them (check the tile type). World→tile is `Math.floor(pos/TILE)`; tile
   center is `(t+0.5)*TILE`. Block of a point: `blockIndex(x, z)` in `grid.js` (index into
-  `city.blocks`, `bz*b + bx`).
+  `city.blocks`, `bz*b + bx`, from `city.blockOf`). Lots, not blocks, are what's built: use `lot.r` for extents.
 - **Model style** (every mesh in the world; the army outpost's sandbag wall and the zombies are the reference):
   - **Boxes only:** build models from `BoxGeometry` with flat faces. No cylinders, spheres, cones, torus rings,
     circles or rings, and no faceted "gem" solids (octahedron, dodecahedron, icosahedron).
@@ -755,7 +783,8 @@ features/
 
 No automated test suite. The dev tools (`` ` ``) shortcut most of this: jump to a city, teleport to a
 landmark, spawn the threat you changed, skip the takeover. To verify changes, serve locally and play a city through:
-explore (check districts feel different and each city condition looks like itself (dev tools: City → Condition):
+explore (check the streets don't read as a grid: big lots, T-junctions, dead ends, closed streets; every fence
+end meets something or lies broken; districts feel different and each city condition looks like itself (dev tools: City → Condition):
 dead ends, pileups, checkpoints, buses, collapses, crashes, broken/burnt buildings, smoke, the construction
 site crane, cemetery, camp, pond, crater; stand on a hill / dock / terrace and check zombies come up the
 ramp and can't hit you from below; vault a picket fence, get hit on the way over (stunned, back where you

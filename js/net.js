@@ -9,7 +9,7 @@ import { state, net } from './state.js';
 
 // Bump whenever cityGen.js, config.js layout data or the messages change: clients build the city
 // from the seed, so different builds would make different cities.
-export const VERSION = 9;
+export const VERSION = 10;
 const H = { message(){}, join(){}, leave(){}, close(){}, ready(){} };
 let ws = null, closing = false, retries = 0;
 

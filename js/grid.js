@@ -13,20 +13,20 @@ export function isBlockedTile(tx,tz){
   return !walkable(world.city.grid[tz*N+tx]);
 }
 // ---------- Raised ground ----------
-// Height of the ground at world point (x,z): 0, RAISE on raised tiles, a slope across ramps
-// (city.rampDir = the D4 direction you climb in).
+// Height of the ground at world point (x,z): level/2 × RAISE on flat tiles (0 ground, 2 raised, 4 the
+// second tier), a slope up to the next tier across ramps (odd levels; city.rampDir = the D4 direction you climb in).
 const D4 = [[1,0],[-1,0],[0,1],[0,-1]];
 export function groundAt(x, z){
   const c = world.city; if (!c || !c.level) return 0;
   const tx = Math.floor(x/TILE), tz = Math.floor(z/TILE);
   if (tx < 0 || tz < 0 || tx >= N || tz >= N) return 0;
   const l = c.level[tz*N+tx];
-  if (l !== 1) return l ? RAISE : 0;
+  if (!(l & 1)) return l*RAISE/2;
   const [dx, dz] = D4[c.rampDir[tz*N+tx]], fx = x/TILE - tx, fz = z/TILE - tz;
-  return RAISE*(dx > 0 ? fx : dx < 0 ? 1 - fx : dz > 0 ? fz : 1 - fz);
+  return (l - 1)*RAISE/2 + RAISE*(dx > 0 ? fx : dx < 0 ? 1 - fx : dz > 0 ? fz : 1 - fz);
 }
-// Level (0 ground, 1 ramp, 2 raised) of something standing at height y.
-export const levelOf = y => y < RAISE*0.3 ? 0 : y > RAISE*0.7 ? 2 : 1;
+// Level (0 ground, 1 ramp, 2 raised, 3 ramp, 4 second tier) of something standing at height y.
+export const levelOf = y => { const h = y/RAISE, f = Math.floor(h + 1e-6), k = h - f; return k < 0.3 ? 2*f : k > 0.7 ? 2*f + 2 : 2*f + 1; };
 export const tileLevel = (tx, tz) => world.city.level ? world.city.level[tz*N+tx] : 0;
 // Snaps a position's height to the ground under it (after a teleport or a spawn).
 export function toGround(p){ p.y = groundAt(p.x, p.z); return p; }
@@ -134,10 +134,12 @@ export function flowTo(tx, tz){
   return f;
 }
 export function clearFlowCache(){ flowCache.clear(); }
-// Index into city.blocks of the block a world point belongs to (roads count toward the block
-// south-east of them).
+// Index into city.blocks of the block a world point belongs to (city.blockOf per tile: a block that took
+// over a street owns it; other streets count toward the block south-east of them).
 export function blockIndex(x, z){
-  const b = world.city.b, f = v => Math.min(b-1, Math.max(0, Math.floor((v/TILE - 1)/7)));
+  const c = world.city, tx = Math.floor(x/TILE), tz = Math.floor(z/TILE);
+  if (c.blockOf && tx >= 0 && tz >= 0 && tx < N && tz < N) return c.blockOf[tz*N + tx];
+  const b = c.b, f = v => Math.min(b-1, Math.max(0, Math.floor((v/TILE - 1)/7)));
   return f(z)*b + f(x);
 }
 // Marks tiles within radius R as explored (minimap fog of war).

@@ -30,7 +30,7 @@ const falling = [];  // broken ones toppling over (cosmetic)
 export function initBreaks(c){
   world.breaks = new Map(); world.broken = []; falling.length = 0;
   for (const p of c.props){
-    if (p.kind !== 'fence') continue;
+    if (p.kind !== 'fence' || p.broken) continue;  // pieces already lying broken are only scenery
     const B = BREAKABLES[p.style], idx = p.z*N + p.x;
     world.breaks.set(idx, { idx, x:p.x, z:p.z, kind:p.style, hp:B.hp, max:B.hp, under:p.under, g:p.g, lean:0, shake:0, dx:0, dz:1 });
   }

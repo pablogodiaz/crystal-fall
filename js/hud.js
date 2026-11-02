@@ -34,7 +34,8 @@ function paintTiles(){
     let ty = city.grid[z*N+x];
     if (ty === T.CRYSTAL && !(crystal && crystal.alive && state.crystalFound)) ty = T.PLAZA;
     tctx.fillStyle = MM_COLORS[ty]; tctx.fillRect(x*MS, z*MS, MS, MS);
-    if (city.level && city.level[z*N+x]){ tctx.fillStyle = city.level[z*N+x] === 2 ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.1)'; tctx.fillRect(x*MS, z*MS, MS, MS); }  // raised ground
+    const lv = city.level ? city.level[z*N+x] : 0;
+    if (lv){ tctx.fillStyle = `rgba(255,255,255,${[0, 0.1, 0.22, 0.3, 0.38][lv]})`; tctx.fillRect(x*MS, z*MS, MS, MS); }  // raised ground, brighter the higher
   }
 }
 // Draws the explored map into a size×size canvas at s px per tile, centered on tile (cx,cz).

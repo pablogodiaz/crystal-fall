@@ -1,12 +1,14 @@
 // ---------- City generation ----------
 // Pure data: builds the tile grid and prop lists from a seed. No Three.js here.
-// A city is b×b blocks of 5×5 tiles between 2-tile roads (b grows in later cities, cityBlocks in
+// A city starts as b×b blocks of 5×5 tiles between 2-tile roads (b grows in later cities, cityBlocks in
 // config.js), drawn into the top-left of the N×N tile arrays. Each block belongs to a district
 // (DISTRICTS in config.js, laid out by LAYOUT) that decides what gets built on it and how many
-// zombies (block.density, residents per block) and how much loot it holds. Landmarks are stamped from the ASCII TEMPLATES below;
-// the police station and supermarket take a 2×2 group of blocks (the roads between them become
-// part of the lot) and can be walked into.
-import { N, T, CITY_NAMES, PALETTE, HOUSE_PALETTE, ROOF_PALETTE, WAREHOUSE_PALETTE, DISTRICTS, LAYOUT, CONDITIONS, CLOSURES, BLOCK_DENSITY, cityBlocks, walkable } from './config.js';
+// zombies (block.density, residents per block) and how much loot it holds. Then the grid is broken up
+// (layoutStreets): blocks merge into big lots, take over streets beside them (T-junctions, dead ends),
+// streets close to cars. What's built goes on lots (city.lots: one block or several, rect r in tiles).
+// Landmarks are stamped from the ASCII TEMPLATES below; the big ones take a 2×2 group of blocks (the
+// roads between them become part of the lot) and can be walked into.
+import { N, T, CITY_NAMES, PALETTE, HOUSE_PALETTE, ROOF_PALETTE, WAREHOUSE_PALETTE, DISTRICTS, LAYOUT, CONDITIONS, CLOSURES, BLOCK_DENSITY, STREETS, cityBlocks, walkable } from './config.js';
 import { LANDMARKS } from './items.js';
 import { rng, seedRng, rand, randi, pick } from './utils.js';
 
@@ -25,21 +27,23 @@ const wreck = (x, z, rot, o) => Object.assign({ x, z, rot, color:pick(WRECK_COLO
 const rollCondition = () => wpick(Object.keys(CONDITIONS).map(k => [k, CONDITIONS[k].w]));
 export function cityCondition(seed){ seedRng(seed); return rollCondition(); }
 
-function splitLots(x,z,w,d,out,depth){
+// Splits a w×d area into building lots (some with a 1-tile alley between them). max = how many times
+// it may split; keepBig leaves some big lots whole (big towers, factory halls).
+function splitLots(x,z,w,d,out,depth,max = 3,keepBig = false){
   const area = w*d;
-  if (depth > 3 || area <= 4 || (area <= 10 && rng() < 0.5) || (w < 4 && d < 4 && rng() < 0.6)) { out.push({x,z,w,d}); return; }
+  if (depth > max || area <= 4 || (area <= 10 && rng() < 0.5) || (w < 4 && d < 4 && rng() < 0.6) || (keepBig && area <= 30 && w <= 6 && d <= 6 && rng() < 0.3)) { out.push({x,z,w,d}); return; }
   if (w >= d){
     if (w < 4) { out.push({x,z,w,d}); return; }
     const cut = randi(2, w-2), alley = w >= 5 && rng() < 0.35;
-    splitLots(x,z,cut,d,out,depth+1);
+    splitLots(x,z,cut,d,out,depth+1,max,keepBig);
     const s = cut + (alley?1:0);
-    if (w - s >= 1) splitLots(x+s,z,w-s,d,out,depth+1);
+    if (w - s >= 1) splitLots(x+s,z,w-s,d,out,depth+1,max,keepBig);
   } else {
     if (d < 4) { out.push({x,z,w,d}); return; }
     const cut = randi(2, d-2), alley = d >= 5 && rng() < 0.35;
-    splitLots(x,z,w,cut,out,depth+1);
+    splitLots(x,z,w,cut,out,depth+1,max,keepBig);
     const s = cut + (alley?1:0);
-    if (d - s >= 1) splitLots(x,z+s,w,d-s,out,depth+1);
+    if (d - s >= 1) splitLots(x,z+s,w,d-s,out,depth+1,max,keepBig);
   }
 }
 
@@ -86,23 +90,35 @@ export function generateCity(level, seed){
   assignDistricts(blocks, level, nb);
   const exitZ = 1 + 7*randi(1, nb-1);
   grid[I(n-1,exitZ)] = T.BARRICADE; grid[I(n-1,exitZ+1)] = T.BARRICADE;
-  // overlays: tiles drawn with their own ground (parking asphalt, forecourt concrete, outpost dirt);
-  // floors: walk-in landmark type -> its floor tiles.
+  // overlays: tiles drawn with their own ground (parking asphalt, forecourt concrete, outpost dirt, paved
+  // paths); floors: walk-in landmark type -> its floor tiles.
   // overlays.scorch: burnt ground; debris: loose rubble (no collision); smoke: rising plumes;
   // ponds/craters: water and blast holes; closures: road closures (for the dev tools).
+  // lots: what's built where ({ blocks, r:{ x0, z0, w, d }, type, district }); strips: streets closed to
+  // cars ({ kind, x0, z0, w, d }); deadEnds: crossings only one road leads to; crops: farmed tiles.
   const c = { grid, blocks, b:nb, n, cond, buildings:[], trees:[], cars:[], rubble:[], pillars:[], props:[], containers:[], landmarks:[], interiors:[],
-    overlays:{ lot:[], pad:[], dirt:[], scorch:[] }, floors:{}, debris:[], smoke:[], ponds:[], craters:[], closures:[], exitZ };
+    overlays:{ lot:[], pad:[], dirt:[], scorch:[], pave:[] }, floors:{}, debris:[], smoke:[], ponds:[], craters:[], closures:[], exitZ,
+    lots:[], strips:[], deadEnds:[], crops:[] };
 
   const cb = pick(blocks.filter(b => b.bx + b.bz >= nb));
   cb.type = 'plaza';
   placeLandmarks(c, level);
-  for (const b of blocks) if (!b.type){
-    const start = b.bx + b.bz <= 1;
-    b.type = wpick(DISTRICTS[b.district].blocks.filter(([t]) => !start || !EVENTFUL.has(t)).map(([t, w]) => [t, w*(C.mul[t] ?? 1)]));
-    b.density *= BLOCK_DENSITY[b.type] || 1;
-    buildBlock(c, b);
+  layoutStreets(c);
+  for (const L of c.lots){
+    if (!L.type){
+      const start = L.blocks.some(b => b.bx + b.bz <= 1), D = DISTRICTS[L.district];
+      L.type = wpick((L.blocks.length > 1 ? D.merged : D.blocks).filter(([t]) => !start || !EVENTFUL.has(t)).map(([t, w]) => [t, w*(C.mul[t] ?? 1)]));
+    }
+    for (const b of L.blocks){ b.type = L.type; b.lot = L.r; b.density *= BLOCK_DENSITY[L.type] || 1; }
   }
-  for (const b of blocks) if (b.type === 'plaza') buildBlock(c, b);
+  for (const L of c.lots) if (L.type !== 'plaza') buildLot(c, L);
+  for (const L of c.lots) if (L.type === 'plaza') buildLot(c, L);
+  for (const s of c.strips) buildStrip(c, s);
+  // Which block each tile belongs to: a block that took over a street owns it, other streets count
+  // toward the block south-east of them.
+  const blockOf = c.blockOf = new Int16Array(N*N), bf = v => Math.min(nb-1, Math.max(0, Math.floor((v-1)/7)));
+  for (let z=0;z<N;z++) for (let x=0;x<N;x++) blockOf[I(x,z)] = bf(z)*nb + bf(x);
+  for (const L of c.lots) if (L.ext){ const { x0, z0, w, d } = L.r, b = L.blocks[0]; for (let z=z0;z<z0+d;z++) for (let x=x0;x<x0+w;x++) blockOf[I(x,z)] = b.bz*nb + b.bx; }
   const road = new Uint8Array(N*N);
   for (let i=0;i<N*N;i++) road[i] = grid[i] === T.ROAD ? 1 : 0;
   addHeights(c);
@@ -111,119 +127,286 @@ export function generateCity(level, seed){
   addClosures(c, C, level);
   addWrecks(c, C, exitZ, n);
   placeLoot(c);
+  tidyFences(c);
   return Object.assign(c, { road, crystalTile:{ x:cb.x0+2, z:cb.z0+2 }, start:{ x:2, z:2 }, name:pick(CITY_NAMES) });
 }
 // Block types kept away from the start's own blocks.
 const EVENTFUL = new Set(['cemetery','camp','crater','construction']);
 
-// ---------- Ordinary blocks ----------
-function buildBlock(c, b){
-  const { grid } = c, { x0, z0 } = b, D = b.district;
-  const fill = t => { for (let z=z0;z<z0+5;z++) for (let x=x0;x<x0+5;x++) grid[I(x,z)] = t; };
-  const spot = (t, f) => { const x = x0 + randi(0,4), z = z0 + randi(0,4); if (grid[I(x,z)] === t){ grid[I(x,z)] = T.OBSTACLE; f(x, z); } };
+// ---------- Street layout ----------
+// The streets start as a full grid. Node (i, j) is the crossing at tiles (1+7i, 1+7j), 0..b each way;
+// V[i*b + j] is the street running south from node (i, j) (tiles x 1+7i..2+7i, z 3+7j..7+7j), H[j*b + i]
+// the one running east from it. Each is 0 road, 1 gone (part of a lot now) or 2 closed to cars (a walk,
+// footpath or dirt track: still open on foot). In turn, at the district's odds (STREETS): blocks merge
+// into big lots (the streets between them go, a 2×2 lot swallows the crossing in its middle too), single
+// blocks take over a street beside them (growing by 2 tiles; T-junctions and dead ends), and streets
+// close. Every change must keep every crossing reachable, every crossing on at least one road (no
+// stranded squares of asphalt) and every lot on at least one street. The border streets and the ones
+// round the start, the plaza and landmarks never change.
+function layoutStreets(c){
+  const nb = c.b, M = nb + 1, V = new Uint8Array(M*nb), H = new Uint8Array(M*nb), inner = new Uint8Array(M*M), keep = new Set();
+  const blk = (bx, bz) => bx >= 0 && bz >= 0 && bx < nb && bz < nb ? c.blocks[bz*nb + bx] : null;
+  // The streets round block (bx, bz): west, east, north, south, as [array, index].
+  const around = (bx, bz) => [[V, bx*nb + bz], [V, (bx+1)*nb + bz], [H, bz*nb + bx], [H, (bz+1)*nb + bx]];
+  const key = (A, k) => (A === V ? 'v' : 'h') + k;
+  // Streets out of node (i, j): [array, index, next i, next j].
+  const edges = (i, j) => { const e = []; if (j < nb) e.push([V, i*nb + j, i, j+1]); if (j > 0) e.push([V, i*nb + j-1, i, j-1]); if (i < nb) e.push([H, j*nb + i, i+1, j]); if (i > 0) e.push([H, j*nb + i-1, i-1, j]); return e; };
+  const rectV = k => { const i = Math.floor(k/nb), j = k % nb; return { x0:1+7*i, z0:3+7*j, w:2, d:5 }; };
+  const rectH = k => { const j = Math.floor(k/nb), i = k % nb; return { x0:3+7*i, z0:1+7*j, w:5, d:2 }; };
+  for (let k=0;k<nb;k++) for (const A of [V, H]){ keep.add(key(A, k)); keep.add(key(A, nb*nb + k)); }
+  for (const b of c.blocks) if (b.type || b.bx + b.bz <= 1) for (const [A, k] of around(b.bx, b.bz)) keep.add(key(A, k));
+  // Big landmarks already cover the streets and the crossing inside their 2×2 lot.
+  for (const b of c.blocks){
+    const l = b.lot; if (b.type !== 'landmark' || l.n !== 2 || l.bx !== b.bx || l.bz !== b.bz) continue;
+    V[(b.bx+1)*nb + b.bz] = V[(b.bx+1)*nb + b.bz+1] = H[(b.bz+1)*nb + b.bx] = H[(b.bz+1)*nb + b.bx+1] = 1; inner[(b.bz+1)*M + b.bx+1] = 1;
+  }
+  const lots = [], lotOf = new Map();
+  for (const b of c.blocks) if (b.type !== 'landmark'){ const L = { blocks:[b], r:{ x0:b.x0, z0:b.z0, w:5, d:5 }, district:b.district, type:b.type === 'plaza' ? 'plaza' : null, paths:[] }; lots.push(L); lotOf.set(b, L); }
+  const ok = () => {
+    const seen = new Uint8Array(M*M), q = [0]; seen[0] = 1;
+    for (let h=0;h<q.length;h++){ const i = q[h] % M, j = (q[h] - i)/M; for (const [A, k, ni, nj] of edges(i, j)) if (A[k] !== 1 && !seen[nj*M + ni]){ seen[nj*M + ni] = 1; q.push(nj*M + ni); } }
+    for (let id=0;id<M*M;id++){ if (inner[id]) continue; const i = id % M, j = (id - i)/M; if (!seen[id] || !edges(i, j).some(([A, k]) => A[k] === 0)) return false; }
+    return lots.every(L => L.blocks.some(b => around(b.bx, b.bz).some(([A, k]) => A[k] !== 1)));
+  };
+  // Sets streets to val (and nodes inner) if the layout stays sound; otherwise puts them back.
+  const attempt = (list, val, nodes = []) => {
+    const old = list.map(([A, k]) => A[k]);
+    for (const [A, k] of list) A[k] = val; for (const id of nodes) inner[id] = 1;
+    if (ok()) return true;
+    list.forEach(([A, k], i) => { A[k] = old[i]; }); for (const id of nodes) inner[id] = 0;
+    return false;
+  };
+  const free = b => b && !b.type && lotOf.get(b).blocks.length === 1 && !lotOf.get(b).ext && b.bx + b.bz > 1;
+  // Merges: 2×1 / 1×2 pairs, 3×1 rows, 2×2 squares of blocks of one district.
+  for (const b of shuffle(c.blocks.slice())){
+    if (!free(b)) continue;
+    const S = STREETS[b.district]; if (rng() >= S.merge) continue;
+    const r = rng(), shapes = r < S.big ? [[2,2],[2,1],[1,2]] : r < S.big + S.long ? shuffle([[3,1],[1,3]]).concat([[2,1],[1,2]]) : shuffle([[2,1],[1,2]]);
+    for (const [gw, gd] of shapes){
+      const g = [];
+      for (let j=0;j<gd;j++) for (let i=0;i<gw;i++){ const o = blk(b.bx+i, b.bz+j); if (free(o) && o.district === b.district) g.push(o); }
+      if (g.length < gw*gd) continue;
+      const cut = [], nodes = [];
+      for (let j=0;j<gd;j++) for (let i=1;i<gw;i++) cut.push([V, (b.bx+i)*nb + b.bz+j]);
+      for (let j=1;j<gd;j++) for (let i=0;i<gw;i++) cut.push([H, (b.bz+j)*nb + b.bx+i]);
+      for (let j=1;j<gd;j++) for (let i=1;i<gw;i++) nodes.push((b.bz+j)*M + b.bx+i);
+      const L = { blocks:g, r:{ x0:b.x0, z0:b.z0, w:7*gw - 2, d:7*gd - 2 }, district:b.district, type:null,
+        paths:cut.map(([A, k]) => A === V ? rectV(k) : rectH(k)).concat(nodes.map(id => ({ x0:1 + 7*(id % M), z0:1 + 7*Math.floor(id/M), w:2, d:2 }))) };
+      const olds = g.map(o => lotOf.get(o));
+      for (const o of olds) lots.splice(lots.indexOf(o), 1);
+      lots.push(L);
+      if (attempt(cut, 1, nodes)){ for (const o of g) lotOf.set(o, L); break; }
+      lots.pop(); lots.push(...olds);
+    }
+  }
+  // Single blocks taking over the street on one side (or both sides of one axis).
+  for (const b of shuffle(c.blocks.slice())){
+    if (!free(b) || rng() >= STREETS[b.district].extend) continue;
+    const [w, e, n, s] = around(b.bx, b.bz), L = lotOf.get(b), r = L.r;
+    const sides = shuffle(rng() < 0.5 ? [[w, 'w'], [e, 'e']] : [[n, 'n'], [s, 's']]);
+    for (const [[A, k], sd] of sides.slice(0, rng() < 0.25 ? 2 : 1)){
+      if (keep.has(key(A, k)) || A[k] !== 0 || !attempt([[A, k]], 1)) continue;
+      if (sd === 'w'){ r.x0 -= 2; r.w += 2; } else if (sd === 'e') r.w += 2; else if (sd === 'n'){ r.z0 -= 2; r.d += 2; } else r.d += 2;
+      L.ext = true;
+    }
+  }
+  // Streets closed to cars.
+  const KIND = { downtown:'walk', industrial:'walk', residential:'path', outskirts:'track' };
+  const closeSt = (A, k, b0, b1) => {
+    if (keep.has(key(A, k)) || A[k] !== 0) return;
+    const d = (rng() < 0.5 ? b0 : b1).district;
+    if (rng() < STREETS[d].walk && attempt([[A, k]], 2)) c.strips.push(Object.assign({ kind:KIND[d], district:d }, A === V ? rectV(k) : rectH(k)));
+  };
+  for (let i=1;i<nb;i++) for (let j=0;j<nb;j++){ closeSt(V, i*nb + j, blk(i-1, j), blk(i, j)); closeSt(H, i*nb + j, blk(j, i-1), blk(j, i)); }
+  for (let id=0;id<M*M;id++){
+    if (inner[id]) continue;
+    const i = id % M, j = (id - i)/M;
+    if (edges(i, j).filter(([A, k]) => A[k] === 0).length === 1) c.deadEnds.push({ x:1 + 7*i, z:1 + 7*j });
+  }
+  c.lots = lots;
+}
+
+// ---------- Lots ----------
+// What gets built on a lot: one block, or several merged (a big lot, `big`), or a block grown over a
+// street. Everything is laid out inside its rect r; big lots get more of it and things single blocks
+// can't hold (big towers and factory halls, park paths where the streets ran, big hills, embankments,
+// crops, shipping containers, cemeteries full of graves).
+function buildLot(c, L){
+  const { grid } = c, { x0, z0, w, d } = L.r, x1 = x0 + w, z1 = z0 + d, D = L.district, t = L.type, big = L.blocks.length > 1, k = w*d/25;
+  const res = new Set();  // tiles kept free for raised ground built later (addHeights)
+  const fill = tt => { for (let z=z0;z<z1;z++) for (let x=x0;x<x1;x++) grid[I(x,z)] = tt; };
+  const spot = (tt, f) => { const x = x0 + randi(0, w-1), z = z0 + randi(0, d-1), i = I(x,z); if (grid[i] === tt && !res.has(i)){ grid[i] = T.OBSTACLE; f(x, z); } };
+  const many = (a, b) => Math.max(0, Math.round(rand(a, b)*k));  // a count that grows with the lot's area
   const tree = (x, z) => c.trees.push({ x, z, s:rand(0.8,1.3), m:Math.floor(rng()*3) });
   // A stack of lumber you can search for planks.
   const lumber = (x, z) => { c.props.push({ kind:'lumber', x, z, rot:rng() < 0.5 ? 0 : Math.PI/2, search:true }); c.containers.push({ kind:'lumber', x, z }); };
-  const dirt = () => { for (let z=z0;z<z0+5;z++) for (let x=x0;x<x0+5;x++) c.overlays.dirt.push([x,z]); };
-  const put = (L, h, o) => {
-    for (let z=L.z;z<L.z+L.d;z++) for (let x=L.x;x<L.x+L.w;x++) grid[I(x,z)] = T.BUILDING;
-    c.buildings.push(Object.assign({ x:L.x, z:L.z, w:L.w, d:L.d, h, district:D }, o));
+  const dirt = () => { for (let z=z0;z<z1;z++) for (let x=x0;x<x1;x++) c.overlays.dirt.push([x,z]); };
+  const put = (P, h, o) => {
+    for (let z=P.z;z<P.z+P.d;z++) for (let x=P.x;x<P.x+P.w;x++) grid[I(x,z)] = T.BUILDING;
+    c.buildings.push(Object.assign({ x:P.x, z:P.z, w:P.w, d:P.d, h, district:D }, o));
   };
-  const t = b.type;
+  // Keeps a hw×hd area (and a ring round it for its ramps) clear for raised ground: a hill, a terrace or
+  // an embankment, raised in addHeights.
+  const reserve = (kind, hw, hd) => {
+    hw = Math.min(hw, w - 2); hd = Math.min(hd, d - 2); if (hw < 1 || hd < 1) return;
+    const rx = x0 + 1 + randi(0, w - 2 - hw), rz = z0 + 1 + randi(0, d - 2 - hd);
+    for (let z=rz-1;z<=rz+hd;z++) for (let x=rx-1;x<=rx+hw;x++) res.add(I(x,z));
+    L.raise = { kind, x0:rx, z0:rz, w:hw, d:hd };
+  };
+  // A railway embankment along the lot's long side.
+  const berm = () => w >= d ? reserve('berm', w - 2, 1) : reserve('berm', 1, d - 2);
+  // A patch of crops in rows (cosmetic, walkable).
+  const crops = () => {
+    const cw = randi(3, Math.min(8, w - 2)), cd = randi(2, Math.min(5, d - 2)), cx = x0 + 1 + randi(0, w - 2 - cw), cz = z0 + 1 + randi(0, d - 2 - cd);
+    for (let z=cz;z<cz+cd;z++) for (let x=cx;x<cx+cw;x++) if (grid[I(x,z)] === T.GRASS && !res.has(I(x,z))) c.crops.push([x, z, cw >= cd ? 1 : 0]);
+  };
+  // Footpaths where the streets of a merged lot used to run (one lane of each, the whole crossing).
+  const paths = () => { for (const s of L.paths){ const lane = randi(0, 1); for (let z=s.z0;z<s.z0+s.d;z++) for (let x=s.x0;x<s.x0+s.w;x++){
+    if (s.w === 2 && s.d === 5 && x !== s.x0 + lane || s.d === 2 && s.w === 5 && z !== s.z0 + lane || grid[I(x,z)] !== T.GRASS) continue;
+    grid[I(x,z)] = T.SIDEWALK; c.overlays.pave.push([x,z]); } } };
+  const grave = (x, z) => { grid[I(x,z)] = T.LOW; c.props.push({ kind:'grave', x, z, rot:0, n:randi(2,3), seed:Math.floor(rng()*1e6) }); };
+  // Every other tile inside the lot's edge: grave plots, tent pitches.
+  const pitches = () => { const a = []; for (let z=z0+1;z<z1-1;z+=2) for (let x=x0+1;x<x1-1;x+=2) a.push([x,z]); return a; };
   if (t === 'towers' || t === 'ruins'){
     fill(T.SIDEWALK);
-    const lots = []; splitLots(x0,z0,5,5,lots,0);
+    const lots = []; splitLots(x0, z0, w, d, lots, 0, big ? 6 : 3, big && t === 'towers');
     const ruined = t === 'ruins';
-    for (const L of lots){
-      if (rng() < (ruined ? 0.08 : 0.05)) continue;
+    for (const P of lots){
+      if (rng() < (ruined ? 0.08 : big ? 0.1 : 0.05)){
+        // An empty lot downtown is a little square with a tree.
+        if (!ruined && P.w*P.d >= 4){ const x = P.x + randi(0, P.w-1), z = P.z + randi(0, P.d-1); grid[I(x,z)] = T.OBSTACLE; c.trees.push({ x, z, s:rand(0.8,1.1), m:Math.floor(rng()*3), planter:true }); }
+        continue;
+      }
       if (ruined && rng() < 0.35){
-        const rx = L.x + Math.floor(rng()*L.w), rz = L.z + Math.floor(rng()*L.d);
+        const rx = P.x + Math.floor(rng()*P.w), rz = P.z + Math.floor(rng()*P.d);
         grid[I(rx,rz)] = T.OBSTACLE; c.rubble.push({ x:rx, z:rz }); continue;
       }
-      const h = ruined ? rand(1.2,3) : rand(5,9) + rng()*rng()*12;
-      put(L, h, { style:ruined ? 'ruin' : 'tower', color:pick(PALETTE), ruined, win:Math.floor(rng()*3), ac:rng() < 0.5 });
+      const h = ruined ? rand(1.2,3) : rand(5,9) + rng()*rng()*12 + (P.w*P.d >= 12 ? rand(2,8) : 0);
+      put(P, h, { style:ruined ? 'ruin' : 'tower', color:pick(PALETTE), ruined, win:Math.floor(rng()*3), ac:rng() < 0.5 });
     }
   } else if (t === 'houses' || t === 'farm'){
-    // Low houses with yards around them: lots shrink to leave grass, some stay empty.
+    // Low houses with yards around them: lots shrink to leave grass, some stay empty. A big farm has a
+    // barn and fields of crops.
     fill(T.GRASS);
-    const lots = []; splitLots(x0,z0,5,5,lots,0);
-    for (const L of lots){
+    if (big && t === 'farm') crops();
+    const lots = []; splitLots(x0, z0, w, d, lots, 0, big ? 6 : 3);
+    let barn = big && t === 'farm';
+    for (const P of shuffle(lots)){
       if (rng() < (t === 'farm' ? 0.6 : 0.2)) continue;
-      if (L.w >= 3){ L.w--; if (rng() < 0.5) L.x++; }
-      if (L.d >= 3){ L.d--; if (rng() < 0.5) L.z++; }
-      put(L, rand(2.3,3.3), { style:'house', color:pick(HOUSE_PALETTE), roof:pick(ROOF_PALETTE), win:Math.floor(rng()*3) });
+      if (P.w >= 3){ P.w--; if (rng() < 0.5) P.x++; }
+      if (P.d >= 3){ P.d--; if (rng() < 0.5) P.z++; }
+      let crop = false; for (let z=P.z;z<P.z+P.d;z++) for (let x=P.x;x<P.x+P.w;x++) if (c.crops.some(q => q[0] === x && q[1] === z)) crop = true;
+      if (crop) continue;
+      if (barn && P.w*P.d >= 4){ barn = false; put(P, rand(3.4,4.4), { style:'warehouse', color:pick([0x7a3328,0x6b2f26,0x8a4a32]), ac:false }); continue; }
+      put(P, rand(2.3,3.3), { style:'house', color:pick(HOUSE_PALETTE), roof:pick(ROOF_PALETTE), win:Math.floor(rng()*3) });
     }
-    for (let i=randi(0,2);i>0;i--) spot(T.GRASS, tree);
-    // Picket fences round suburban yards, rail fences round farms (gaps for gates).
-    if (rng() < (t === 'farm' ? 0.45 : 0.3)) for (const side of shuffle([0,1,2,3]).slice(0, randi(1, t === 'farm' ? 3 : 2))) fenceSide(c, b, side, t === 'farm' ? 'rail' : 'picket');
+    for (let i=many(0,2);i>0;i--) spot(T.GRASS, tree);
+    // Picket fences round suburban yards, rail fences round farms (gates in them, bits knocked down).
+    if (rng() < (t === 'farm' ? 0.55 : 0.4)) fenceRing(c, L.r, t === 'farm' ? 'rail' : 'picket', { broken:0.35 });
   } else if (t === 'warehouses'){
+    // Warehouses; a big lot has factory halls and a smokestack or two.
     fill(T.SIDEWALK);
-    const lots = []; splitLots(x0,z0,5,5,lots,2);
-    for (const L of lots){
+    const lots = []; splitLots(x0, z0, w, d, lots, 2, 3, big);
+    for (const P of lots){
       if (rng() < 0.12) continue;
-      put(L, rand(3,4.6), { style:'warehouse', color:pick(WAREHOUSE_PALETTE), ac:rng() < 0.6 });
+      put(P, rand(3,4.6) + (P.w*P.d >= 15 ? rand(0.8,1.8) : 0), { style:'warehouse', color:pick(WAREHOUSE_PALETTE), ac:rng() < 0.6 });
     }
+    if (big) for (let i=randi(1,2);i>0;i--) spot(T.SIDEWALK, (x, z) => { const h = rand(9,14); c.props.push({ kind:'stack', x, z, h }); if (rng() < 0.4) c.smoke.push({ x:x+0.5, z:z+0.5, s:1, y:h }); });
   } else if (t === 'park' || t === 'field'){
     fill(T.GRASS);
-    // A downtown park may be a raised terrace (addHeights): its trees stay round the edge.
-    if (t === 'park' && D === 'downtown' && rng() < 0.6) b.raise = 'terrace';
-    for (let i=t === 'park' ? randi(3,6) : randi(0,2);i>0;i--){
-      if (!b.raise) spot(T.GRASS, tree);
-      else { const k = randi(0,15), [x, z] = k < 5 ? [x0+k, z0] : k < 10 ? [x0+k-5, z0+4] : k < 13 ? [x0, z0+k-9] : [x0+4, z0+k-12]; if (grid[I(x,z)] === T.GRASS){ grid[I(x,z)] = T.OBSTACLE; tree(x, z); } }
+    if (big){
+      // Footpaths where the streets ran, and raised ground: a big hill (maybe with a summit), a stepped
+      // terrace downtown, or in a field an old railway embankment.
+      if (t === 'park') paths();
+      if (t === 'field' && rng() < 0.4) berm();
+      else if (rng() < 0.85) reserve(D === 'downtown' && t === 'park' ? 'terrace' : 'knoll', randi(3, 6), randi(3, 5));
+      if (t === 'field' && rng() < 0.6) crops();
+      if (t === 'park' && rng() < 0.45) for (let i=0;i<8;i++){
+        const pw = randi(2,4), pd = randi(2,3), px = x0 + 1 + randi(0, Math.max(0, w - 2 - pw)), pz = z0 + 1 + randi(0, Math.max(0, d - 2 - pd));
+        let fits = true; for (let z=pz-1;z<=pz+pd;z++) for (let x=px-1;x<=px+pw;x++) if (grid[I(x,z)] !== T.GRASS || res.has(I(x,z))) fits = false;
+        if (!fits) continue;
+        for (let z=pz;z<pz+pd;z++) for (let x=px;x<px+pw;x++) grid[I(x,z)] = T.WATER;
+        c.ponds.push({ x0:px, z0:pz, x1:px+pw, z1:pz+pd }); break;
+      }
+    } else if (t === 'park' && D === 'downtown' && rng() < 0.6) L.raise = { kind:'terrace' };  // a raised terrace: trees stay round the edge
+    for (let i=t === 'park' ? many(3,6) : many(0,2);i>0;i--){
+      if (!L.raise || L.raise.w) spot(T.GRASS, tree);
+      else { const q = randi(0,15), [x, z] = q < 5 ? [x0+q, z0] : q < 10 ? [x0+q-5, z0+4] : q < 13 ? [x0, z0+q-9] : [x0+4, z0+q-12]; if (grid[I(x,z)] === T.GRASS){ grid[I(x,z)] = T.OBSTACLE; tree(x, z); } }
     }
-    if (t === 'field' && rng() < 0.3) spot(T.GRASS, (x, z) => c.rubble.push({ x, z }));
-    if (t === 'field' && rng() < 0.4) for (const side of shuffle([0,1,2,3]).slice(0, randi(2,3))) fenceSide(c, b, side, 'rail');
+    if (t === 'field' && rng() < 0.3*k) spot(T.GRASS, (x, z) => c.rubble.push({ x, z }));
+    if (t === 'field' && rng() < (big ? 0.55 : 0.4)) fenceRing(c, L.r, 'rail', { broken:0.45, gate:0.8 });
   } else if (t === 'lot'){
     fill(T.SIDEWALK);
-    for (let i=D === 'downtown' ? randi(3,5) : D === 'outskirts' ? randi(1,2) : randi(2,4);i>0;i--)
+    for (let i=D === 'downtown' ? many(3,5) : D === 'outskirts' ? many(1,2) : many(2,4);i>0;i--)
       spot(T.SIDEWALK, (x, z) => c.cars.push({ x, z, rot:(rng()<0.5?0:Math.PI/2) + rand(-0.15,0.15), color:pick([0x6b2b2b,0x2b4a6b,0x9a9a92,0x3a3f45,0x6b5a2b,0x2f5a3c]), burnt:rng() < 0.08*CONDITIONS[c.cond].wrecks }));
   } else if (t === 'yard'){
-    // Industrial storage: pallets of lumber, plus crates from placeLoot().
+    // Industrial storage: pallets of lumber, plus crates from placeLoot(); a big yard has rows of
+    // shipping containers (some stacked two high) behind a chain-link fence.
     fill(T.SIDEWALK);
-    for (let i=randi(1,3);i>0;i--) spot(T.SIDEWALK, (x, z) => lumber(x, z));
+    for (let i=many(1,3);i>0;i--) spot(T.SIDEWALK, (x, z) => lumber(x, z));
+    if (big) for (let i=many(1,2.2);i>0;i--){
+      const ax = rng() < 0.5, x = x0 + 1 + randi(0, w - (ax ? 4 : 3)), z = z0 + 1 + randi(0, d - (ax ? 3 : 4)), x2 = ax ? x+1 : x, z2 = ax ? z : z+1;
+      if (grid[I(x,z)] !== T.SIDEWALK || grid[I(x2,z2)] !== T.SIDEWALK) continue;
+      grid[I(x,z)] = grid[I(x2,z2)] = T.OBSTACLE;
+      c.props.push({ kind:'shipping', x, z, cx:(x + x2)/2 + 0.5, cz:(z + z2)/2 + 0.5, rot:ax ? 0 : Math.PI/2, color:pick([0x8a3a2a,0x2d5f8a,0x3f6b3a,0xc0802a,0x6b6f74]), top:rng() < 0.35 ? pick([0x8a3a2a,0x2d5f8a,0xc0802a]) : 0 });
+    }
+    if (rng() < (big ? 0.8 : 0.35)) fenceRing(c, L.r, 'chain', { broken:0.4 });
   } else if (t === 'construction'){
-    // Building site on dirt: a steel frame going up, a tower crane, concrete pipes and lumber,
-    // chain-link fence along one or two sides (crates from placeLoot()).
+    // Building site on dirt: a steel frame going up, a tower crane (two on a big site), concrete pipes and
+    // lumber, a chain-link fence round it (crates from placeLoot()).
     fill(T.SIDEWALK); dirt();
-    const fw = randi(2,3), fd = randi(2,3);
-    put({ x:x0 + randi(0, 5-fw), z:z0 + randi(0, 5-fd), w:fw, d:fd }, rand(6,12), { style:'frame', color:0x8a8780, floors:randi(2,4) });
-    spot(T.SIDEWALK, (x, z) => c.props.push({ kind:'crane', x, z, rot:Math.floor(rng()*4)*Math.PI/2 + rand(-0.3,0.3)*0, h:rand(15,20), jib:rand(9,13) }));
-    for (let i=randi(1,2);i>0;i--) spot(T.SIDEWALK, (x, z) => rng() < 0.5 ? c.props.push({ kind:'pipes', x, z, rot:rng() < 0.5 ? 0 : Math.PI/2 }) : lumber(x, z));
-    for (let i=randi(1,2);i>0;i--) fenceSide(c, b, Math.floor(rng()*4), 'chain');
+    const fw = big ? randi(3,5) : randi(2,3), fd = big ? randi(3,4) : randi(2,3);
+    put({ x:x0 + 1 + randi(0, w-2-fw), z:z0 + 1 + randi(0, d-2-fd), w:fw, d:fd }, rand(6,12) + (big ? rand(2,6) : 0), { style:'frame', color:0x8a8780, floors:randi(2,4) + (big ? 1 : 0) });
+    for (let i=big ? 2 : 1;i>0;i--) spot(T.SIDEWALK, (x, z) => c.props.push({ kind:'crane', x, z, rot:Math.floor(rng()*4)*Math.PI/2, h:rand(15,20), jib:rand(9,13) }));
+    for (let i=many(1,2);i>0;i--) spot(T.SIDEWALK, (x, z) => rng() < 0.5 ? c.props.push({ kind:'pipes', x, z, rot:rng() < 0.5 ? 0 : Math.PI/2 }) : lumber(x, z));
+    fenceRing(c, L.r, 'chain', { broken:0.3, gate:0.8 });
   } else if (t === 'cemetery'){
-    // Iron fence round the edge with a gate in the middle of each side, graves in the corners and a
-    // crypt (or an old tree) in the middle.
+    // Iron fence round the edge with a gate in the middle of each side, rows of graves on every other
+    // tile, a crypt (or an old tree) in the middle; a big cemetery has a few crypts among its rows.
     fill(T.GRASS);
-    for (let side=0;side<4;side++) fenceSide(c, b, side, 'iron', true);
-    for (const [gx,gz] of [[1,1],[3,1],[1,3],[3,3]]){ grid[I(x0+gx,z0+gz)] = T.LOW; c.props.push({ kind:'grave', x:x0+gx, z:z0+gz, rot:0, n:randi(2,3), seed:Math.floor(rng()*1e6) }); }
-    if (rng() < 0.6) put({ x:x0+2, z:z0+2, w:1, d:1 }, rand(2.2,2.8), { style:'crypt', color:pick([0x8f8c86,0x7d7a74,0x99948a]), roof:0x45464b });
-    else { grid[I(x0+2,z0+2)] = T.OBSTACLE; tree(x0+2, z0+2); }
+    fenceRing(c, L.r, 'iron', { mid:true, broken:0.2 });
+    const crypt = (x, z) => put({ x, z, w:1, d:1 }, rand(2.2,2.8), { style:'crypt', color:pick([0x8f8c86,0x7d7a74,0x99948a]), roof:0x45464b });
+    if (!big){
+      for (const [x, z] of pitches()) grave(x, z);
+      if (rng() < 0.6) crypt(x0+2, z0+2); else { grid[I(x0+2,z0+2)] = T.OBSTACLE; tree(x0+2, z0+2); }
+    } else {
+      const ps = shuffle(pitches()), nc = randi(1, 1 + L.blocks.length/2);
+      ps.forEach(([x, z], i) => i < nc ? crypt(x, z) : i < nc + 2 && rng() < 0.6 ? (grid[I(x,z)] = T.OBSTACLE, tree(x, z)) : grave(x, z));
+    }
   } else if (t === 'camp'){
     // Abandoned relief camp: rows of tents on dirt (one a first-aid tent), burn barrels, a fence.
     fill(T.GRASS); dirt();
-    const spots = shuffle([[1,1],[3,1],[1,3],[3,3]]);
-    spots.forEach(([gx,gz], i) => {
+    shuffle(pitches()).forEach(([x, z], i) => {
       if (i > 0 && rng() < 0.25) return;
-      grid[I(x0+gx,z0+gz)] = T.OBSTACLE; c.props.push({ kind:i === 0 ? 'medtent' : 'tent', x:x0+gx, z:z0+gz, rot:rng() < 0.5 ? 0 : Math.PI });
+      grid[I(x,z)] = T.OBSTACLE; c.props.push({ kind:i === 0 ? 'medtent' : 'tent', x, z, rot:rng() < 0.5 ? 0 : Math.PI });
     });
-    for (let i=randi(1,2);i>0;i--) spot(T.GRASS, (x, z) => { const lit = rng() < 0.65; c.props.push({ kind:'barrel', x, z, lit }); if (lit) c.smoke.push({ x:x+0.5, z:z+0.5, s:0.5 }); });
-    if (rng() < 0.6) fenceSide(c, b, Math.floor(rng()*4), 'chain');
+    for (let i=many(1,2);i>0;i--) spot(T.GRASS, (x, z) => { const lit = rng() < 0.65; c.props.push({ kind:'barrel', x, z, lit }); if (lit) c.smoke.push({ x:x+0.5, z:z+0.5, s:0.5 }); });
+    if (rng() < 0.6) fenceRing(c, L.r, 'chain', { broken:0.5 });
   } else if (t === 'pond'){
-    // A park around a pond (water blocks walking, not sight), with trees.
+    // A park around a pond (water blocks walking, not sight), with trees; a big one is a lake of two
+    // overlapping pools with paths where the streets ran.
     fill(T.GRASS);
-    const pw = randi(2,3), pd = randi(2,3), px = x0 + 1 + randi(0, 3-pw), pz = z0 + 1 + randi(0, 3-pd);
-    for (let z=pz;z<pz+pd;z++) for (let x=px;x<px+pw;x++) grid[I(x,z)] = T.WATER;
-    c.ponds.push({ x0:px, z0:pz, x1:px+pw, z1:pz+pd });
-    for (let i=randi(2,4);i>0;i--) spot(T.GRASS, tree);
+    if (big) paths();
+    const pool = (pw, pd, px, pz) => {
+      for (let z=pz;z<pz+pd;z++) for (let x=px;x<px+pw;x++){ if (grid[I(x,z)] === T.SIDEWALK) c.overlays.pave.splice(c.overlays.pave.findIndex(q => q[0] === x && q[1] === z), 1); grid[I(x,z)] = T.WATER; }
+      c.ponds.push({ x0:px, z0:pz, x1:px+pw, z1:pz+pd });
+    };
+    const pw = big ? randi(3, Math.min(6, w-2)) : randi(2,3), pd = big ? randi(2, Math.min(4, d-2)) : randi(2,3), px = x0 + 1 + randi(0, w-2-pw), pz = z0 + 1 + randi(0, d-2-pd);
+    pool(pw, pd, px, pz);
+    if (big && rng() < 0.7){
+      const qw = randi(2, Math.min(5, w-2)), qd = randi(2, Math.min(5, d-2));
+      pool(qw, qd, Math.max(x0+1, Math.min(x1-1-qw, px + randi(-2, pw))), Math.max(z0+1, Math.min(z1-1-qd, pz + randi(-2, pd))));
+    }
+    for (let i=many(2,4);i>0;i--) spot(T.GRASS, tree);
   } else if (t === 'crater'){
     // A shell hit: a blast hole in the middle (some flooded), scorched ground, rubble, a burnt car.
     fill(T.SIDEWALK);
-    const cx = x0+2, cz = z0+2, wet = rng() < 0.3;
+    const cx = x0 + (w >> 1), cz = z0 + (d >> 1), wet = rng() < 0.3;
     grid[I(cx,cz)] = wet ? T.WATER : T.LOW;
     c.craters.push({ x:cx+0.5, z:cz+0.5, r:rand(2.6,3.4), wet });
     for (let z=cz-1;z<=cz+1;z++) for (let x=cx-1;x<=cx+1;x++) if (x !== cx || z !== cz) c.overlays.scorch.push([x,z]);
-    for (let i=randi(1,3);i>0;i--) spot(T.SIDEWALK, (x, z) => c.rubble.push({ x, z }));
-    for (let i=randi(2,4);i>0;i--) c.debris.push([x0 + rand(0,5), z0 + rand(0,5)]);
+    for (let i=many(1,3);i>0;i--) spot(T.SIDEWALK, (x, z) => c.rubble.push({ x, z }));
+    for (let i=many(2,4);i>0;i--) c.debris.push([x0 + rand(0,w), z0 + rand(0,d)]);
     if (rng() < 0.5) spot(T.SIDEWALK, (x, z) => c.cars.push(wreck(x, z, rand(0,6.3), { burnt:true })));
     if (rng() < 0.5) c.smoke.push({ x:cx+0.5, z:cz+0.5, s:0.8 });
   } else if (t === 'plaza'){
@@ -233,9 +416,106 @@ function buildBlock(c, b){
   }
 }
 
+// A street closed to cars for good: a paved walk with planters (downtown, industrial), a footpath
+// beside a strip of grass (suburbs) or a dirt track (outskirts). Always open end to end on foot.
+function buildStrip(c, s){
+  const { grid } = c, along = s.d > s.w;
+  const at = (i, k) => along ? [s.x0 + k, s.z0 + i] : [s.x0 + i, s.z0 + k];  // i along the street (0..4), k across (0..1)
+  const lane = randi(0, 1);
+  for (let i=0;i<5;i++) for (let k=0;k<2;k++){
+    const [x, z] = at(i, k);
+    if (s.kind === 'walk'){ grid[I(x,z)] = T.SIDEWALK; c.overlays.pave.push([x,z]); }
+    else if (s.kind === 'path'){ grid[I(x,z)] = k === lane ? T.SIDEWALK : T.GRASS; if (k === lane) c.overlays.pave.push([x,z]); }
+    else { grid[I(x,z)] = T.SIDEWALK; c.overlays.dirt.push([x,z]); }
+  }
+  // Planters on alternate sides, so there's always a way through.
+  if (s.kind === 'walk') for (const [i, k] of [[1, lane], [3, 1 - lane]]){ const [x, z] = at(i, k); grid[I(x,z)] = T.OBSTACLE; c.trees.push({ x, z, s:rand(0.75,1), m:Math.floor(rng()*3), planter:true }); }
+  else if (s.kind === 'path' && rng() < 0.7){ const [x, z] = at(randi(1, 3), 1 - lane); grid[I(x,z)] = T.OBSTACLE; c.trees.push({ x, z, s:rand(0.8,1.2), m:Math.floor(rng()*3) }); }
+  else if (s.kind === 'track' && rng() < 0.4){ const [x, z] = at(randi(1, 3), randi(0, 1)); grid[I(x,z)] = T.OBSTACLE; c.rubble.push({ x, z }); }
+}
+
+// ---------- Fences ----------
+// A fence round rect r, on its edge tiles that are open ground. Buildings, trees and the like standing
+// on the edge interrupt it, so every stretch runs up to something. Each stretch of 3 or more gets a
+// gate (in the middle of the side with o.mid; o.gate = its chance, else always; chain-link and farm
+// fences sometimes a double one), and each side, at chance o.broken, has a bit knocked down: fallen
+// fence lying on the ground (walkable). tidyFences() cleans up the ends once everything is built.
+function fenceRing(c, r, style, o = {}){
+  const { grid } = c, X1 = r.x0 + r.w - 1, Z1 = r.z0 + r.d - 1;
+  const open = i => grid[i] === T.SIDEWALK || grid[i] === T.GRASS;
+  const line = (n, f) => { const a = []; for (let i=0;i<n;i++) a.push(f(i)); return a; };
+  const sides = [line(r.w, i => [r.x0+i, r.z0]), line(r.d, i => [X1, r.z0+i]), line(r.w, i => [r.x0+i, Z1]), line(r.d, i => [r.x0, r.z0+i])];
+  const role = new Map(), rot = new Map();
+  sides.forEach((S, si) => {
+    const runs = []; let cur = null;
+    S.forEach(([x, z], i) => { if (open(I(x,z))){ if (!cur) runs.push(cur = []); cur.push(i); } else cur = null; });
+    for (const run of runs){
+      // Gates keep off the corners (and the tiles next to them when the side is long enough).
+      const away = S.length >= 6 ? 2 : 1, inner = run.filter(i => i >= away && i < S.length - away), mid = S.length >> 1;
+      if (run.length < 3 || !inner.length || rng() >= (o.gate ?? 1)) continue;
+      const g = o.mid && inner.includes(mid) ? mid : pick(inner), g2 = g + (rng() < 0.5 ? 1 : -1);
+      role.set(I(...S[g]), 'gate');
+      if ((style === 'chain' || style === 'rail') && run.length >= 6 && inner.includes(g2) && rng() < 0.5) role.set(I(...S[g2]), 'gate');
+    }
+    if (rng() < (o.broken || 0)){ const n = randi(1, 3), s0 = randi(0, S.length - n); for (let i=s0;i<s0+n;i++){ const id = I(...S[i]); if (role.get(id) !== 'gate') role.set(id, 'broken'); } }
+    for (const [x, z] of S) if (!rot.has(I(x,z))) rot.set(I(x,z), si % 2 ? Math.PI/2 : 0);
+  });
+  for (const S of sides) for (const [x, z] of S){
+    const id = I(x,z), ro = rot.get(id); if (!open(id) || ro === undefined) continue;
+    const R = role.get(id), g = grid[id]; rot.delete(id);
+    if (R === 'gate') c.props.push({ kind:'fgate', x, z, rot:ro, style });
+    else if (R === 'broken') c.props.push(brokenFence(x, z, ro, style, g));
+    else { grid[id] = T.FENCE; c.props.push({ kind:'fence', x, z, rot:ro, style, under:g }); }
+  }
+}
+// A fallen piece of fence on an open tile: lying flat (lean ~1.45) or half over, toward `side`.
+const brokenFence = (x, z, rot, style, under, lean) => ({ kind:'fence', broken:true, x, z, rot, style, under, lean:lean ?? rand(1.25, 1.5), side:rng() < 0.5 ? 1 : -1 });
+// Every fence end should meet something: a building, a wall, a tree, a car, water, raised ground, a gate,
+// another fence. Where one stops in the open, the rest of it lies broken on the ground: fallen pieces fill
+// the gap up to the next solid thing (up to 3 tiles), or else one lies just past the end; with no open
+// ground past it (a road, a ramp) the end itself is knocked down. Then each gate hangs off a post beside it.
+function tidyFences(c){
+  const { grid, props } = c, L = c.level, at = new Map();
+  // Gates and fallen pieces something was built on since (a container, a closure, a ramp) are gone.
+  for (let i=props.length-1;i>=0;i--){ const p = props[i], id = I(p.x, p.z); if ((p.kind === 'fgate' || p.broken) && (L[id] || (grid[id] !== T.SIDEWALK && grid[id] !== T.GRASS))) props.splice(i, 1); }
+  for (const p of props) if (p.kind === 'fence' || p.kind === 'fgate' || p.kind === 'cart' || p.kind === 'flag' || p.kind === 'gate') at.set(I(p.x, p.z), p);
+  const marked = i => { const p = at.get(i); return p && (p.kind === 'fgate' || p.broken); };
+  // A fence, or what continues one: a gate in it, a piece of it lying broken.
+  const fence = i => grid[i] === T.FENCE || marked(i);
+  const meets = (i, lv) => !walkable(grid[i]) || L[i] !== lv || marked(i);
+  const ground = (i, lv) => (grid[i] === T.SIDEWALK || grid[i] === T.GRASS) && L[i] === lv && !at.has(i);
+  const ends = [];
+  for (const p of props){
+    if (p.kind !== 'fence' || p.broken) continue;
+    const i = I(p.x, p.z), hx = fence(i+1) || fence(i-1), hz = fence(i+N) || fence(i-N);
+    if (hx && hz) continue;
+    const [ax, az] = hx ? [1, 0] : hz ? [0, 1] : p.rot ? [0, 1] : [1, 0];
+    for (const s of [1, -1]) if (!fence(I(p.x + ax*s, p.z + az*s))) ends.push([p, ax*s, az*s]);
+  }
+  for (const [p, dx, dz] of ends){
+    if (p.broken) continue;
+    const i = I(p.x, p.z), lv = L[i];
+    if (meets(I(p.x+dx, p.z+dz), lv)) continue;
+    const gap = []; let k = 1;
+    for (;k<=4;k++){ const j = I(p.x + dx*k, p.z + dz*k); if (!ground(j, lv)) break; gap.push(j); }
+    const lay = (j, lean) => { const q = brokenFence(j % N, Math.floor(j/N), p.rot, p.style, grid[j], lean); props.push(q); at.set(j, q); };
+    if (gap.length && gap.length <= 3 && meets(I(p.x + dx*k, p.z + dz*k), lv)) gap.forEach((j, n) => lay(j, n ? undefined : rand(0.5, 1.1)));
+    else if (gap.length) lay(gap[0], rand(0.6, 1.5));
+    else { grid[i] = p.under; Object.assign(p, brokenFence(p.x, p.z, p.rot, p.style, p.under, rand(0.6, 1.5))); }
+  }
+  // Gates: hinged on a fence post beside them, swung open (mostly inward) or ajar; with nothing to hang
+  // from, lying on the ground.
+  for (const p of props){
+    if (p.kind !== 'fgate') continue;
+    const [ax, az] = p.rot ? [0, 1] : [1, 0], opts = [[ax, az], [-ax, -az]].filter(([dx, dz]) => grid[I(p.x + dx, p.z + dz)] === T.FENCE);
+    p.h = opts.length ? pick(opts) : [ax, az]; p.fallen = !opts.length || rng() < 0.08;
+    p.swing = rng() < 0.5 ? 1 : -1; p.ajar = rand(0.45, 1);
+  }
+}
+
 // ---------- Wrecks, damage and road closures ----------
-// Which block a tile belongs to (roads count toward the block south-east of them).
-const blockAt = (c, x, z) => { const f = v => Math.min(c.b-1, Math.max(0, Math.floor((v-1)/7))); return c.blocks[f(z)*c.b + f(x)]; };
+// Which block a tile belongs to (city.blockOf).
+const blockAt = (c, x, z) => c.blocks[c.blockOf[I(x,z)]];
 const BASIC_T = new Set(['towers','ruins','houses','farm','warehouses','park','field','lot','yard','construction','camp','crater','pond']);
 // Keeps the start corner, the exit and landmark entrances clear of anything that blocks a road.
 function clearSpot(c, x, z){
@@ -267,51 +547,84 @@ function tryBlock(c, cells){
 
 // ---------- Raised ground ----------
 // Grassy hills in parks and fields, loading docks along warehouse fronts, raised terraces in downtown
-// parks (b.raise). The top (level 2) is only reachable up its ramps or stairs (level 1; rampDir = the
-// D4 index you climb toward), so it's a spot to hold with one way up. Kept only if it cuts nothing off.
-// raised = { kind, x0, z0, x1, z1 (top, end-exclusive), ramps:[[x, z, dir]] } for cityScene.
+// parks, railway embankments across big fields (lot.raise). A top is only reachable up its ramps or stairs
+// (rampDir = the D4 index you climb toward), so it's a spot to hold with one way up. Big hills and
+// terraces can have a second tier on top (tier 2: levels 3 and 4), up its own ramp from the first.
+// Each one is kept only if it cuts nothing off.
+// raised = { kind, x0, z0, x1, z1 (top, end-exclusive), ramps:[[x, z, dir]], tier } for cityScene.
 // Ramp directions are indices into RAMP_DIRS, the order grid.js and cityScene.js read them in.
 const RAMP_DIRS = [[1,0],[-1,0],[0,1],[0,-1]];
 const D4I = (dx, dz) => RAMP_DIRS.findIndex(d => d[0] === dx && d[1] === dz);
-function raise(c, kind, x0, z0, x1, z1, ramps){
-  const { grid } = c, want = kind === 'dock' ? T.SIDEWALK : null;
-  const ok = (x, z) => { const g = grid[I(x,z)]; return !c.level[I(x,z)] && (want ? g === want : g === T.GRASS || g === T.SIDEWALK); };
+function raise(c, kind, x0, z0, x1, z1, ramps, tier = 1){
+  const { grid } = c, want = kind === 'dock' ? T.SIDEWALK : null, base = 2*(tier - 1);
+  const ok = (x, z) => { const g = grid[I(x,z)]; return c.level[I(x,z)] === base && (want ? g === want : g === T.GRASS || g === T.SIDEWALK); };
   for (let z=z0;z<z1;z++) for (let x=x0;x<x1;x++) if (!ok(x, z)) return false;
   ramps = ramps.filter(([x, z]) => ok(x, z));
   if (!ramps.length) return false;
   const R = c.reach || (c.reach = reach(c)), old = [];
-  for (let z=z0;z<z1;z++) for (let x=x0;x<x1;x++){ old.push(I(x,z)); c.level[I(x,z)] = 2; }
-  for (const [x, z, d] of ramps){ old.push(I(x,z)); c.level[I(x,z)] = 1; c.rampDir[I(x,z)] = d; }
+  for (let z=z0;z<z1;z++) for (let x=x0;x<x1;x++){ old.push(I(x,z)); c.level[I(x,z)] = base + 2; }
+  for (const [x, z, d] of ramps){ old.push(I(x,z)); c.level[I(x,z)] = base + 1; c.rampDir[I(x,z)] = d; }
   const r = reach(c);
-  if (r.n !== R.n){ for (const i of old) c.level[i] = 0; return false; }
-  c.reach = r; c.raised.push({ kind, x0, z0, x1, z1, ramps });
+  if (r.n !== R.n){ for (const i of old) c.level[i] = base; return false; }
+  c.reach = r; c.raised.push({ kind, x0, z0, x1, z1, ramps, tier });
   return true;
+}
+// One ramp per side of a rect (a random spot along it, or the middle for stairs), climbing toward it.
+const rampsRound = (x0, z0, x1, z1, mid) => {
+  const ax = () => mid ? (x0 + x1 - 1) >> 1 : randi(x0, x1 - 1), az = () => mid ? (z0 + z1 - 1) >> 1 : randi(z0, z1 - 1);
+  return [[ax(), z0 - 1, D4I(0,1)], [ax(), z1, D4I(0,-1)], [x0 - 1, az(), D4I(1,0)], [x1, az(), D4I(-1,0)]];
+};
+// Trees on a hill top, away from the tops of its ramps.
+function topTrees(c, R, n){
+  for (let i=0;i<n*3 && n>0;i++){
+    const x = randi(R.x0, R.x1 - 1), z = randi(R.z0, R.z1 - 1);
+    if (R.ramps.some(([rx, rz]) => Math.abs(rx - x) + Math.abs(rz - z) <= 1) || c.grid[I(x,z)] !== T.GRASS) continue;
+    if (tryBlock(c, [[x, z, T.OBSTACLE]])){ c.trees.push({ x, z, s:rand(0.8,1.2), m:Math.floor(rng()*3) }); n--; }
+  }
+}
+// A big lot's reserved raised ground: an embankment (a long ridge, ramps at both ends), or a hill or
+// terrace with ramps (stairs) up two or three sides and maybe a second tier inset on top of it.
+function bigRaise(c, R){
+  const { kind, x0, z0, w, d } = R, x1 = x0 + w, z1 = z0 + d;
+  if (kind === 'berm'){
+    raise(c, 'berm', x0, z0, x1, z1, w >= d ? [[x0-1, z0, D4I(1,0)], [x1, z0, D4I(-1,0)]] : [[x0, z0-1, D4I(0,1)], [x0, z1, D4I(0,-1)]]);
+    return;
+  }
+  const stairs = kind === 'terrace';
+  if (!raise(c, kind, x0, z0, x1, z1, shuffle(rampsRound(x0, z0, x1, z1, stairs)).slice(0, randi(2, stairs ? 4 : 3)))) return;
+  const low = c.raised[c.raised.length - 1];
+  if (w >= 4 && d >= 3 && rng() < 0.7){
+    const uw = randi(2, w - 2), ud = randi(1, d - 2), ux = x0 + 1 + randi(0, w - 2 - uw), uz = z0 + 1 + randi(0, d - 2 - ud);
+    // Its ramps start on the first tier: best where there's a tile of it in front to climb from.
+    const all = rampsRound(ux, uz, ux + uw, uz + ud, stairs), room = all.filter(([x, z, dir]) => { const [dx, dz] = RAMP_DIRS[dir], bx = x - dx, bz = z - dz; return bx >= x0 && bx < x1 && bz >= z0 && bz < z1; });
+    if (raise(c, kind, ux, uz, ux + uw, uz + ud, shuffle(room.length ? room : all).slice(0, randi(1, 2)), 2) && kind === 'knoll') topTrees(c, c.raised[c.raised.length - 1], randi(0, 1));
+  }
+  if (kind === 'knoll') topTrees(c, low, randi(0, 2));
 }
 function addHeights(c){
   c.level = new Uint8Array(N*N); c.rampDir = new Uint8Array(N*N); c.raised = []; c.reach = null;
-  for (const b of c.blocks){
-    const { x0, z0 } = b, t = b.type;
-    if (b.bx + b.bz <= 1) continue;
-    if (b.raise === 'terrace'){
+  for (const L of c.lots){
+    if (L.blocks.some(b => b.bx + b.bz <= 1)) continue;
+    const { x0, z0, w, d } = L.r, t = L.type, R = L.raise;
+    if (R && R.w) bigRaise(c, R);
+    else if (R && R.kind === 'terrace'){
       // The middle 3×3 up a flight of steps on two opposite sides.
-      const ax = rng() < 0.5;
-      raise(c, 'terrace', x0+1, z0+1, x0+4, z0+4, ax ? [[x0, z0+2, D4I(1,0)], [x0+4, z0+2, D4I(-1,0)]] : [[x0+2, z0, D4I(0,1)], [x0+2, z0+4, D4I(0,-1)]]);
-    } else if ((t === 'park' && rng() < 0.4) || (t === 'field' && rng() < 0.3) || (t === 'farm' && rng() < 0.2) || (t === 'camp' && rng() < 0.15)){
-      // A hill: a 2×2 to 3×2 top inside the block, a ramp up one side (sometimes two).
-      const w = randi(2,3), d = w === 3 ? 2 : randi(2,3), hx = x0 + 1 + randi(0, 3-w), hz = z0 + 1 + randi(0, 3-d);
-      const sides = shuffle([
-        [hx + randi(0, w-1), hz - 1, D4I(0,1)], [hx + randi(0, w-1), hz + d, D4I(0,-1)],
-        [hx - 1, hz + randi(0, d-1), D4I(1,0)], [hx + w, hz + randi(0, d-1), D4I(-1,0)]]);
-      raise(c, 'knoll', hx, hz, hx + w, hz + d, sides.slice(0, rng() < 0.35 ? 2 : 1));
+      const cx = x0 + (w >> 1), cz = z0 + (d >> 1), ax = rng() < 0.5;
+      raise(c, 'terrace', cx-1, cz-1, cx+2, cz+2, ax ? [[cx-2, cz, D4I(1,0)], [cx+2, cz, D4I(-1,0)]] : [[cx, cz-2, D4I(0,1)], [cx, cz+2, D4I(0,-1)]]);
+    } else if (!R && ((t === 'park' && rng() < 0.4) || (t === 'field' && rng() < 0.3) || (t === 'farm' && rng() < 0.2) || (t === 'camp' && rng() < 0.15))){
+      // A hill: a 2×2 to 3×2 top inside the lot, a ramp up one side (sometimes two).
+      const hw = randi(2,3), hd = hw === 3 ? 2 : randi(2,3), hx = x0 + 1 + randi(0, w - 2 - hw), hz = z0 + 1 + randi(0, d - 2 - hd);
+      raise(c, 'knoll', hx, hz, hx + hw, hz + hd, shuffle(rampsRound(hx, hz, hx + hw, hz + hd)).slice(0, rng() < 0.35 ? 2 : 1));
     }
   }
-  // Loading docks: along a warehouse's front (its roll-up door side, +z), a ramp at one end.
+  // Loading docks: along a warehouse's front (its roll-up door side, +z), a ramp at one end (long ones
+  // on factory halls sometimes get one at each end).
   for (const b of c.buildings){
     if (b.style !== 'warehouse' || b.cut || rng() > 0.45) continue;
-    const bl = blockAt(c, b.x, b.z), zf = b.z + b.d;
-    if (zf > bl.z0 + 4) continue;
-    const ramps = shuffle([[b.x - 1, zf, D4I(1,0)], [b.x + b.w, zf, D4I(-1,0)]]).filter(([x]) => x >= bl.x0 && x <= bl.x0 + 4);
-    raise(c, 'dock', b.x, zf, b.x + b.w, zf + 1, ramps.slice(0, 1));
+    const r = blockAt(c, b.x, b.z).lot, zf = b.z + b.d;
+    if (!r || zf > r.z0 + r.d - 1) continue;
+    const ramps = shuffle([[b.x - 1, zf, D4I(1,0)], [b.x + b.w, zf, D4I(-1,0)]]).filter(([x]) => x >= r.x0 && x < r.x0 + r.w);
+    raise(c, 'dock', b.x, zf, b.x + b.w, zf + 1, ramps.slice(0, b.w >= 5 && rng() < 0.5 ? 2 : 1));
   }
 }
 
@@ -433,17 +746,6 @@ function addClosures(c, C, level){
   }
 }
 
-// Fence along one side of a block (0 north, 1 east, 2 south, 3 west) on its edge tiles that are
-// still open ground, with a gap for a gate (the middle tile when `mid`).
-function fenceSide(c, b, side, style, mid){
-  const gap = mid ? 2 : randi(1,3), rot = side % 2 ? Math.PI/2 : 0;
-  for (let i=0;i<5;i++){
-    if (i === gap) continue;
-    const [x, z] = side === 0 ? [b.x0+i, b.z0] : side === 1 ? [b.x0+4, b.z0+i] : side === 2 ? [b.x0+i, b.z0+4] : [b.x0, b.z0+i], g = c.grid[I(x,z)];
-    if (g !== T.SIDEWALK && g !== T.GRASS) continue;
-    c.grid[I(x,z)] = T.FENCE; c.props.push({ kind:'fence', x, z, rot, style, under:g });
-  }
-}
 // Wrecked cars on roads, never blocking both lanes; badly hit cities get many more, some of them
 // in jams (a row of cars stuck in one lane).
 function addWrecks(c, C, exitZ, n){
@@ -611,7 +913,7 @@ function placeLandmarks(c, level){
       if (s > top){ top = s; best = { g, bx, bz, cx, cz }; }
     }
     if (!best) continue;
-    const g0 = best.g[0], lot = { x0:g0.x0, z0:g0.z0, s:7*n - 2 };
+    const g0 = best.g[0], lot = { x0:g0.x0, z0:g0.z0, w:7*n - 2, d:7*n - 2, bx:best.bx, bz:best.bz, n };
     for (const b of best.g){ b.type = 'landmark'; b.lot = lot; }
     placed.push({ x:best.cx, z:best.cz });
     stamp(c, type, best.g[0].x0, best.g[0].z0, best.g[0].district);
@@ -699,29 +1001,32 @@ const bounds = tiles => {
 const BASIC = new Set(['towers','ruins','houses','farm','warehouses','park','field','lot','yard','construction','camp','crater','pond','cemetery']);
 const LABEL = { tower:'shop', house:'house', warehouse:'warehouse', crypt:'crypt' };
 function placeLoot(c){
-  const { grid, blocks, buildings, cars, containers } = c;
-  for (const b of blocks){
-    if (!BASIC.has(b.type)) continue;
-    const D = DISTRICTS[b.district], free = [];
-    for (let z=b.z0;z<b.z0+5;z++) for (let x=b.x0;x<b.x0+5;x++){
-      const edge = x === b.x0 || x === b.x0+4 || z === b.z0 || z === b.z0+4, g = grid[I(x,z)];
+  const { grid, buildings, cars, containers } = c;
+  for (const L of c.lots){
+    if (!BASIC.has(L.type)) continue;
+    const { x0, z0, w, d } = L.r, D = DISTRICTS[L.district], free = [];
+    for (let z=z0;z<z0+d;z++) for (let x=x0;x<x0+w;x++){
+      const edge = x === x0 || x === x0+w-1 || z === z0 || z === z0+d-1, g = grid[I(x,z)];
       if ((g === T.SIDEWALK || g === T.GRASS) && edge && !c.level[I(x,z)]) free.push([x,z]);
     }
     let n = 0, kind = 'crate';
-    const t = b.type, outer = b.district === 'outskirts';
-    if (t === 'towers' || t === 'houses' || t === 'farm'){ kind = 'dumpster'; n = (rng() < D.dumpster[0] ? 1 : 0) + (rng() < D.dumpster[1] ? 1 : 0); }
-    else if (t === 'warehouses') n = rng() < 0.5 ? 1 : 0;
-    else if (t === 'lot') n = outer ? (rng() < 0.4 ? 1 : 0) : randi(1,2);
-    else if (t === 'yard') n = randi(2,3);
-    else if (t === 'ruins') n = rng() < (outer ? 0.4 : 0.7) ? 1 : 0;
-    else if (t === 'field' || t === 'pond') n = rng() < 0.12 ? 1 : 0;
-    else if (t === 'construction') n = randi(1,2);
-    else if (t === 'camp') n = rng() < 0.7 ? 1 : 0;
-    else if (t === 'crater') n = rng() < 0.3 ? 1 : 0;
+    const t = L.type, outer = L.district === 'outskirts';
+    // Rolled once per block of the lot.
+    for (let m=L.blocks.length;m>0;m--){
+      if (t === 'towers' || t === 'houses' || t === 'farm'){ kind = 'dumpster'; n += (rng() < D.dumpster[0] ? 1 : 0) + (rng() < D.dumpster[1] ? 1 : 0); }
+      else if (t === 'warehouses') n += rng() < 0.5 ? 1 : 0;
+      else if (t === 'lot') n += outer ? (rng() < 0.4 ? 1 : 0) : randi(1,2);
+      else if (t === 'yard') n += randi(2,3);
+      else if (t === 'ruins') n += rng() < (outer ? 0.4 : 0.7) ? 1 : 0;
+      else if (t === 'field' || t === 'pond') n += rng() < 0.12 ? 1 : 0;
+      else if (t === 'construction') n += randi(1,2);
+      else if (t === 'camp') n += rng() < 0.7 ? 1 : 0;
+      else if (t === 'crater') n += rng() < 0.3 ? 1 : 0;
+    }
     for (let i=0;i<n && free.length;i++){
       const [x,z] = free.splice(Math.floor(rng()*free.length),1)[0];
       grid[I(x,z)] = T.OBSTACLE;
-      containers.push({ kind, x, z, rot:(x === b.x0 || x === b.x0+4) ? Math.PI/2 : 0 });
+      containers.push({ kind, x, z, rot:(x === x0 || x === x0+w-1) ? Math.PI/2 : 0 });
     }
   }
   // Car trunks (landmark parking lots already rolled theirs in stamp()).

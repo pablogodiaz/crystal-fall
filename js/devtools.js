@@ -105,14 +105,27 @@ function targets(){
     const bs = c.blocks.filter(b => b.type === k).map(b => ({ x:b.x0 + 2, z:b.z0 + 2 }));
     if (bs.length) out.push([`▦ ${titleCase(k)} (${bs.length})`, () => { const o = near(bs); tileTp(o.x, o.z); }]);
   }
-  for (const k of ['knoll','dock','terrace']){
-    const rs = (c.raised || []).filter(r => r.kind === k).map(r => ({ x:r.x0, z:r.z0 }));
-    if (rs.length) out.push([`⛰ ${{ knoll:'Hill', dock:'Loading dock', terrace:'Terrace' }[k]} (${rs.length})`, () => { const o = near(rs); tileTp(o.x, o.z); }]);
+  // Big lots (several blocks merged) by type, dead ends, streets closed to cars.
+  const bigs = {};
+  for (const L of c.lots || []) if (L.blocks.length > 1) (bigs[L.type] = bigs[L.type] || []).push({ x:L.r.x0 + (L.r.w >> 1), z:L.r.z0 + (L.r.d >> 1) });
+  for (const k in bigs) out.push([`▣ Big ${k} (${bigs[k].length})`, () => { const o = near(bigs[k]); tileTp(o.x, o.z); }]);
+  if (c.deadEnds && c.deadEnds.length) out.push([`⛔ Dead end (${c.deadEnds.length})`, () => { const o = near(c.deadEnds); tileTp(o.x, o.z); }]);
+  for (const k of ['walk','path','track']){
+    const ss = (c.strips || []).filter(s => s.kind === k).map(s => ({ x:s.x0, z:s.z0 }));
+    if (ss.length) out.push([`🚶 ${{ walk:'Pedestrian street', path:'Footpath', track:'Dirt track' }[k]} (${ss.length})`, () => { const o = near(ss); tileTp(o.x, o.z); }]);
+  }
+  for (const k of ['knoll','dock','terrace','berm','summit']){
+    const rs = (c.raised || []).filter(r => k === 'summit' ? r.tier === 2 : r.kind === k && r.tier === 1).map(r => ({ x:r.x0, z:r.z0 }));
+    if (rs.length) out.push([`⛰ ${{ knoll:'Hill', dock:'Loading dock', terrace:'Terrace', berm:'Embankment', summit:'Second tier' }[k]} (${rs.length})`, () => { const o = near(rs); tileTp(o.x, o.z); }]);
   }
   const fences = world.breaks ? [...world.breaks.values()] : [];
   for (const k of ['picket','rail','chain','iron','planks']){
     const fs = fences.filter(b => b.kind === k);
     if (fs.length) out.push([`▥ ${BREAKABLES[k].name} (${fs.length})`, () => { const o = near(fs); tileTp(o.x, o.z + 1); }]);
+  }
+  for (const [k, f] of [['Gate', p => p.kind === 'fgate'], ['Broken fence', p => p.kind === 'fence' && p.broken], ['Shipping containers', p => p.kind === 'shipping'], ['Smokestack', p => p.kind === 'stack']]){
+    const ps = c.props.filter(f);
+    if (ps.length) out.push([`▥ ${k} (${ps.length})`, () => { const o = near(ps); tileTp(o.x, o.z + 1); }]);
   }
   const broken = c.buildings.filter(b => b.cut).map(b => ({ x:b.x, z:b.z }));
   if (broken.length) out.push([`🏚 Broken building (${broken.length})`, () => { const o = near(broken); tileTp(o.x, o.z); }]);
