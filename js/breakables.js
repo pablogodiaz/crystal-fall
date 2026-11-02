@@ -20,9 +20,9 @@ import { toast, floatText } from './hud.js';
 import { countItem, removeItem, addItem } from './inventory.js';
 const r2 = v => Math.round(v*100)/100;
 
-// Barricade look: two posts, three boards across and one nailed on the slant. Shared, never disposed.
+// Barricade look: two posts, three boards across the front and two behind, all straight. Shared, never disposed.
 const WOOD = new THREE.MeshStandardMaterial({ color:0x8f6d45, roughness:0.95 }), WOOD2 = new THREE.MeshStandardMaterial({ color:0x6b5034, roughness:0.95 });
-const POST = new THREE.BoxGeometry(0.16, 1.4, 0.16).translate(0, 0.7, 0), BOARD = new THREE.BoxGeometry(2.05, 0.26, 0.08);
+const POST = new THREE.BoxGeometry(0.2, 1.4, 0.2).translate(0, 0.7, 0), BOARD = new THREE.BoxGeometry(2.05, 0.26, 0.12);
 const falling = [];  // broken ones toppling over (cosmetic)
 
 // world.breaks from the city's fence props (cityScene keeps each prop's mesh on p.g); world.broken =
@@ -125,8 +125,8 @@ export function addBarricade(tx, tz, rot, hp){
   g.position.set(x, groundAt(x, z), z); inner.rotation.y = rot ? Math.PI/2 : 0; g.add(inner); world.cityGroup.add(g);
   const part = (geo, mat, px, py, pz, rz) => { const m = new THREE.Mesh(geo, mat); m.position.set(px, py, pz); m.rotation.z = rz || 0; m.castShadow = m.receiveShadow = true; inner.add(m); return m; };
   for (const sx of [-0.82, 0.82]) part(POST, WOOD2, sx, 0, 0);
-  [0.35, 0.72, 1.1].forEach((y, i) => part(BOARD, i % 2 ? WOOD2 : WOOD, mr(-0.06, 0.06), y, 0.1, mr(-0.07, 0.07)));
-  part(BOARD, WOOD, 0, 0.72, 0.16, rot ? -0.45 : 0.45).scale.x = 0.95;
+  [0.35, 0.72, 1.1].forEach((y, i) => part(BOARD, i % 2 ? WOOD2 : WOOD, mr(-0.08, 0.08), y, 0.13));
+  [0.54, 0.91].forEach(y => part(BOARD, WOOD2, mr(-0.08, 0.08), y, -0.13));
   const b = { idx, x:tx, z:tz, kind:'planks', hp, max:BREAKABLES.planks.hp, under:c.grid[idx], g, placed:true, rot, lean:0, shake:0, dx:0, dz:1 };
   c.grid[idx] = T.FENCE; world.breaks.set(idx, b);
   if (hp < b.max) showHit(b, 0, 0);

@@ -134,8 +134,8 @@ export function dropMesh(kind, id, n, sx, sz, held, from, nid){
   const w = kind === 'weapon' ? id : null;
   const g = new THREE.Group(); g.position.set(sx, groundAt(sx, sz), sz);
   const box = new THREE.Group(); box.position.y = 0.45;
-  if (w){ const m = gunModel(w.id, w.rarity); m.scale.setScalar(1.8); m.position.z = -0.7; m.rotation.z = 0.25; box.add(m); }
-  else if (kind === 'ammo' && id === 'bow'){ const m = new THREE.Mesh(SH.arrowGeo, SH.arrowMat); m.rotation.set(0.15, 0, 0.6); m.castShadow = true; box.add(m); box.position.y = 0.25; }
+  if (w){ const m = gunModel(w.id, w.rarity); m.scale.setScalar(1.8); m.position.z = -0.7; box.add(m); }
+  else if (kind === 'ammo' && id === 'bow'){ const m = new THREE.Mesh(SH.arrowGeo, SH.arrowMat); m.castShadow = true; box.add(m); box.position.y = 0.25; }
   else { const m = new THREE.Mesh(SH.dropGeo, SH.dropMats[kind]); m.castShadow = true; box.add(m); }
   const ring = new THREE.Mesh(SH.ringGeo, w ? SH.rarGlow[w.rarity] : SH.dropGlow); ring.rotation.x = -Math.PI/2; ring.position.y = 0.1;
   g.add(box, ring);

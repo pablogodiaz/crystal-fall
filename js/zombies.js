@@ -30,8 +30,8 @@ export function createZombieMesh(type, mods){
   const bodyMat = new THREE.MeshStandardMaterial({ color:SHIRTS[Math.floor(Math.random()*SHIRTS.length)], roughness:0.95 });
   const skinMat = new THREE.MeshStandardMaterial({ color:S.skin, roughness:0.8 });
   const mats = [bodyMat, skinMat], em = [0, 0], parts = {};
-  const body = new THREE.Mesh(SH.zBody, bodyMat); body.position.y = 1.03; body.rotation.x = 0.12;
-  const head = new THREE.Mesh(SH.zHead, skinMat); head.position.set(0,1.68,0.06); head.rotation.z = mr(-0.25,0.25);
+  const body = new THREE.Mesh(SH.zBody, bodyMat); body.position.y = 1.03;
+  const head = new THREE.Mesh(SH.zHead, skinMat); head.position.set(0,1.68,0.06);
   const a1 = new THREE.Mesh(SH.zArm, skinMat); a1.position.set(0.43,1.3,0.32);
   const a2 = new THREE.Mesh(SH.zArm, skinMat); a2.position.set(-0.43,1.3,0.32);
   const l1 = new THREE.Mesh(SH.zLeg, SH.pantsMat); l1.position.set(0.17,0.62,0);
@@ -111,7 +111,7 @@ export const spawnEvent = z => ['z+', z.nid, z.type, Object.keys(z.mods), Math.r
 // A turned player's look: their jacket on the body, their cap on the head.
 function applyLook(z, hex){
   z.mats[0].color.setHex(hex);
-  const [geo, mat] = capParts(), cap = new THREE.Mesh(geo, mat); cap.position.set(0, 0.28, -0.02); cap.castShadow = true; z.head.add(cap);
+  const [geo, mat] = capParts(), cap = new THREE.Mesh(geo, mat); cap.position.set(0, 0.27, -0.02); cap.castShadow = true; z.head.add(cap);
 }
 // A player who dies gets back up as one of them: a walker in their jacket and cap, swaying a moment first.
 export function spawnTurnedPlayer(p){

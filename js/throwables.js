@@ -85,7 +85,7 @@ function buildPreview(){
   const ring = new THREE.Mesh(new THREE.RingGeometry(0.94, 1, 56), mat); ring.rotation.x = -Math.PI/2;
   const fill = new THREE.Mesh(new THREE.CircleGeometry(1, 56), fillMat); fill.rotation.x = -Math.PI/2;
   const center = new THREE.Mesh(new THREE.RingGeometry(0.12, 0.22, 20), mat); center.rotation.x = -Math.PI/2;
-  const dotGeo = new THREE.SphereGeometry(0.07, 6, 4), dots = [];
+  const dotGeo = new THREE.BoxGeometry(0.12, 0.12, 0.12), dots = [];
   for (let i=0;i<16;i++){ const d = new THREE.Mesh(dotGeo, mat); dots.push(d); g.add(d); }
   g.add(ring, fill, center);
   g.traverse(o => { o.renderOrder = 10; });

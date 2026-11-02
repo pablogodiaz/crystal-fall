@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { TILE, N, BREAKABLES, walkable } from './config.js';
 import { scene, camera } from './renderer.js';
-import { SH, gunModel } from './assets.js';
+import { SH, gunModel, squareFrame } from './assets.js';
 import { WEAPONS, INV_SLOTS } from './items.js';
 import { state, world, players, keys, mouse, mouseNDC, dev, pad } from './state.js';
 import { resolveCircle, reveal, groundAt, tileLevel, levelOf, toGround } from './grid.js';
@@ -51,9 +51,10 @@ const LOOKS = [[0x2f5d8a, 0xf2e6c8, '#8ec5ff'], [0x8a3a2f, 0xffa070, '#ff9a6a'],
 // Geometry and the skin/cap/pack materials are shared by every player; the jacket, ring and melee
 // swoosh are per player (the swoosh fades, the jacket and ring carry the player's colour).
 const PG = {
-  body:new THREE.CylinderGeometry(0.33,0.36,0.85,12), head:new THREE.SphereGeometry(0.24,16,12), cap:new THREE.CylinderGeometry(0.25,0.25,0.12,14),
+  // Boxes like the zombies: body, head, a cap whose box runs forward over the brow as its brim.
+  body:new THREE.BoxGeometry(0.64,0.85,0.42), head:new THREE.BoxGeometry(0.42,0.42,0.42), cap:new THREE.BoxGeometry(0.44,0.1,0.48).translate(0,0,0.04),
   pack:new THREE.BoxGeometry(0.5,0.55,0.25), arm:new THREE.BoxGeometry(0.14,0.14,0.55), swish:new THREE.RingGeometry(0.75,1.75,18,1,-Math.PI/2-0.95,1.9),
-  ring:new THREE.RingGeometry(0.55,0.68,28),
+  ring:squareFrame(0.6, 0.48),
   skin:new THREE.MeshStandardMaterial({ color:0xd9a77c, roughness:0.7 }), dark:new THREE.MeshStandardMaterial({ color:0x22252b, roughness:0.6, metalness:0.3 }),
   packMat:new THREE.MeshStandardMaterial({ color:0x6b5537, roughness:1 })
 };
@@ -65,8 +66,8 @@ function buildMesh(p){
   const jacket = new THREE.MeshStandardMaterial({ color:jc, roughness:0.8 });
   const body = new THREE.Mesh(PG.body, jacket); body.position.y = 1.03;
   const head = new THREE.Mesh(PG.head, PG.skin); head.position.y = 1.68;
-  const cap = new THREE.Mesh(PG.cap, PG.dark); cap.position.y = 1.83;
-  const bp = new THREE.Mesh(PG.pack, PG.packMat); bp.position.set(0,1.1,-0.36);
+  const cap = new THREE.Mesh(PG.cap, PG.dark); cap.position.y = 1.93;
+  const bp = new THREE.Mesh(PG.pack, PG.packMat); bp.position.set(0,1.1,-0.33);
   const legs = [];
   for (const sx of [-0.15,0.15]){ const l = new THREE.Mesh(SH.zLeg, SH.pantsMat); l.position.set(sx,0.62,0); inner.add(l); legs.push(l); }
   const a1 = new THREE.Mesh(PG.arm, jacket); a1.position.set(0.28,1.18,0.25);
@@ -79,12 +80,15 @@ function buildMesh(p){
   inner.traverse(o => { if (o.isMesh) o.castShadow = true; });
   const ring = new THREE.Mesh(PG.ring, new THREE.MeshBasicMaterial({ color:rc, transparent:true, opacity:0.45, depthWrite:false }));
   ring.rotation.x = -Math.PI/2; ring.position.y = 0.1; g.add(ring);
-  Object.assign(p, { g, inner, legs, gun, arms:[a1, a2], swish, gunZ:0.35, mats:[jacket, swish.material, ring.material] });
+  Object.assign(p, { g, inner, legs, gun, arms:[a1, a2], swish, ring, gunZ:0.35, mats:[jacket, swish.material, ring.material] });
   scene.add(g);
 }
 // One lamp lights the area around the player being watched (lights can't be added at runtime).
 const lamp = new THREE.PointLight(0xffe2b0, 0.55, 10, 2); scene.add(lamp);
-export function updateLamp(){ const v = viewed(); if (v) lamp.position.set(v.pos.x, 3, v.pos.z); }
+export function updateLamp(){
+  const v = viewed(); if (v) lamp.position.set(v.pos.x, 3, v.pos.z);
+  for (const p of players) if (p.ring) p.ring.rotation.z = -p.g.rotation.y;  // the square under each player stays square to the grid
+}
 
 // A new player in the first free slot (null when the session is full). Spawned next to the player
 // you control, or placed at the start by the next startCity().
