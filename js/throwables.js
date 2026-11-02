@@ -14,6 +14,7 @@ import { hurtPlayer, hitCrystal, CRYSTAL_R } from './combat.js';
 import { selectedThrowable, countItem, curWeapon } from './inventory.js';
 import { splashPotion } from './uniques.js';
 import { WEAPONS } from './items.js';
+import { weaponStats } from './weapons.js';
 import { burst, shockwave, addDecal } from './fx.js';
 import { sfx } from './audio.js';
 import { emit, nextId } from './host.js';
@@ -96,9 +97,9 @@ export function updateThrowPreview(){
   if (!id && w && w.id === 'gravity' && w.mag >= 1) id = 'gravity';
   if (!id){ if (preview) preview.g.visible = false; return; }
   preview = preview || buildPreview();
-  const p = throwPath(pl), P = PREVIEW[id];
+  const p = throwPath(pl), P = PREVIEW[id], r = (id === 'potion' || id === 'gravity') && w.id === id ? weaponStats(w).range : P.r;
   preview.mat.color.setHex(P.color); preview.fillMat.color.setHex(P.color);
-  for (const o of [preview.ring, preview.fill]){ o.position.set(p.ex, 0.13, p.ez); o.scale.setScalar(P.r); }
+  for (const o of [preview.ring, preview.fill]){ o.position.set(p.ex, 0.13, p.ez); o.scale.setScalar(r); }
   preview.center.position.set(p.ex, 0.13, p.ez);
   preview.dots.forEach((d, i) => {
     const k = (i+1)/(preview.dots.length+1);

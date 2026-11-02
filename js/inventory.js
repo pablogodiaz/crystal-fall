@@ -1,6 +1,6 @@
 // ---------- Inventory & weapons ----------
-// Item stacks in p.inv (INV_SLOTS slots of { id, n } or null), two weapon slots in p.weapons (weapon
-// instances, see weapons.js, or null), reserve ammo per weapon type in p.ammo. Every player has their
+// Item stacks in p.inv (INV_SLOTS slots of { id, n } or null), two weapon slots in p.weapons (three with
+// the Holster upgrade; weapon instances, see weapons.js, or null), reserve ammo per weapon type in p.ammo. Every player has their
 // own, all of it on the player object, so it carries over between cities.
 import { WEAPONS, ITEMS, RECIPES, THROWABLES } from './items.js';
 import { refreshGun } from './player.js';
@@ -12,8 +12,20 @@ import { weaponStats, weaponTitle } from './weapons.js';
 import { sfxFor } from './host.js';
 
 export const curWeapon = p => p.weapons[p.cur];
-export const magSize = (w, p) => weaponStats(w, p).mag;
+export const magSize = w => weaponStats(w).mag;
 export const carried = p => p.weapons.filter(Boolean).map(w => w.id);
+// The slot Q goes to next from the held one (null if there's no other weapon).
+export function nextSlot(p){
+  const n = p.weapons.length;
+  for (let k=1;k<n;k++){ const i = (p.cur + k) % n; if (p.weapons[i]) return i; }
+  return null;
+}
+// The weapons you aren't holding, in the order Q reaches them.
+export function otherWeapons(p){
+  const out = [], n = p.weapons.length;
+  for (let k=1;k<n;k++){ const w = p.weapons[(p.cur + k) % n]; if (w) out.push(w); }
+  return out;
+}
 export function countItem(p, id){ let n = 0; for (const s of p.inv) if (s && s.id === id) n += s.n; return n; }
 
 // Fills existing stacks first, then empty slots. Returns how many were added.
@@ -35,7 +47,7 @@ export function addAmmo(p, id, n){
   p.ammo[id] += k; return k;
 }
 // Puts a weapon instance in a free slot. Every find is its own gun (rarity and modifiers), so a
-// second shotgun is a second gun, not ammo. Returns false when both slots are taken.
+// second shotgun is a second gun, not ammo. Returns false when every slot is taken.
 export function giveWeapon(p, w){
   const i = p.weapons.indexOf(null);
   if (i < 0) return false;
@@ -51,19 +63,20 @@ export function replaceWeapon(p, w){
   const W = WEAPONS[w.id]; if (W.start && !w.started){ w.started = true; addAmmo(p, w.id, W.start); }
   return old;
 }
-// G: put the held weapon on the ground and switch to the other one (you always keep one).
+// G: put the held weapon on the ground and switch to the next one (you always keep one).
 export function dropWeapon(p){
   if (!canAct(p)) return;
-  const o = 1 - p.cur;
-  if (!p.weapons[o]) return toast('That’s your only weapon', '', p);
+  const o = nextSlot(p);
+  if (o === null) return toast('That’s your only weapon', '', p);
   const w = curWeapon(p); w.out = false; w.charge = 0;
   p.weapons[p.cur] = null; p.cur = o; p.reloadT = 0; p.fireCd = 0.3; p.aiming = false; refreshGun(p);
   spawnDrop('weapon', w, 0, p.pos.x, p.pos.z, p);
   sfxFor(p, 'swap'); floatText(`Dropped ${weaponTitle(w)}`, 'dim', p);
 }
-export function swapWeapon(p){
+// Q: the next weapon, or slot i if given (companions pick the loaded one).
+export function swapWeapon(p, i){
   if (!canAct(p)) return;
-  const o = 1 - p.cur; if (!p.weapons[o]) return;
+  const o = Number.isInteger(i) && i !== p.cur && p.weapons[i] ? i : nextSlot(p); if (o === null) return;
   p.cur = o; p.reloadT = 0; p.fireCd = 0.3; refreshGun(p); sfxFor(p, 'swap');
 }
 

@@ -3,12 +3,12 @@ import * as THREE from 'three';
 import { TILE, N, T, DISTRICTS } from './config.js';
 import { $, fmtTime } from './utils.js';
 import { camera } from './renderer.js';
-import { WEAPONS, ITEMS, RECIPES, LANDMARKS, INV_SLOTS, RARITY } from './items.js';
+import { WEAPONS, ITEMS, RECIPES, LANDMARKS, INV_SLOTS, RARITY, SPECIALS } from './items.js';
 import { CRYSTAL } from './threats.js';
 import { state, world, zombies, drops, pickups, keys, players } from './state.js';
 import { me, viewed } from './player.js';
-import { craft, countItem, magSize, selectedThrowable } from './inventory.js';
-import { weaponStats, weaponDps, weaponTitle, modText } from './weapons.js';
+import { craft, countItem, magSize, selectedThrowable, otherWeapons } from './inventory.js';
+import { weaponStats, weaponDps, weaponTitle, modText, isSpecial } from './weapons.js';
 import { dropName } from './loot.js';
 import { EXIT_WAIT, crafting } from './game.js';
 import { blockIndex } from './grid.js';
@@ -105,12 +105,12 @@ export function updateHUD(dt, t){
   if (hudCache.status !== st){ hudCache.status = st; $('status').innerHTML = st; }
   setText('killText', state.kills + (state.kills === 1 ? ' kill' : ' kills'));
   setText('timeText', fmtTime(state.runTime));
-  const w = P.weapons[P.cur], alt = P.weapons[1 - P.cur], [aBig, aSub, aEmpty] = ammoState(w);
+  const w = P.weapons[P.cur], alt = otherWeapons(P), [aBig, aSub, aEmpty] = ammoState(w);
   setText('wpnName', weaponTitle(w));
   if (hudCache.rar !== w.rarity){ hudCache.rar = w.rarity; $('wpnName').dataset.r = w.rarity; }
   setText('ammoText', aBig); setText('ammoSub', aSub);
   $('ammoSub').classList.toggle('empty', aEmpty);
-  setText('wpnAlt', alt ? `Q ⇄ ${weaponTitle(alt)} (${shortAmmo(alt)})` : WEAPONS[w.id].kind ? 'Second slot empty' : `Mag ${magSize(w, P)}. Second slot empty`);
+  setText('wpnAlt', alt.length ? `Q ⇄ ${alt.map(o => `${weaponTitle(o)} (${shortAmmo(o)})`).join(' · ')}` : WEAPONS[w.id].kind ? 'Other slot empty' : `Mag ${magSize(w)}. Other slot empty`);
   const th = selectedThrowable(P), thn = countItem(P, th);
   setText('throwText', `${ITEMS[th].icon} ${ITEMS[th].name} ×${thn}`);
   $('throwLine').classList.toggle('none', !thn);
@@ -154,52 +154,58 @@ export function updateHUD(dt, t){
 
 // ---------- Weapons ----------
 // [big number, line under it, warn] for the ammo panel, by kind of weapon.
+// Fuel, charge and battery show as a share of the weapon's own tank (a modifier can make it bigger).
+const tank = w => w.mag/magSize(w)*100;
 function ammoState(w){
   const W = WEAPONS[w.id];
-  if (W.kind === 'flame') return [String(Math.ceil(w.mag)), w.mag > 0 ? '% fuel' : 'No fuel: melee', w.mag <= 0];
-  if (W.kind === 'arc') return [String(Math.floor(w.mag)), w.mag >= W.cost ? '% charge' : 'Recharging', w.mag < W.cost];
+  if (W.kind === 'flame') return [String(Math.ceil(tank(w))), w.mag > 0 ? '% fuel' : 'No fuel: melee', w.mag <= 0];
+  if (W.kind === 'arc') return [String(Math.floor(tank(w))), w.mag >= W.cost ? '% charge' : 'Recharging', w.mag < W.cost];
   if (W.kind === 'potion') return w.cd > 0 ? [String(Math.ceil(w.cd)), 's brewing', true] : ['Ready', 'click to throw', false];
-  if (W.kind === 'grav') return [String(w.mag), `/ ${W.mag} wells`, w.mag < 1];
+  if (W.kind === 'grav') return [String(w.mag), `/ ${magSize(w)} wells`, w.mag < 1];
   if (W.kind === 'shard') return [String(w.mag), w.mag ? 'shards' : 'Break a Crystal', w.mag < 1];
-  if (W.kind === 'drone') return [String(Math.floor(w.mag)), w.out ? '% battery · flying' : '% battery · click to launch', !w.out && w.mag < W.launch];
+  if (W.kind === 'drone') return [String(Math.floor(tank(w))), w.out ? '% battery · flying' : '% battery · click to launch', !w.out && w.mag < W.launch];
   if (W.kind === 'cryo' && P.reloadT <= 0) return [String(Math.ceil(w.mag)), `% coolant / ${Math.ceil(P.ammo.cryo)}`, w.mag + P.ammo.cryo < 1];
-  if (W.kind === 'rail' && w.charge > 0) return [Math.floor(w.charge/W.charge*100) + '%', w.charge >= W.charge ? 'Release to fire' : 'Charging', false];
+  if (W.kind === 'rail' && w.charge > 0){ const T = weaponStats(w).charge; return [Math.floor(Math.min(1, w.charge/T)*100) + '%', w.charge >= T - 1e-6 ? 'Release to fire' : 'Charging', false]; }
   const reserve = P.ammo[w.id];
   if (P.reloadT > 0) return ['…', 'Reloading', false];
   return [String(w.mag), w.mag + reserve === 0 ? 'Empty: melee' : '/ ' + reserve, w.mag + reserve === 0];
 }
 function shortAmmo(w){
   const W = WEAPONS[w.id];
-  if (W.kind === 'flame') return `${Math.ceil(w.mag)}% fuel`;
-  if (W.kind === 'arc') return `${Math.floor(w.mag)}% charge`;
+  if (W.kind === 'flame') return `${Math.ceil(tank(w))}% fuel`;
+  if (W.kind === 'arc') return `${Math.floor(tank(w))}% charge`;
   if (W.kind === 'potion') return w.cd > 0 ? `${Math.ceil(w.cd)} s` : 'ready';
   if (W.kind === 'grav') return `${w.mag} wells`;
   if (W.kind === 'shard') return `${w.mag} shards`;
-  if (W.kind === 'drone') return `${Math.floor(w.mag)}%${w.out ? ', flying' : ''}`;
+  if (W.kind === 'drone') return `${Math.floor(tank(w))}%${w.out ? ', flying' : ''}`;
   if (W.kind === 'cryo') return `${Math.ceil(w.mag)}% / ${Math.ceil(P.ammo.cryo)}`;
   return `${w.mag} / ${P.ammo[w.id]}`;
 }
 // Card for a weapon: name, rarity, key stats, modifiers (green good, red bad), what a unique does.
 // Shared by the ground tooltip and the Tab loadout. tag = chip next to the name, extra = lines after.
 const f1 = v => String(+v.toFixed(1));
-function statCells(w, all){
-  const W = WEAPONS[w.id], S = weaponStats(w, P), c = (k, v) => `<span><small>${k}</small><b>${v}</b></span>`;
-  if (W.kind === 'flame') return c('Damage', f1(S.dmg) + '/s') + c('Range', W.range) + c('Fuel', Math.ceil(w.mag) + '%');
-  if (W.kind === 'arc') return c('Damage', f1(S.dmg)) + c('Jumps', W.chain) + c('Rate', f1(1/S.rate) + '/s') + c('Charge', Math.floor(w.mag) + '%');
-  if (W.kind === 'potion') return c('Splash', W.radius) + c('Turned', W.turn + ' s') + c('Dose', w.cd > 0 ? Math.ceil(w.cd) + ' s' : 'Ready');
-  if (W.kind === 'grav') return c('Radius', W.radius) + c('Holds', W.time + ' s') + c('Wells', `${w.mag} / ${W.mag}`);
-  if (W.kind === 'rail') return c('Damage', f1(S.dmg)) + c('Charge', W.charge + ' s') + c('Reload', f1(S.reload) + ' s') + (all ? c('Slugs', `${w.mag} / ${P.ammo.railgun}`) : '');
-  if (W.kind === 'cryo') return c('Freezes in', f1(1/W.chill) + ' s') + c('Range', W.range) + c('Frozen', W.freeze + ' s') + c('Coolant', Math.ceil(w.mag) + '%');
-  if (W.kind === 'shard') return c('Damage', f1(S.dmg) + '×' + (W.pellets + P.pellets)) + c('Pierce', W.pierce + P.pierce) + c('Bounces', W.bounce) + c('Shards', `${w.mag} / ${W.mag}`);
-  if (W.kind === 'drone') return c('Damage', f1(S.dmg)) + c('Rate', f1(1/S.rate) + '/s') + c('Range', W.range) + c('Battery', Math.floor(w.mag) + '%');
+function statCells(w, all, p){
+  const W = WEAPONS[w.id], S = weaponStats(w), c = (k, v) => `<span><small>${k}</small><b>${v}</b></span>`;
+  const big = S.mag !== W.mag ? c('Capacity', Math.round(S.mag/W.mag*100) + '%') : '';  // a mag modifier on a unique
+  if (W.kind === 'flame') return c('Damage', f1(S.dmg) + '/s') + c('Range', f1(S.range)) + c('Fuel', Math.ceil(tank(w)) + '%') + big;
+  if (W.kind === 'arc') return c('Damage', f1(S.dmg)) + c('Jumps', W.chain) + c('Rate', f1(1/S.rate) + '/s') + c('Charge', Math.floor(tank(w)) + '%') + big;
+  if (W.kind === 'potion') return c('Splash', f1(S.range)) + c('Turned', W.turn + ' s') + c('Dose', w.cd > 0 ? Math.ceil(w.cd) + ' s' : 'Ready') + (S.cooldown !== W.cooldown ? c('Brews', Math.round(S.cooldown) + ' s') : '');
+  if (W.kind === 'grav') return c('Radius', W.radius) + c('Holds', W.time + ' s') + c('Wells', `${w.mag} / ${S.mag}`);
+  if (W.kind === 'rail') return c('Damage', f1(S.dmg)) + c('Charge', f1(S.charge) + ' s') + c('Reload', f1(S.reload) + ' s') + (all ? c('Slugs', `${w.mag} / ${p.ammo.railgun}`) : '');
+  if (W.kind === 'cryo') return c('Freezes in', f1(1/W.chill) + ' s') + c('Range', f1(S.range)) + c('Frozen', W.freeze + ' s') + c('Coolant', Math.ceil(w.mag) + (S.mag === W.mag ? '%' : ' / ' + S.mag));
+  if (W.kind === 'shard') return c('Damage', f1(S.dmg) + '×' + S.pellets) + c('Pierce', S.pierce) + c('Bounces', W.bounce) + c('Shards', `${w.mag} / ${S.mag}`);
+  if (W.kind === 'drone') return c('Damage', f1(S.dmg)) + c('Rate', f1(1/S.rate) + '/s') + c('Range', f1(S.range)) + c('Battery', Math.floor(tank(w)) + '%') + big;
   return c('Damage', f1(S.dmg) + (S.pellets > 1 ? '×' + S.pellets : '')) + c('Rate', f1(1/S.rate) + '/s') + c('Mag', S.mag) + c('Reload', f1(S.reload) + ' s')
-    + (all ? c('Ammo', `${w.mag} / ${P.ammo[w.id]}`) : '');
+    + (S.pierce ? c('Pierce', S.pierce) : '') + (all ? c('Ammo', `${w.mag} / ${p.ammo[w.id]}`) : '');
 }
-function weaponCard(w, tag = '', extra = '', all = false){
+// p = whose ammo `all` shows (default: the player the HUD follows).
+export function weaponCard(w, tag = '', extra = '', all = false, p = P || me()){
   const W = WEAPONS[w.id];
-  const mods = w.mods.map(m => `<li class="${m.s > 0 ? 'pos' : 'neg'}">${modText(m)}</li>`).join('');
+  // Specials (✦, a unique's own effects) are listed after its stat modifiers.
+  const mods = w.mods.filter(m => !isSpecial(m.k)).map(m => `<li class="${m.s > 0 ? 'pos' : 'neg'}">${modText(m, w.id)}</li>`).join('')
+    + w.mods.filter(m => isSpecial(m.k)).map(m => `<li class="spc"><b>${SPECIALS[m.k].name}</b>: ${SPECIALS[m.k].desc}</li>`).join('');
   return `<div class="wcard" data-r="${w.rarity}"><div class="wc-top"><b>${W.name}</b>${tag}<span class="wc-rar">${RARITY[w.rarity].name}</span></div>`
-    + `<div class="wc-stats">${statCells(w, all)}</div>`
+    + `<div class="wc-stats">${statCells(w, all, p)}</div>`
     + (mods ? `<ul class="wc-mods">${mods}</ul>` : w.rarity === 'common' ? '<div class="wc-none">No modifiers</div>' : '')
     + (W.desc ? `<p class="wc-desc">${W.desc}</p>` : '') + extra + '</div>';
 }
@@ -216,10 +222,10 @@ function updateWeaponTip(){
   if (!best){ if (tipSig){ tipSig = ''; el.classList.add('hidden'); } return; }
   const held = P.weapons[P.cur], free = P.weapons.includes(null);
   const mineHeld = best.held === P;
-  const sig = [best.w.uid, held.uid, free, mineHeld, P.dmgMul, P.fireMul, P.pellets].join();
+  const sig = [best.w.uid, held.uid, free, mineHeld].join();
   if (sig !== tipSig){
     tipSig = sig;
-    const a = weaponDps(best.w, P), b = weaponDps(held, P), diff = a !== null && b !== null ? a - b : null;
+    const a = weaponDps(best.w), b = weaponDps(held), diff = a !== null && b !== null ? a - b : null;
     const cmp = diff === null ? '' : `<div class="wc-cmp">DPS <b>${f1(a)}</b> <span class="${diff >= 0 ? 'pos' : 'neg'}">${diff >= 0 ? '▲' : '▼'} ${f1(Math.abs(diff))}</span> vs your ${weaponTitle(held)}</div>`;
     const act = mineHeld ? 'Step away, then hold <kbd>E</kbd> to take it back' : free ? 'Hold <kbd>E</kbd> to pick it up' : `Hold <kbd>E</kbd> to swap for your ${weaponTitle(held)}`;
     el.innerHTML = weaponCard(best.w, '', cmp + `<div class="wc-act">${act}</div>`);
@@ -228,11 +234,10 @@ function updateWeaponTip(){
   const [x, y] = toScreen(best.px, 1.3, best.pz);
   el.style.transform = `translate(${x.toFixed(1)}px, ${(y - 30).toFixed(1)}px) translate(-50%, -100%)`;
 }
-// Both weapon slots, shown bottom right while the full map is open (Tab).
+// Every weapon slot, shown bottom right while the full map is open (Tab).
 let loadSig = '';
 function renderLoadout(){
-  const sig = P.weapons.map(w => w ? [w.uid, w.mag|0, Math.ceil(w.cd), P.ammo[w.id]].join(':') : '-').join()
-    + [P.cur, P.dmgMul, P.fireMul, P.magMul, P.reloadMul, P.pellets, P.pierce].join();
+  const sig = P.weapons.map(w => w ? [w.uid, w.rarity, JSON.stringify(w.mods), w.mag|0, Math.ceil(w.cd), P.ammo[w.id]].join(':') : '-').join() + P.cur;
   if (sig === loadSig) return; loadSig = sig;
   $('loadout').innerHTML = '<div class="lo-title">Your weapons <small>Q swaps · G drops</small></div>' + P.weapons.map((w, i) =>
     w ? weaponCard(w, i === P.cur ? '<span class="wc-held">In hand</span>' : '', '', true) : '<div class="wcard wc-empty">Empty slot</div>').join('');

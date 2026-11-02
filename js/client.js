@@ -17,7 +17,6 @@ import { playSfx, initAudio } from './audio.js';
 import { me, viewed, addPlayer, removePlayer, readLocal, movePlayer, animateLegs, refreshGun, poseMelee, resetPlayerStats } from './player.js';
 import { reveal, updateFlow } from './grid.js';
 import { updateBot } from './bots.js';
-import { mpick } from './utils.js';
 import { mirrorSpawn, mirrorKill, mirrorHit, animateMirror } from './zombies.js';
 import { addBullet, hurtFx, updateBullets, MELEE_TIME } from './combat.js';
 import { burst, addDecal, addRing, animateRings, pickupMesh, animatePickup } from './fx.js';
@@ -27,7 +26,8 @@ import { spitMesh, puddleMesh, animateAcid, spotThreats } from './specials.js';
 import { drawBolt, beamFx, orbMesh, wellMesh, removeWell, sprayFx, chargeFx, animateUniques } from './uniques.js';
 import { crystalFx } from './crystal.js';
 import { toast, floatText, banner, showScreen, renderCraft } from './hud.js';
-import { startCity, newSeed, enterRun, roadFx, showUpgrades, showGameOver, spectate } from './game.js';
+import { startCity, newSeed, enterRun, roadFx, showUpgrades, showUpgradeResult, showGameOver, spectate } from './game.js';
+import { autoChoice } from './upgrades.js';
 import { ACTS } from './host.js';
 import { clock, syncClock, track, resetTrack, at } from './smooth.js';
 
@@ -170,7 +170,6 @@ function applyFull(p, s){
   Object.assign(p.ammo, s.am);
   // Weapons are merged by uid so the model in their hands isn't rebuilt every tick.
   p.weapons = s.w.map(w => { if (!w) return null; const o = p.weapons.find(x => x && x.uid === w.uid); return o ? Object.assign(o, w) : w; });
-  [p.dmgMul, p.fireMul, p.magMul, p.reloadMul, p.pellets, p.pierce, p.regen, p.speed, p.staminaRate] = s.m;
   const it = p.interact;
   if (s.it){ it.target = it.target && it.target.px === s.it[0] && it.target.pz === s.it[1] ? it.target : { px:s.it[0], pz:s.it[1] }; it.label = s.it[2]; it.p = s.it[3]; }
   else { it.target = null; it.p = 0; }
@@ -251,12 +250,14 @@ function handle(e){
       mouse.down = false;
       if (a === 'paused'){ state.mode = 'paused'; showScreen('pauseScreen'); $('resumeBtn').classList.add('hidden'); $('pauseNote').classList.remove('hidden'); }
       else if (a === 'play'){ state.mode = 'play'; showScreen(null); }
-      else if (a === 'upgrade'){ state.mode = 'upgrade'; me().crafting = false; me().aiming = false; showUpgrades(me(), [], () => {}); }
+      else if (a === 'upgrade'){ state.mode = 'upgrade'; me().crafting = false; me().aiming = false; showUpgrades(me(), [], () => {}, () => {}); }
       break;
     case 'upg':
-      state.cityKills = b; state.cityTime = c; showUpgrades(me(), a, (P, name) => act('upgrade', name));
-      if (net.bot) setTimeout(() => act('upgrade', mpick(a)), 1500);  // the autopilot picks for itself
+      state.cityKills = b; state.cityTime = c; me().offer = a;
+      showUpgrades(me(), a, ch => act('upgrade', ch), () => act('ready'));
+      if (net.bot) setTimeout(() => act('upgrade', autoChoice(me())), 1500);  // the autopilot picks for itself
       break;
+    case 'upgr': showUpgradeResult(a); if (net.bot) setTimeout(() => act('ready'), 1000); break;
     case 'wait': $('upgradeNote').textContent = a; break;
     case 'over': showGameOver(a, b, c, d); break;
   }

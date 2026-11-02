@@ -16,7 +16,7 @@ import { WEAPONS } from './items.js';
 import { net } from './state.js';
 import { act } from './client.js';
 // On a bot client the inventory lives on the host: ask it.
-const doSwap = p => net.role === 'client' ? act('swap') : swapWeapon(p);
+const doSwap = (p, i) => net.role === 'client' ? act('swap', i) : swapWeapon(p, i);
 const doUse = (p, i) => net.role === 'client' ? act('use', i) : useSlot(p, i);
 
 const SIGHT = 15, SHOOT = 12, FOLLOW = 3.5, CATCH_UP = 10, CLOSE = 2.6;
@@ -66,7 +66,7 @@ export function updateBot(p, dt){
   p.botT = (p.botT || 0) - dt;
   if (p.botT > 0) return;
   p.botT = 0.5;
-  if (!loaded(p, p.weapons[p.cur]) && loaded(p, p.weapons[1 - p.cur])) doSwap(p);
+  if (!loaded(p, p.weapons[p.cur])){ const i = p.weapons.findIndex(w => w && loaded(p, w)); if (i >= 0) doSwap(p, i); }
   const kit = slotOf(p, 'medkit'), band = slotOf(p, 'bandage');
   if (p.hp < p.maxHp*0.45 && kit >= 0) doUse(p, kit);
   else if (p.bleeding && band >= 0) doUse(p, band);

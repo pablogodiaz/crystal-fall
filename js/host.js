@@ -10,6 +10,7 @@
 import { state, world, net, players, zombies, drops, pickups, hazards, puddles } from './state.js';
 import { N } from './config.js';
 import { WEAPONS } from './items.js';
+import { weaponStats } from './weapons.js';
 import { send, onNet, connect, disconnect, VERSION } from './net.js';
 import { sfx, playSfx } from './audio.js';
 import { addPlayer, removePlayer, me, viewed, MAX_PLAYERS } from './player.js';
@@ -18,8 +19,8 @@ import { dropEvent } from './loot.js';
 import { tryReload, melee } from './combat.js';
 import { swapWeapon, dropWeapon, useSlot, dropSlot, releaseThrow, cycleThrowable, curWeapon } from './inventory.js';
 import { craftFor, toast, toastAll } from './hud.js';
-import { pickUpgrade } from './game.js';
-import { mpick } from './utils.js';
+import { pickUpgrade, readyUp } from './game.js';
+import { autoChoice } from './upgrades.js';
 import { clock, syncClock, track, resetTrack } from './smooth.js';
 
 let idc = 0;
@@ -108,10 +109,10 @@ function joinRunning(p){
   const a = players.find(o => o !== p && !o.dead);
   if (!a || state.mode === 'dead'){ p.dead = true; p.g.visible = false; return; }
   p.pos.set(a.pos.x + 0.6, 0, a.pos.z + 0.6); p.vel.set(0, 0, 0); p.g.position.copy(p.pos); p.lastTile = -1;
-  if (state.mode === 'upgrade') p.picked = true;
+  if (state.mode === 'upgrade') p.picked = p.ready = true;
 }
 // Disconnected: their player is a companion for LOST s (they can reconnect under the same name),
-// then leaves. A pending upgrade pick is made for them.
+// then leaves. A pending upgrade pick (and Continue) is made for them.
 const LOST = 30;
 function onLeave(id, quiet){
   const c = peers.get(id); if (!c) return;
@@ -119,7 +120,7 @@ function onLeave(id, quiet){
   const p = c.p; if (!players.includes(p)) return;
   quiet = quiet || state.mode === 'menu';
   p.remote = 0; p.net = null; p.lost = quiet ? 0.01 : LOST;
-  if (state.mode === 'upgrade' && !p.picked && p.offer) pickUpgrade(p, mpick(p.offer));
+  if (state.mode === 'upgrade'){ if (!p.picked && p.offer) pickUpgrade(p, autoChoice(p)); readyUp(p); }
   if (!quiet) toastAll(`${p.name} lost connection. A bot plays for them for ${LOST} s`, 'bad');
   roster();
 }
@@ -134,12 +135,13 @@ export function updateLost(dt){
 // ---------- Actions ----------
 // What a remote player can do besides moving and firing: the same calls input.js makes for you.
 export const ACTS = {
-  reload:p => tryReload(p), swap:p => swapWeapon(p), drop:p => dropWeapon(p), melee:p => melee(p),
+  reload:p => tryReload(p), swap:(p, i) => swapWeapon(p, i), drop:p => dropWeapon(p), melee:p => melee(p),
   cycle:(p, d) => cycleThrowable(p, d < 0 ? -1 : 1), use:(p, i) => useSlot(p, i|0), dropSlot:(p, i) => dropSlot(p, i|0),
   // [x, z, kind]: the aim point at release, and what the player had selected.
   throw:(p, v) => { if (!Array.isArray(v)) return; p.ctl.aim.set(+v[0], 1.1, +v[1]); if (v[2]) p.throwSel = v[2]; p.aiming = true; releaseThrow(p); },
   craft:(p, id) => craftFor(p, id),
-  upgrade:(p, name) => { if (p.offer) pickUpgrade(p, p.offer.find(u => u.name === name)); },
+  // [card id, weapon slot, modifier index] (validated in pickUpgrade), then Continue.
+  upgrade:(p, c) => pickUpgrade(p, c), ready:p => readyUp(p),
   crafting:(p, on) => { p.crafting = !!on; }
 };
 
@@ -176,7 +178,7 @@ function playerSnap(p){
   const w = curWeapon(p), d = p.drone && p.drone.visible ? [r2(p.drone.position.x), r2(p.drone.position.y), r2(p.drone.position.z), r2(p.drone.rotation.y)] : 0;
   const f = (p.dead ? 1 : 0) | (p.bleeding ? 2 : 0) | (p.winded ? 4 : 0) | (p.flameT > 0 ? 8 : 0) | (p.boost > 0 ? 16 : 0) | (p.reloadT > 0 ? 32 : 0);
   return [p.slot, r2(p.pos.x), r2(p.pos.z), r2(p.angle), r2(p.vel.x), r2(p.vel.z), r2(p.hp), p.maxHp, f, w.id, w.rarity, w.uid, r2(p.meleeT), r2(p.stamina), p.tp, d,
-    w.id === 'railgun' && w.charge > 0 ? r2(w.charge/WEAPONS.railgun.charge) : 0];
+    w.id === 'railgun' && w.charge > 0 ? r2(Math.min(1, w.charge/weaponStats(w).charge)) : 0];
 }
 // [nid, x, z, rotY, flags, hp %] for every zombie within NEAR of the player this client watches.
 function zombieSnap(c){
@@ -193,8 +195,7 @@ function fullState(p){
   return { hp:r2(p.hp), mh:p.maxHp, st:r2(p.stamina), wd:p.winded, bo:Math.round(p.boost*10)/10, bl:p.bleeding, dead:p.dead,
     inv:p.inv, w:p.weapons.map(w => w && Object.assign({}, w, { mag:r2(w.mag), cd:Math.round(w.cd*10)/10, idle:0, charge:w.charge ? r2(w.charge) : 0 })),
     cur:p.cur, am:p.ammo, rl:Math.round(p.reloadT*10)/10, ts:p.throwSel, k:p.kills,
-    it:it ? [r2(it.px), r2(it.pz), p.interact.label, r2(p.interact.p)] : 0,
-    m:[p.dmgMul, p.fireMul, p.magMul, p.reloadMul, p.pellets, p.pierce, p.regen, p.speed, p.staminaRate] };
+    it:it ? [r2(it.px), r2(it.pz), p.interact.label, r2(p.interact.p)] : 0 };
 }
 function fullFor(c){
   const out = {}, v = players.find(o => o.slot === c.view);

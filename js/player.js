@@ -111,13 +111,12 @@ export function removePlayer(p, force){
   if (state.view === i || state.view >= players.length) state.view = state.me; else if (state.view > i) state.view--;
 }
 
-// Base stats for a fresh run; upgrades modify these in place. Weapon stats live in WEAPONS (plus each
-// gun's rarity modifiers); dmgMul/fireMul/magMul/reloadMul/pellets/pierce are upgrade modifiers on top
-// (weaponStats in weapons.js). Weapons are instances (see weapons.js); the starting pistol is a Common.
+// Base stats for a fresh run. Weapon stats live in WEAPONS plus each weapon's own modifiers (weaponStats
+// in weapons.js); the upgrades work on those weapons (upgrades.js). Weapons are instances (see weapons.js);
+// the starting pistol is a Common. supply = weapon finds waiting at the next city start (Supply drop).
 export function resetPlayerStats(p){
-  Object.assign(p, { hp:100, maxHp:100, speed:4.6, stamina:1, staminaDelay:0, staminaRate:1, winded:false, boost:0,
+  Object.assign(p, { hp:100, maxHp:100, speed:4.6, stamina:1, staminaDelay:0, winded:false, boost:0, supply:0,
     reloadT:0, fireCd:0, meleeT:0, meleeCd:0, meleeHit:false, dead:false, kills:0, crafting:false,
-    dmgMul:1, fireMul:1, magMul:1, reloadMul:1, pellets:0, pierce:0, regen:0,
     bleeding:false, throwSel:'molotov', aiming:false, bleedFx:0, stepT:0,
     weapons:[{ id:'pistol', rarity:'common', mods:[], mag:12, uid:Math.random(), cd:0, idle:0 }, null], cur:0,
     ammo:Object.assign(Object.fromEntries(Object.keys(WEAPONS).map(id => [id, 0])), { pistol:36 }), flameT:0,
@@ -180,7 +179,7 @@ export function updatePlayers(dt){
 }
 
 // Stamina: walking is slower than a runner, so sprinting is how you get away. Sprint drains
-// stamina (staminaRate upgrade, energy-drink boost cut it); it refills after a short pause,
+// stamina (the energy-drink boost cuts it); it refills after a short pause,
 // faster standing still. Running dry leaves you winded: no sprint and a slower walk until
 // stamina is back to WINDED_OK.
 const SPRINT_MUL = 1.75, SPRINT_DRAIN = 0.28, REGEN = 0.24, REGEN_STILL = 1.7, REGEN_DELAY = 1, WINDED_OK = 0.4, WINDED_MUL = 0.8, BOOST_DRAIN = 0.4;
@@ -203,7 +202,7 @@ export function movePlayer(p, dt){
   if (p.boost > 0) p.boost = Math.max(0, p.boost - dt);
   if (sprint){
     spd *= SPRINT_MUL; p.staminaDelay = REGEN_DELAY;
-    p.stamina = Math.max(0, p.stamina - dt*SPRINT_DRAIN*p.staminaRate*(p.boost > 0 ? BOOST_DRAIN : 1));
+    p.stamina = Math.max(0, p.stamina - dt*SPRINT_DRAIN*(p.boost > 0 ? BOOST_DRAIN : 1));
     if (p.stamina <= 0) p.winded = true;
     // Running footsteps carry; walking is silent (zombies only notice you by sight).
     p.stepT -= dt;
@@ -242,7 +241,7 @@ function updatePlayer(p, dt){
   if (p.reloadT > 0){
     p.reloadT -= dt;
     if (p.reloadT <= 0){
-      const w = curWeapon(p), k = Math.max(0, Math.min(magSize(w, p) - w.mag, p.ammo[w.id]));
+      const w = curWeapon(p), k = Math.max(0, Math.min(magSize(w) - w.mag, p.ammo[w.id]));
       p.reloadT = 0; w.mag += k; p.ammo[w.id] -= k;
     }
   }
@@ -254,7 +253,6 @@ function updatePlayer(p, dt){
     poseMelee(p, p.meleeT > 0 ? k : 0);
   }
   if (c.fire) fire(p, dt);
-  if (p.regen > 0 && p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + p.regen*1.2*dt);
   if (p.bleeding){
     p.bleedFx -= dt;
     if (p.bleedFx <= 0){ p.bleedFx = 0.35; burst(new THREE.Vector3(p.pos.x, 0.9, p.pos.z), 'blood', 1, 1, true); }
