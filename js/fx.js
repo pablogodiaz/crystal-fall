@@ -41,7 +41,7 @@ export function addDecal(x, z, s = 1, mat = SH.decalMat, local){
   if (typeof mat === 'string') mat = DECALS()[mat];
   if (!local){ const D = DECALS(); emit(['dc', r2(x), r2(z), r2(s), Object.keys(D).find(k => D[k] === mat)]); }
   const m = new THREE.Mesh(SH.decalGeo, mat);
-  m.rotation.x = -Math.PI/2; m.rotation.z = Math.random()*6;
+  m.rotation.x = -Math.PI/2;  // square to the grid; the random stretch below varies them
   const t = world.city.grid[Math.floor(z/TILE)*N + Math.floor(x/TILE)];
   m.position.set(x, groundAt(x, z) + (t === T.ROAD ? 0.02 + Math.random()*0.004 : 0.09 + Math.random()*0.004), z);
   m.scale.set(s*mr(0.8,1.6), s*mr(0.7,1.3), 1);

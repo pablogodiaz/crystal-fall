@@ -712,6 +712,21 @@ features/
   scaling. Roads are the tiles where `(t-1) % 7 < 2`. World→tile is `Math.floor(pos/TILE)`; tile
   center is `(t+0.5)*TILE`. Block of a point: `blockIndex(x, z)` in `grid.js` (index into
   `city.blocks`, `bz*b + bx`).
+- **Model style** (every mesh in the world; the army outpost's sandbag wall and the zombies are the reference):
+  - **Boxes only:** build models from `BoxGeometry` with flat faces. No cylinders, spheres, cones, torus rings,
+    circles or rings, and no faceted "gem" solids (octahedron, dodecahedron, icosahedron).
+  - **Square to the grid:** parts sit at 0° or 90° (a whole object may turn on the vertical axis, e.g. a wreck
+    slewed across a road; the Crystal column is turned 45° on purpose). No tilted parts, slanted boards, X-bracing,
+    diagonal stripes or pointed tips; sloped things (roofs, ramps) are stepped boxes. Motion is fine: doors, lids,
+    corpses, a breakable leaning before it falls.
+  - **Chunky:** nothing thinner than ~0.15 units (a zombie's arm; 4 px at normal zoom). Held weapons ≥ 0.1 (they're
+    drawn 1.8× on the ground). Poles are square posts of 0.2+.
+  - **Real volume:** no flat cards standing in for 3D things (fences, signs get box parts or a box backing); flat
+    planes only for things lying on the ground (overlays, decals, markings).
+  - **Even detail:** big things get box parts too (ledges, parapets, window boxes, wheels), small things don't
+    get more parts than a building.
+  - Exceptions: gameplay radius indicators (blast warning, throw preview, acid landing mark, gravity well) stay
+    round because they show a true circular area; light beams (Crystal, exit, rarity) may stay round.
 - **Code style:** compact, dense lines matching the existing code; section header comments
   `// ---------- Name ----------`; brief comments only where intent isn't obvious.
 - **UI text** is in `index.html`/`hud.js`. HUD writes go through `setText()` to avoid DOM churn;
