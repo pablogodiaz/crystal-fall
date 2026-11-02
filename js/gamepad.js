@@ -18,18 +18,20 @@ import { togglePause, toggleCraft, crafting, spectate } from './game.js';
 import { startAim, cancelAim } from './inventory.js';
 import { act } from './client.js';
 import { throwNow } from './input.js';
+import { toast } from './hud.js';
 
 const B = { bottom:0, right:1, left:2, top:3, L:4, R:5, ZL:6, ZR:7, minus:8, plus:9, LS:10, RS:11, up:12, down:13, dleft:14, dright:15 };
 const DEAD = 0.25, HOLD = 0.6, AIM_MIN = 2.5, AIM_MAX = 13, FOLLOW = 0.4;  // stick deadzone; hold time; aim reach; s before aim follows your feet
 const now = [], was = [], heldT = [];
-let used = {}, idleT = 9, hist = [], navT = 0, navDir = '';
+let used = {}, idleT = 9, hist = [], navT = 0, navDir = '', curIdx = -1, warned = '';
+const seen = new Map();  // gamepad index → { id, rest }: axes resting far from 0 (triggers on odd layouts) aren't sticks
 
 const down = i => !!now[i];
 const pressed = i => now[i] && !was[i];
 const released = i => !now[i] && was[i];
 // Radial deadzone, rescaled so just past it is 0 and full tilt is 1.
 function stick(gp, a){
-  const x = gp.axes[a] || 0, y = gp.axes[a+1] || 0, m = Math.hypot(x, y);
+  const rest = seen.get(gp.index).rest, x = rest[a] ? 0 : gp.axes[a] || 0, y = rest[a+1] ? 0 : gp.axes[a+1] || 0, m = Math.hypot(x, y);
   if (m < DEAD) return null;
   const k = Math.min(1, (m - DEAD)/(1 - DEAD))/m;
   return { x:x*k, y:y*k, m:Math.min(1, (m - DEAD)/(1 - DEAD)) };
@@ -43,10 +45,27 @@ function toWorld(sx, sy){
   const wx = -fz*sx - fx*sy/sinE, wz = fx*sx - fz*sy/sinE, l = Math.hypot(wx, wz) || 1;
   return [wx/l, wz/l];
 }
-function firstPad(){
-  const list = navigator.getGamepads ? navigator.getGamepads() : [];
-  for (const gp of list) if (gp && gp.connected) return gp;
-  return null;
+// The controller in use is the one last pressed (a button, or an axis well away from where it rests), so a
+// second device the browser lists (Steam's virtual pad, a lone Joy-Con, a driver's dummy) can't take over.
+const pads = () => navigator.getGamepads ? [...navigator.getGamepads()].filter(gp => gp && gp.connected) : [];
+function activePad(){
+  let cur = null;
+  for (const gp of pads()){
+    let s = seen.get(gp.index);
+    if (!s || s.id !== gp.id){ s = { id:gp.id, rest:gp.axes.map(v => Math.abs(v) > 0.5 ? v : 0) }; seen.set(gp.index, s); }
+    if (gp.buttons.some(b => b && (b.pressed || b.value > 0.5)) || gp.axes.some((v, a) => Math.abs(v - (s.rest[a] || 0)) > 0.5)) curIdx = gp.index;
+    if (gp.index === curIdx) cur = gp;
+  }
+  if (cur && cur.mapping !== 'standard' && warned !== cur.id){ warned = cur.id; toast('This browser doesn’t know your controller’s layout, so buttons may be mixed up. Chrome or Edge usually do', 'bad'); }
+  return cur;
+}
+// Dev tools readout: every controller the browser reports, the one in use (▶), what's pressed right now.
+export function padReport(){
+  const l = pads().map(gp => {
+    const b = gp.buttons.map((x, i) => x && (x.pressed || x.value > 0.5) ? i : -1).filter(i => i >= 0);
+    return `${gp.index === curIdx ? '▶' : '·'} Pad ${gp.index} ${gp.id.slice(0, 38)} · ${gp.mapping || 'unknown layout'}\n  buttons ${b.join(',') || '-'} · axes ${gp.axes.map(v => v.toFixed(1)).join(' ')}`;
+  });
+  return l.length ? l.join('\n') : 'No controller seen (press a button on it)';
 }
 export function padOff(){
   if (!pad.on) return;
@@ -56,7 +75,7 @@ export function padOff(){
 function padOn(){ if (!pad.on){ pad.on = true; document.body.classList.add('pad'); markSlot(); } }
 
 export function pollPad(dt){
-  const gp = firstPad();
+  const gp = activePad();
   if (!gp){ if (pad.on) padOff(); return; }
   for (let i=0;i<17;i++){ was[i] = now[i]; const b = gp.buttons[i]; now[i] = !!b && (b.pressed || b.value > 0.5); }
   const ls = stick(gp, 0), rs = stick(gp, 2);
