@@ -21,7 +21,7 @@ import { foundCrystal } from './crystal.js';
 import { updateFlow, reveal, blockIndex } from './grid.js';
 import { startCity, newRun, newSeed, openRoad, completeCity, killPlayer, revivePlayer, spectate } from './game.js';
 import { showScreen, toast } from './hud.js';
-import { UPGRADES, targets as cardTargets, modChoices, destChoices, cardFits, applyCard } from './upgrades.js';
+import { UPGRADES, targets as cardTargets, modChoices, destChoices, cardFits, applyCard, cardOdds, CARD_TIERS } from './upgrades.js';
 import { roster } from './host.js';
 import { cityCondition } from './cityGen.js';
 
@@ -343,8 +343,14 @@ function buildPanel(){
   s = section(root, 'Upgrades', false);
   r = row(s);
   btn(r, 'Upgrade screen: every card', () => { ensureRun(); closeOverlays(); completeCity(true); }, 'Clear the city and get dealt every card that fits your weapons');
+  btn(r, 'Card odds', () => {
+    const lv = Math.max(1, state.level), rows = cardOdds(lv).sort((a, b) => b[1] - a[1]);
+    odds.textContent = `Chance in a hand after City ${lv} (if it fits):\n` + rows.map(([u, q]) => `${u.icon} ${u.name.padEnd(12)} ${String(Math.round(q*100)).padStart(3)}%  ${u.tier} ×${CARD_TIERS[u.tier]}`).join('\n');
+    odds.classList.remove('hidden');
+  }, 'How often each card is dealt at this city (4000 simulated hands); cards that don’t fit become the Ammo cache');
+  const odds = h('pre', 'dv-read hidden'); s.appendChild(odds);
   r = row(s, 'dv-grid');
-  for (const u of UPGRADES) btn(r, `${u.icon} ${u.name}`, () => playCard(u), `${u.desc}. Plays it now on the held weapon (or the first it fits), random modifier (and target) where it asks`);
+  for (const u of UPGRADES) btn(r, `${u.icon} ${u.name}`, () => playCard(u), `${u.tier} card${u.from ? `, dealt from City ${u.from}` : ''}${u.fallback ? ', only dealt in place of one you can’t use' : ''}. ${u.desc}. Plays it now on the held weapon (or the first it fits), random modifier (and target) where it asks`);
   r = row(s, 'dv-grid');
   for (const k in SPECIALS) btn(r, `✦ ${SPECIALS[k].name}`, () => giveSpecial(k), `${WEAPONS[SPECIALS[k].on].name}: ${SPECIALS[k].desc}. Gives the weapon if you don’t carry it`);
 
