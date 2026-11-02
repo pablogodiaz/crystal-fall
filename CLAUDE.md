@@ -114,7 +114,7 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   block with `bx + bz >= b` (far side of the map); the exit is on the east wall (column `n - 1`).
 - **Districts** (`DISTRICTS` + `LAYOUT` in `config.js`, `assignDistricts` in `cityGen.js`): every
   block is downtown (towers, dumpsters, crowded), industrial (warehouses, crate yards, ruins),
-  residential/suburbs (gabled houses on lawns, parks) or outskirts (fields, ruins, sparse
+  residential/suburbs (houses with stepped roofs on lawns, parks) or outskirts (fields, ruins, sparse
   farmhouses, quiet). Placement is random per city: downtown cores anywhere at least
   `startGap` blocks from the start (and `coreGap` apart), each ringed by suburbs, plus industrial
   pockets; the rest, and always the start's own blocks (`bx + bz <= 1`), is outskirts. Core and
@@ -159,7 +159,7 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   - Smoke plumes rise from burning wrecks, houses, broken towers and lit barrels (`c.smoke`, one
     instanced mesh animated by `animateCity` in `cityScene.js`).
 - **Raised ground** (`addHeights`/`raise` in `cityGen.js`, `buildRaised` in `cityScene.js`): grassy **hills** in
-  parks, fields, farms and camps (a 2×2–3×2 top, one or two ramps), **loading docks** along warehouse fronts
+  parks, fields, farms and camps (a 2×2–3×2 top, one or two ramps drawn as steps), **loading docks** along warehouse fronts
   (concrete, a ramp at one end) and **terraces** in downtown parks (the middle 3×3 up two flights of steps).
   `city.level` per tile: 0 ground, 1 ramp/stairs (`city.rampDir`: index into `[[1,0],[-1,0],[0,1],[0,-1]]`, the
   way up), 2 raised (`RAISE` = 1.1 up). Anyone can step up one level or drop down any number; nobody climbs
@@ -577,7 +577,8 @@ js/
   state.js        Shared mutable state: `state`, `world`, `dev` (dev tools flags), entity arrays, input state
   renderer.js     WebGLRenderer, scene, orthographic camera, lights (incl. pooled muzzle/fx lights), updateCamera(),
                   setTint() (takeover violet)
-  assets.js       Shared geometries/materials (SH, incl. landmark props and ?/!/♥ marks), window, corrugated
+  assets.js       Shared geometries/materials (SH, incl. landmark props and ?/!/♥ marks), boxes() (several boxes as one
+                  geometry), squareFrame(), corrugated
                   and checker textures, carMat(), gunModel() (weapon models, rarity materials)
   audio.js        Procedural WebAudio SFX (sfx.*), initAudio(), toggleMute()
   cityGen.js      Pure procedural city generation from a seed: condition, districts, blocks, landmark
@@ -727,6 +728,8 @@ features/
     get more parts than a building.
   - Exceptions: gameplay radius indicators (blast warning, throw preview, acid landing mark, gravity well) stay
     round because they show a true circular area; light beams (Crystal, exit, rarity) may stay round.
+  - Build multi-part props with `boxes([[w, h, d, x, y, z], …])` (assets.js): one geometry, one mesh, one draw
+    call. Buildings get window boxes on the two faces the camera sees (+x, +z), skipping door tiles (`doorAt`).
 - **Code style:** compact, dense lines matching the existing code; section header comments
   `// ---------- Name ----------`; brief comments only where intent isn't obvious.
 - **UI text** is in `index.html`/`hud.js`. HUD writes go through `setText()` to avoid DOM churn;
