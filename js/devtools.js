@@ -5,7 +5,7 @@
 // Player cheats are remembered in localStorage['crystal-fall-dev'] and only apply to the player you
 // control (P() = me()). Add new tools to a section in buildPanel() and list them in CLAUDE.md.
 import * as THREE from 'three';
-import { TILE, N, walkable, DISTRICTS } from './config.js';
+import { TILE, N, walkable, DISTRICTS, CONDITIONS } from './config.js';
 import { WEAPONS, ITEMS, LANDMARKS, GUNS, UNIQUES, RARITY, SPECIALS } from './items.js';
 import { ZTYPES, ZMODS, THREAT_BASE, THREAT_POOL, AI } from './threats.js';
 import { $, clamp, fmtTime, mpick } from './utils.js';
@@ -23,6 +23,7 @@ import { startCity, newRun, newSeed, openRoad, completeCity, killPlayer, reviveP
 import { showScreen, toast } from './hud.js';
 import { UPGRADES, targets as cardTargets, modChoices, destChoices, cardFits, applyCard, cardOdds, CARD_TIERS } from './upgrades.js';
 import { roster } from './host.js';
+import { cityCondition } from './cityGen.js';
 
 const P = me;
 const PREFS = 'crystal-fall-dev', SAVED = ['god','ammo','stamina','noclip','ignored','oneHit','speed'];
@@ -46,9 +47,10 @@ export function toggleDev(){
 // Starts a run first when there isn't one (menu, death screen).
 function ensureRun(){ if (state.mode === 'menu' || state.mode === 'dead') newRun(); }
 function closeOverlays(){ if (state.mode !== 'play' && state.mode !== 'menu'){ state.mode = 'play'; showScreen(null); } }
-function goCity(level, seed){
+// cond: a CONDITIONS key to look for a random seed with (ignored when a seed is given).
+function goCity(level, seed, cond){
   level = clamp(Math.floor(level) || 1, 1, 99);
-  if (!Number.isFinite(seed)) seed = newSeed();
+  if (!Number.isFinite(seed)){ seed = newSeed(); for (let i=0;cond && i<200 && cityCondition(seed) !== cond;i++) seed = newSeed(); }
   if (state.mode === 'menu' || state.mode === 'dead') newRun(level, seed);
   else { closeOverlays(); startCity(level, seed); }
 }
@@ -89,6 +91,18 @@ function targets(){
     const L = LANDMARKS[l.type], k = seen[l.type] = (seen[l.type] || 0) + 1;
     out.push([`${L.icon} ${L.name}${k > 1 ? ' ' + k : ''}`, () => tileTp(l.ox, l.oz)]);
   }
+  // The nearest of each kind of road closure and unusual block, and a broken tower.
+  const near = list => { const p = P(); let best = null, bd = 1e9; for (const o of list){ const d = Math.hypot((o.x + 0.5)*TILE - p.pos.x, (o.z + 0.5)*TILE - p.pos.z); if (d < bd){ bd = d; best = o; } } return best; };
+  for (const k of ['barrier','fence','checkpoint','pileup','bus','collapse']){
+    const n = c.closures.filter(o => o.kind === k).length;
+    if (n) out.push([`🚧 ${titleCase(k)} (${n})`, () => { const o = near(c.closures.filter(o => o.kind === k)); tileTp(o.x, o.z); }]);
+  }
+  for (const k of ['construction','cemetery','camp','pond','crater']){
+    const bs = c.blocks.filter(b => b.type === k).map(b => ({ x:b.x0 + 2, z:b.z0 + 2 }));
+    if (bs.length) out.push([`▦ ${titleCase(k)} (${bs.length})`, () => { const o = near(bs); tileTp(o.x, o.z); }]);
+  }
+  const broken = c.buildings.filter(b => b.cut).map(b => ({ x:b.x, z:b.z }));
+  if (broken.length) out.push([`🏚 Broken building (${broken.length})`, () => { const o = near(broken); tileTp(o.x, o.z); }]);
   return out;
 }
 
@@ -250,10 +264,14 @@ function buildPanel(){
   r = row(s);
   const lv = refs.level = h('input'); lv.type = 'number'; lv.min = 1; lv.max = 99; lv.title = 'City number';
   const sd = refs.seed = h('input'); sd.type = 'text'; sd.placeholder = 'random seed'; sd.title = 'Seed (blank = random)'; sd.className = 'dv-seed';
-  const go = () => goCity(+lv.value, sd.value.trim() === '' ? NaN : parseInt(sd.value, 10));
+  const cd = refs.cond = h('select'); cd.title = 'City condition (finds a random seed with it; ignored with a seed)';
+  for (const k of ['', ...Object.keys(CONDITIONS)]){ const o = h('option', '', k ? CONDITIONS[k].name : 'any condition'); o.value = k; cd.appendChild(o); }
+  cd.addEventListener('change', () => cd.blur());
+  const go = () => goCity(+lv.value, sd.value.trim() === '' ? NaN : parseInt(sd.value, 10), cd.value);
   for (const i of [lv, sd]) i.addEventListener('keydown', e => { if (e.key === 'Enter'){ i.blur(); go(); mark(); syncPanel(); } if (e.key === 'Escape') i.blur(); });
   r.append(h('span', 'dv-lbl', 'City'), lv, sd);
   btn(r, 'Go', go, 'Start this city (inventory carries over)');
+  r = row(s); r.append(h('span', 'dv-lbl', 'Condition'), cd);
   r = row(s);
   btn(r, '◂ Prev', () => goCity(state.level - 1)); btn(r, 'Next ▸', () => goCity(state.level + 1));
   btn(r, 'Restart', () => goCity(state.level, state.seed), 'Same city, same seed');
@@ -377,7 +395,7 @@ function readout(){
   const tx = Math.floor(P().pos.x/TILE), tz = Math.floor(P().pos.z/TILE), D = DISTRICTS[c.blocks[blockIndex(P().pos.x, P().pos.z)].district];
   const crys = cr && cr.alive ? `Crystal ${Math.ceil(cr.hp)}/${cr.maxHp}${state.crystalFound ? '' : ' (hidden)'}` : state.phase === 'takeover' ? `Takeover ${fmtTime(Math.ceil(state.takeover))}` : 'Road open';
   return `${fps} fps · ${state.mode}${dev.timeScale !== 1 ? ` · time ${dev.timeScale}×` : ''}\n` +
-    `City ${state.level} (${c.n}×${c.n}) · seed ${state.seed}\n` +
+    `City ${state.level} (${c.n}×${c.n}) · seed ${state.seed} · ${CONDITIONS[c.cond].name}\n` +
     `${zombies.length} zombies (${state.hordeAlive} takeover) · ${state.kills} kills\n` +
     (players.length > 1 ? players.map(p => `${p.name}${p === P() ? '*' : ''} ${p.dead ? 'dead' : Math.ceil(p.hp) + 'hp'} ${p.kills}k`).join(' · ') + '\n' : '') +
     `Tile ${tx}, ${tz} · ${D.name} · ${crys}`;

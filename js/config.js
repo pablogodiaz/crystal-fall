@@ -6,10 +6,12 @@ export const TILE = 2, B = 14, N = 7*B + 4;
 // City size by city number: [from city, blocks], last match wins (must not exceed B).
 export const CITY_BLOCKS = [[1, 10], [3, 12], [6, 14]];
 export const cityBlocks = level => CITY_BLOCKS.reduce((b, [from, n]) => level >= from ? n : b, CITY_BLOCKS[0][1]);
-export const T = { ROAD:0, BUILDING:1, WALL:2, BARRICADE:3, EXIT:4, SIDEWALK:5, GRASS:6, PLAZA:7, OBSTACLE:8, CRYSTAL:9, FLOOR:10, BARS:11 };
+// OBSTACLE blocks walking, sight and shots; BARS, LOW (fences, jersey barriers, sandbags, graves) and
+// WATER block walking only.
+export const T = { ROAD:0, BUILDING:1, WALL:2, BARRICADE:3, EXIT:4, SIDEWALK:5, GRASS:6, PLAZA:7, OBSTACLE:8, CRYSTAL:9, FLOOR:10, BARS:11, LOW:12, WATER:13 };
 export const walkable = t => t === 0 || t === 4 || t === 5 || t === 6 || t === 7 || t === 10;
-// Bullets and sight also pass through cell bars.
-export const seeThrough = t => walkable(t) || t === 11;
+// Bullets and sight also pass through cell bars, low obstacles and water.
+export const seeThrough = t => walkable(t) || t === 11 || t === 12 || t === 13;
 export const DIRS8 = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
 export const CITY_NAMES = ['Ashford','Greyhaven','Millbrook','Port Sable','Redwater','Hollow Pines','Cinder Bay','Northgate','Dunmore','Ravenfield','Saltmarsh','Kingsreach'];
 export const PALETTE = [0x8a7f72,0x7b8088,0x9a8a74,0x6f7a72,0x8c6f62,0x7d7468,0x5f6670,0x86796a];
@@ -24,11 +26,25 @@ export const WAREHOUSE_PALETTE = [0x6c7378,0x7a7468,0x5f6b70,0x80786a];
 // door = chance an ordinary building has a searchable door.
 // name/note = shown under the city name while you're in it.
 export const DISTRICTS = {
-  downtown:    { name:'Downtown', note:'crowded', density:1.4, perLevel:0.18, blocks:[['towers',9],['lot',1],['park',0.7]], dumpster:[0.85,0.4], door:0.35 },
-  industrial:  { name:'Industrial park', note:'busy', density:0.75, perLevel:0.1, blocks:[['warehouses',5],['yard',3],['ruins',1.5],['lot',1]], dumpster:[0.4,0], door:0.3 },
-  residential: { name:'Suburbs', note:'', density:0.5, perLevel:0.08, blocks:[['houses',7],['park',2],['lot',1]], dumpster:[0.2,0], door:0.42 },
-  outskirts:   { name:'Outskirts', note:'quiet', density:0.12, perLevel:0.04, blocks:[['field',5],['ruins',2],['farm',1.6],['park',1],['lot',0.6]], dumpster:[0.1,0], door:0.35 }
+  downtown:    { name:'Downtown', note:'crowded', density:1.4, perLevel:0.18, blocks:[['towers',9],['lot',1],['park',0.5],['construction',0.7],['crater',0.25],['pond',0.2]], dumpster:[0.85,0.4], door:0.35 },
+  industrial:  { name:'Industrial park', note:'busy', density:0.75, perLevel:0.1, blocks:[['warehouses',5],['yard',3],['ruins',1.5],['lot',1],['construction',1],['camp',0.3],['crater',0.35]], dumpster:[0.4,0], door:0.3 },
+  residential: { name:'Suburbs', note:'', density:0.5, perLevel:0.08, blocks:[['houses',7],['park',1.4],['pond',0.8],['lot',1],['cemetery',0.35],['camp',0.2]], dumpster:[0.2,0], door:0.42 },
+  outskirts:   { name:'Outskirts', note:'quiet', density:0.12, perLevel:0.04, blocks:[['field',4],['ruins',2],['farm',1.6],['park',0.6],['pond',0.5],['lot',0.6],['cemetery',0.4],['camp',0.35],['crater',0.3]], dumpster:[0.1,0], door:0.35 }
 };
+// Block types that hold more residents than their district's density (a cemetery is crowded).
+export const BLOCK_DENSITY = { cemetery:1.8, camp:1.3, construction:1.2 };
+// What happened to a city before you got there, rolled per city (weights w). It scales the damage
+// passes in cityGen.js: closures = road closures / dead ends, wrecks = wrecked cars, broken = damaged
+// and burnt-out buildings, kinds = weights of the closure kinds, mul = block type weight multipliers.
+// name/note show in the city banner and the dev tools.
+export const CONDITIONS = {
+  intact:    { w:1.1, name:'Holding up', note:'still mostly standing', closures:0.8, wrecks:0.9, broken:0.6, kinds:{ barrier:3, fence:2, pileup:2, checkpoint:1, bus:1, collapse:1 }, mul:{} },
+  evacuated: { w:1, name:'Evacuated', note:'checkpoints and closed roads', closures:2.2, wrecks:0.7, broken:0.8, kinds:{ barrier:3, fence:3, checkpoint:4, pileup:1, bus:0.5, collapse:0.5 }, mul:{ camp:4, cemetery:0.6 } },
+  gridlock:  { w:1, name:'Gridlock', note:'everyone tried to drive out', closures:1.5, wrecks:2, broken:1, kinds:{ pileup:5, bus:3, barrier:1, checkpoint:1, fence:0.5, collapse:0.5 }, mul:{ lot:1.6 } },
+  shelled:   { w:0.9, name:'Shelled', note:'the army tried to burn it out', closures:1.5, wrecks:1.2, broken:2.8, kinds:{ collapse:5, checkpoint:2, pileup:1.5, barrier:0.5, fence:0.5, bus:0.5 }, mul:{ crater:4, ruins:2.2, towers:0.8, construction:0.4 } }
+};
+// Road closures per 100 blocks in City 1, plus perCity for each city after (× the condition's closures).
+export const CLOSURES = { base:7, perCity:0.8 };
 // Where districts go, rolled per city (block units). cores = downtown centres [base, perCity, max]
 // (count = floor((base + perCity*(city-1))*area + random 0..1), capped at max*area, where area =
 // the city's block count / 100, so bigger cities get more of them), each `core` blocks in radius

@@ -123,7 +123,39 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   residents in City 1, 94 in City 3, 140 in City 5, 225 in City 6 and 300 in City 8. The district also sets the block types and how many
   dumpsters, crates, cars and searchable doors get built, so dense areas are dangerous and
   loot-rich and the outskirts are quiet and bare. The HUD shows the district you're in under the
-  city name.
+  city name. Besides towers, houses, warehouses, yards, lots, parks, fields, farms and ruins, a block can be a
+  **construction** site (steel frame building, a tower crane that fades when in the way, pipes, lumber,
+  chain-link fence along a side or two), a **cemetery** (iron fence with a gate per side, graves (some dug
+  open), a crypt with a searchable door or an old tree; ×1.8 residents, `BLOCK_DENSITY`), a relief **camp**
+  (tents, a first-aid tent, burn barrels, a fence), a **pond** park (water blocks walking, not sight), or a
+  shell **crater** (a hole in the middle, some flooded, scorch, rubble, a burnt car). Construction sites,
+  cemeteries, camps and craters never go on the start's own blocks (`EVENTFUL`).
+- **City condition** (`CONDITIONS` in `config.js`, `city.cond`, rolled first off the seed so
+  `cityCondition(seed)` finds one cheaply): what happened to the city, shown in the "City N" banner
+  and the dev tools. *Holding up* (mild), *Evacuated* (checkpoints, fences, camps), *Gridlock* (wrecks,
+  jams, pileups, buses), *Shelled* (craters, ruins, broken buildings, collapses). It scales the damage
+  passes (`closures`, `wrecks`, `broken`), weights the closure kinds (`kinds`) and multiplies block type
+  weights (`mul`).
+- **Damage and scars** (`damage`, `addCrashes`, `addClosures`, `addWrecks` in `cityGen.js`):
+  - Broken buildings (`breakBuilding`): towers/warehouses stop at `cut` of their height with jagged
+    `chunks`, a torn slab, rebar, blown-out holes and rubble (`debris`, no collision) around them;
+    burnt houses are charred, some with the roof caved in (`caved`), on scorched ground. Sooty towers
+    (`soot`) are blackened with holes. Broken and burnt buildings have no searchable door.
+  - Wrecks: lane wrecks as before (never both lanes), more of them by condition, some in jams (2–4 in a
+    row), some on their roof (`pose: 'flip'`) or side, some burnt out (`burnt`: charred, fewer trunks).
+    Crashes: two cars smashed together at a crossing, cars driven into buildings (`crash`, `ox/oz`).
+  - **Road closures / dead ends** (`CLOSURES` per 100 blocks + per city, × condition): both lanes of a
+    road and the open sidewalk tiles beside them, usually at a street's mouth (a dead end) or halfway.
+    Kinds: concrete jersey barriers or sawhorses (`barrier`), a chain-link quarantine fence (`fence`), an army
+    `checkpoint` (sandbags, a truck with a searchable bed, maybe a military crate), a `pileup` of wrecks, a
+    crashed `bus` (some on their side), a `collapse` of rubble (breaking the towers beside it).
+    Fences, barriers, sandbags and graves are `T.LOW`, water `T.WATER`: they block walking but not sight,
+    shots or throws (`throwPath` flies over them and never lands on them); cars, buses, rubble are
+    `T.OBSTACLE`. Every blocking change goes through `tryBlock`, which keeps it only if every tile
+    reachable from the start still is, so nothing (Crystal, exit, landmarks, any street) gets cut off.
+    Nothing blocks near the start, the exit or a landmark entrance (`clearSpot`).
+  - Smoke plumes rise from burning wrecks, houses, broken towers and lit barrels (`c.smoke`, one
+    instanced mesh animated by `animateCity` in `cityScene.js`).
 - **City loop** (`state.phase`):
   1. `explore` — find the Crystal (violet beam) in the plaza block. It counts as "found" when
      you get within 19 units or shoot it.
@@ -438,12 +470,15 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   - Players: + / − companion (bots, up to 4 players), kill one (turns into a zombie), revive all where
     they fell, "Play as P*n*" to take control of any player (the others become companions); the
     readout lists everyone's health and kills. "Refill everyone" tops up companions' ammo too.
-  - City: go to any city number with an optional seed (from the menu this starts a run there), prev /
+  - City: go to any city number with an optional seed or a condition (finds a random seed that rolls it;
+    the readout shows the current one; from the menu this starts a run there), prev /
     next / restart (same seed), clear city (upgrade screen); find the Crystal, take it to 50% (pulse),
     break it, takeover → 10 s, open the road; reveal the map. Inventory, guns and upgrades carry over.
   - Threats this city: tick/untick which types and modifiers roll (`state.threatIntro`, reset by
     the next city), plus the run's unlock order.
-  - Teleport: start, Crystal, exit, every landmark of the city (snapped to the nearest open tile).
+  - Teleport: start, Crystal, exit, every landmark of the city, the nearest road closure of each kind,
+    the nearest construction site / cemetery / camp / pond / crater, a broken building (snapped to the
+    nearest open tile).
   - Zombies: spawn ×1–50 of any type with any modifiers near you (`dev.spawn` overrides
     `rollThreat`), hunting or not, rising or standing; kill all (no kills/drops; exploders still
     blow), calm all, alert all; freeze zombies (skips `updateZombies`).
@@ -489,10 +524,12 @@ js/
   assets.js       Shared geometries/materials (SH, incl. landmark props and ?/!/♥ marks), window, corrugated
                   and checker textures, carMat(), gunModel() (weapon models, rarity materials)
   audio.js        Procedural WebAudio SFX (sfx.*), initAudio(), toggleMute()
-  cityGen.js      Pure procedural city generation from a seed: districts, blocks, landmark templates,
-                  wrecks, containers
-  cityScene.js    Builds/tears down the city's Three.js meshes: buildings by style, walk-in landmark
-                  shells/roofs, props, containers, signs, Crystal, barricade, exit
+  cityGen.js      Pure procedural city generation from a seed: condition, districts, blocks, landmark
+                  templates, broken buildings, crashes, road closures (reachability-checked), wrecks, containers
+  cityScene.js    Builds/tears down the city's Three.js meshes: buildings by style (broken, burnt, frames,
+                  crypts), cars (poses), scars (scorch, ponds, craters, debris), smoke, walk-in landmark
+                  shells/roofs, props (fences, barriers, bus, crane, graves…), containers, signs, Crystal,
+                  barricade, exit; animateCity()
   grid.js         Tile collision (isBlockedTile, isOpaqueTile, resolveCircle), BFS flow fields (player,
                   cached flowTo), line of sight, blockIndex, fog-of-war reveal
   player.js       Players: add/remove (meshes per slot colour), me()/viewed()/nearestPlayer(), co-op scaling
@@ -581,8 +618,10 @@ features/
 - **Two RNGs:** city layout uses the seeded `rng`/`rand`/`randi`/`pick` (deterministic per seed);
   everything else (AI, FX, spawns, loot rolls, upgrade choice) uses `Math.random`/`mr`/`mri`/`mpick`.
   Don't mix them up — calling seeded helpers outside `cityGen.js` changes generated cities.
-  Generation order: districts → plaza → landmarks → district blocks → wrecks → `placeLoot`
-  (dumpsters, crates, trunks, doors).
+  Generation order: condition → districts → plaza → landmarks → district blocks → `damage` → `addCrashes`
+  → `addClosures` → `addWrecks` → `placeLoot` (dumpsters, crates, trunks, doors). Cosmetic details that
+  should look the same on every machine (rubble heaps, graves, broken-building holes) take a seed stored
+  in the city data and `srand` in `cityScene.js`, not `Math.random`.
 - **City data gets runtime fields.** `buildCityScene` adds `px/pz/range/time/noise/searched/glint/open`
   to each `city.containers` entry, and `loot.js` sets `found` on landmarks. Per-city, so no reset needed.
   Landmark records: `{ type, cts (container indices), ox/oz (tile in front of the door/entrance/gate),
@@ -599,6 +638,9 @@ features/
   `rings` entries (`{ mesh, t, T, r0, r1, op }`) own their material, disposed when they finish.
   Player bodies share geometry and skin/cap/pack materials (`PG` in `player.js`); their jacket, ring and
   swoosh materials are their own, disposed by `removePlayer`.
+- **Tile types:** `walkable` = road, exit, sidewalk, grass, plaza, floor; `seeThrough` adds `BARS`, `LOW`
+  and `WATER` (block walking only). `OBSTACLE`, `BUILDING`, `WALL` block everything. The minimap colours
+  each type (`MM_COLORS` in `hud.js`), so a new tile type needs a colour there.
 - **Units:** grid tiles are `TILE = 2` world units. Tile arrays (`grid`, `explored`, flow fields,
   `interiorAt`, …) are always `N*N` with `N = 102` (the largest city, `B = 14` blocks) and indexed
   `z*N + x`; a smaller city fills the top-left `n×n` and every tile outside it is `T.WALL`, so
@@ -621,7 +663,8 @@ features/
   canopy sets `userData.center`. Fadeable meshes and their children must use their own materials
   (fading mutates them), never `SH` ones.
 - **Ground heights:** roads are at y=0, block slabs (sidewalk, park, lot, plaza) top out at 0.08.
-  Anything flat drawn on the ground (ground overlays — parking, forecourts, shop floors — 0.083,
+  Anything flat drawn on the ground (ground overlays — parking, forecourts, shop floors — 0.083, pond rims
+  0.084, scorch 0.0845, crater floors 0.086, water 0.088, crater holes 0.09,
   parking lines 0.086, decals 0.09, acid 0.11, fire 0.12, acid marker and exploder warning ring 0.13,
   shockwaves 0.14) must sit above 0.08 off-road.
 - **No runtime lights.** Adding/removing lights recompiles shaders; reuse `muzzleLight`/`fxLight` (and
@@ -631,7 +674,9 @@ features/
 
 No automated test suite. The dev tools (`` ` ``) shortcut most of this: jump to a city, teleport to a
 landmark, spawn the threat you changed, skip the takeover. To verify changes, serve locally and play a city through:
-explore (check districts feel different, walk into the police station and supermarket; from City
+explore (check districts feel different and each city condition looks like itself (dev tools: City → Condition):
+dead ends, pileups, checkpoints, buses, collapses, crashes, broken/burnt buildings, smoke, the construction
+site crane, cemetery, camp, pond, crater; walk into the police station and supermarket; from City
 3/4/6 the hospital, gun shop and army outpost) → search
 containers/landmarks (weapon finds: rarity colours, the ground tooltip, Tab loadout; "Scatter 6 guns" in the dev
 tools) → try each unique (flamethrower + a gas pump refuel, flask, arc caster, bow arrows, gravity well,

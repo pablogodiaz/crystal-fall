@@ -22,7 +22,7 @@ const tctx = tileLayer.getContext('2d');
 // The HUD shows the player being watched (P = viewed(), set every frame): you, or whoever you're
 // spectating while dead. Actions from it (inventory clicks, crafting) are always for me().
 let P = null;
-const MM_COLORS = { 0:'#3c3f46', 1:'#15171b', 2:'#0b0c0f', 3:'#d64545', 4:'#4ade80', 5:'#6a6862', 6:'#3f5a33', 7:'#8a8273', 8:'#24262b', 9:'#a070ff', 10:'#57534b', 11:'#30333a' };
+const MM_COLORS = { 0:'#3c3f46', 1:'#15171b', 2:'#0b0c0f', 3:'#d64545', 4:'#4ade80', 5:'#6a6862', 6:'#3f5a33', 7:'#8a8273', 8:'#24262b', 9:'#a070ff', 10:'#57534b', 11:'#30333a', 12:'#8a7350', 13:'#2d5670' };
 let mmTimer = 0, hudCache = {};
 function setText(id, v){ if (hudCache[id] !== v){ hudCache[id] = v; $(id).textContent = v; } }
 function paintTiles(){

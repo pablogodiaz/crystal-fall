@@ -16,12 +16,24 @@ const own = o => { disposables.push(o); return o; };
 const std = (color, o) => own(new THREE.MeshStandardMaterial(Object.assign({ color, roughness:0.9 }, o)));
 // Per-city geometry shared by every mesh of the same shape.
 const G = (key, make) => geoCache.get(key) || geoCache.set(key, own(make())).get(key);
+// Per-city material shared by every prop that asks for the same key (never on fadeable meshes).
+const M = (key, color, o) => G('m:' + key, () => new THREE.MeshStandardMaterial(Object.assign({ color, roughness:0.9 }, o)));
 const box = (w, h, d, base) => { const g = new THREE.BoxGeometry(w, h, d); if (base) g.translate(0, h/2, 0); return g; };
 const dummy = new THREE.Object3D();
 const mesh = (geo, mat, x, y, z, parent, shadow = true) => {
   const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = shadow; m.receiveShadow = true; parent.add(m); return m;
 };
 const glassMat = () => std(0x2a3f55, { emissive:0x1a3a55, emissiveIntensity:0.5, roughness:0.2, metalness:0.3 });
+// Seeded random for cosmetic details stored as a seed in the city data, so every machine draws them alike.
+const srand = seed => { let s = (seed >>> 0) || 1; return (a = 0, b = 1) => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return a + (b - a)*s/4294967296; }; };
+// Canvas texture (per city), drawn by f(ctx, size).
+const canvasTex = (size, f, rx = 1, ry = 1, hgt = size) => {
+  const cv = document.createElement('canvas'); cv.width = size; cv.height = hgt; f(cv.getContext('2d'), size, hgt);
+  const t = own(new THREE.CanvasTexture(cv)); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rx, ry); return t;
+};
+// Per-city animation: smoke plumes (one instanced mesh) and flickering fire materials (animateCity).
+const anim = { smoke:null, puffs:[], fires:[] };
+const PUFFS = 6, PUFF_T = 4.5;
 
 export function buildCityScene(c){
   const cityGroup = world.cityGroup = new THREE.Group(); scene.add(cityGroup);
@@ -33,7 +45,8 @@ export function buildCityScene(c){
 
   // Block slabs; a landmark's lot (one block, or 2×2 blocks plus the roads between) is one slab.
   const groundMats = {}, gm = { towers:0x67655f, ruins:0x58564f, park:0x3b4a2e, field:0x4b5032, houses:0x45543a, farm:0x4b5032,
-    warehouses:0x5c5b56, yard:0x55534d, lot:0x26282c, plaza:0x7a7468, landmark:0x67655f };
+    warehouses:0x5c5b56, yard:0x55534d, lot:0x26282c, plaza:0x7a7468, landmark:0x67655f, construction:0x5a5247, cemetery:0x3a4630, camp:0x47483a,
+    pond:0x3b4a2e, crater:0x4a4741 };
   for (const k in gm) groundMats[k] = std(gm[k], { roughness:1 });
   const lots = new Set();
   for (const b of c.blocks){
@@ -52,6 +65,7 @@ export function buildCityScene(c){
   };
   const O = c.overlays;
   tiles(O.lot, SH.lotMat); tiles(O.pad, SH.padMat); tiles(O.dirt, std(0x5a4b38, { roughness:1 }));
+  buildScars(c);
   for (const type in c.floors){ const L = LANDMARKS[type]; tiles(c.floors[type], std(L.floor, L.checker ? { map:CHECKER_TEX, roughness:0.5 } : { roughness:0.6 })); }
   // Parking stall lines, running along the parked cars (each lot tile carries its lot's front rotation).
   const lotSet = new Set(O.lot.map(([x,z]) => z*N + x));
@@ -95,29 +109,7 @@ export function buildCityScene(c){
     const lf = new THREE.Mesh(SH.leafGeo, SH.leafMats[t.m]); lf.position.y = 1.75; lf.rotation.y = t.x*1.7; lf.castShadow = true;
     g.add(tr, lf); cityGroup.add(g);
   }
-  for (const cr of c.cars){
-    const g = new THREE.Group(); g.position.set((cr.x+0.5)*TILE, 0, (cr.z+0.5)*TILE); g.rotation.y = cr.rot;
-    const st = cr.style, color = st === 'police' || st === 'ambulance' ? 0xe9e9ee : st === 'military' ? 0x4b5320 : cr.color;
-    const body = new THREE.Mesh(SH.carBody, carMat(color)); body.position.y = 0.42; body.castShadow = body.receiveShadow = true;
-    const cab = new THREE.Mesh(SH.carCab, SH.glassMat); cab.position.set(-0.1, 0.9, 0); cab.castShadow = true;
-    if (cr.wreck) { g.rotation.z = 0.04; cab.rotation.z = 0.12; }
-    g.add(body, cab);
-    if (st === 'police'){
-      // Black-and-white with a lightbar that still flashes.
-      mesh(SH.policeDoorGeo, SH.navyMat, -0.05, 0.47, 0, g, false);
-      mesh(SH.lightbarGeo, SH.sirenR, -0.1, 1.18, -0.2, g, false); mesh(SH.lightbarGeo, SH.sirenB, -0.1, 1.18, 0.2, g, false);
-    } else if (st === 'ambulance'){
-      // Boxy white rear with a red stripe and red lights.
-      mesh(G('ambBox', () => box(1.1, 0.75, 1.0, true)), carMat(0xe9e9ee), 0.4, 0.68, 0, g);
-      mesh(SH.policeDoorGeo, SH.redMat, -0.05, 0.47, 0, g, false);
-      mesh(SH.lightbarGeo, SH.sirenR, -0.1, 1.18, 0, g, false);
-    } else if (st === 'military'){
-      // Bigger, olive, with a canvas-covered bed.
-      g.scale.set(1.15, 1.15, 1.2);
-      mesh(G('canvas', () => box(1.0, 0.6, 1.0, true)), SH.canvasMat, 0.45, 0.68, 0, g);
-    }
-    cityGroup.add(g);
-  }
+  for (const cr of c.cars) cityGroup.add(carMesh(cr));
   for (const r of c.rubble){
     for (let i=0;i<4;i++){
       const m = new THREE.Mesh(SH.rubbleGeo, SH.rubbleMat);
@@ -129,10 +121,122 @@ export function buildCityScene(c){
     const m = new THREE.Mesh(own(new THREE.CylinderGeometry(0.42,0.5,p.h,8)), SH.pillarMat);
     m.position.set((p.x+0.5)*TILE, p.h/2, (p.z+0.5)*TILE); m.castShadow = m.receiveShadow = true; cityGroup.add(m);
   }
+  buildSmoke(c);
   const opens = buildProps(c);
   buildContainers(c, opens);
   world.crystal = buildCrystal(c.crystalTile, state.level);
   world.barricade = buildBarricade(c.exitZ, n);
+}
+
+// ---------- Cars ----------
+// Parked, wrecked (tilted, crumpled cab), on their roof or side, burnt out (charred, no glass), or
+// driven into a wall (ox/oz nudge them against it). Landmark vehicles carry a style.
+function carMesh(cr){
+  const g = new THREE.Group(), body = new THREE.Group(); g.add(body);
+  g.position.set((cr.x + 0.5 + (cr.ox || 0))*TILE, 0, (cr.z + 0.5 + (cr.oz || 0))*TILE); g.rotation.y = cr.rot;
+  const st = cr.style, burnt = cr.burnt, color = burnt ? 0x2b2724 : st === 'police' || st === 'ambulance' ? 0xe9e9ee : st === 'military' ? 0x4b5320 : cr.color;
+  const b = mesh(SH.carBody, carMat(color), 0, 0.42, 0, body), cab = mesh(SH.carCab, burnt ? carMat(0x151311) : SH.glassMat, -0.1, 0.9, 0, body);
+  if (cr.wreck && !cr.pose){ g.rotation.z = 0.04; cab.rotation.z = 0.12; }
+  if (cr.crash){ cab.scale.y = 0.8; b.scale.x = 0.9; b.position.x = -0.1; }
+  if (cr.pose){
+    // Rolled over: on the roof (cab crushed) or on its side, wheels showing.
+    const wm = M('wheel', 0x16171a), wg = G('wheel', () => { const w = new THREE.CylinderGeometry(0.27, 0.27, 0.18, 10); w.rotateX(Math.PI/2); return w; });
+    for (const [wx, wz] of [[-0.6,-0.5],[0.6,-0.5],[-0.6,0.5],[0.6,0.5]]) mesh(wg, wm, wx, 0.15, wz, body);
+    if (cr.pose === 'flip'){ body.rotation.x = Math.PI; body.position.y = 1.02; cab.scale.y = 0.55; cab.position.y = 0.82; }
+    else { body.rotation.x = Math.PI/2; body.position.y = 0.53; }
+  }
+  if (st === 'police'){
+    // Black-and-white with a lightbar that still flashes.
+    mesh(SH.policeDoorGeo, SH.navyMat, -0.05, 0.47, 0, body, false);
+    mesh(SH.lightbarGeo, SH.sirenR, -0.1, 1.18, -0.2, body, false); mesh(SH.lightbarGeo, SH.sirenB, -0.1, 1.18, 0.2, body, false);
+  } else if (st === 'ambulance'){
+    // Boxy white rear with a red stripe and red lights.
+    mesh(G('ambBox', () => box(1.1, 0.75, 1.0, true)), carMat(0xe9e9ee), 0.4, 0.68, 0, body);
+    mesh(SH.policeDoorGeo, SH.redMat, -0.05, 0.47, 0, body, false);
+    mesh(SH.lightbarGeo, SH.sirenR, -0.1, 1.18, 0, body, false);
+  } else if (st === 'military'){
+    // Bigger, olive, with a canvas-covered bed.
+    g.scale.set(1.15, 1.15, 1.2);
+    mesh(G('canvas', () => box(1.0, 0.6, 1.0, true)), SH.canvasMat, 0.45, 0.68, 0, body);
+  }
+  return g;
+}
+
+// ---------- Scars ----------
+// Burnt ground (soft scorch blobs), ponds (rounded water with a muddy rim), shell craters and loose
+// rubble lying about (no collision).
+function buildScars(c){
+  const cityGroup = world.cityGroup, rnd = srand(c.n*7 + c.exitZ);
+  const sc = c.overlays.scorch;
+  if (sc.length){
+    const tex = canvasTex(64, (g, s) => { const gr = g.createRadialGradient(s/2, s/2, 2, s/2, s/2, s/2); gr.addColorStop(0, 'rgba(0,0,0,0.85)'); gr.addColorStop(0.6, 'rgba(0,0,0,0.5)'); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.fillRect(0, 0, s, s); });
+    const im = own(new THREE.InstancedMesh(SH.tilePlane, own(new THREE.MeshBasicMaterial({ map:tex, color:0x15110d, transparent:true, depthWrite:false })), sc.length));
+    sc.forEach(([x,z], i) => { dummy.position.set((x + 0.5)*TILE, 0.0845, (z + 0.5)*TILE); dummy.rotation.set(0, rnd(0, 6.3), 0); dummy.scale.setScalar(TILE*rnd(1.2, 1.7)); dummy.updateMatrix(); im.setMatrixAt(i, dummy.matrix); });
+    im.renderOrder = 1; cityGroup.add(im);
+  }
+  const water = std(0x24485a, { roughness:0.08, metalness:0.35, emissive:0x081820, emissiveIntensity:0.6 }), mud = std(0x3b3326, { roughness:1 });
+  const rounded = (x0, z0, x1, z1, r) => {
+    const sh = new THREE.Shape();
+    sh.moveTo(x0 + r, z0); sh.lineTo(x1 - r, z0); sh.quadraticCurveTo(x1, z0, x1, z0 + r); sh.lineTo(x1, z1 - r); sh.quadraticCurveTo(x1, z1, x1 - r, z1);
+    sh.lineTo(x0 + r, z1); sh.quadraticCurveTo(x0, z1, x0, z1 - r); sh.lineTo(x0, z0 + r); sh.quadraticCurveTo(x0, z0, x0 + r, z0);
+    const geo = own(new THREE.ShapeGeometry(sh, 6)); geo.rotateX(Math.PI/2); return geo;
+  };
+  const flat = (geo, mat, y) => { const m = new THREE.Mesh(geo, mat); m.position.y = y; m.receiveShadow = true; cityGroup.add(m); return m; };
+  for (const p of c.ponds){
+    const X0 = p.x0*TILE, Z0 = p.z0*TILE, X1 = p.x1*TILE, Z1 = p.z1*TILE;
+    flat(rounded(X0 - 0.35, Z0 - 0.35, X1 + 0.35, Z1 + 0.35, 1.6), mud, 0.084);
+    flat(rounded(X0 + 0.05, Z0 + 0.05, X1 - 0.05, Z1 - 0.05, 1.3), water, 0.088);
+    // Lily pads and reeds.
+    const pad = G('lily', () => { const g = new THREE.CircleGeometry(0.28, 8); g.rotateX(-Math.PI/2); return g; }), padM = M('lily', 0x3f6b34);
+    for (let i=0;i<4;i++) flat(pad, padM, 0.092).position.set(rnd(X0 + 0.6, X1 - 0.6), 0.092, rnd(Z0 + 0.6, Z1 - 0.6));
+    const reed = G('reed', () => box(0.06, 0.8, 0.06, true)), reedM = M('reed', 0x6b7a3a);
+    for (let i=0;i<10;i++){ const e = mesh(reed, reedM, rnd(X0, X1), 0, rnd() < 0.5 ? Z0 + rnd(-0.2, 0.3) : Z1 - rnd(-0.2, 0.3), cityGroup, false); e.rotation.z = rnd(-0.25, 0.25); e.scale.y = rnd(0.6, 1.3); }
+  }
+  const scorchM = std(0x1f1c19, { roughness:1 }), hole = std(0x0e0d0c, { roughness:1 });
+  for (const cr of c.craters){
+    const g = new THREE.Group(); g.position.set(cr.x*TILE, 0, cr.z*TILE); cityGroup.add(g);
+    flat(own(new THREE.CircleGeometry(cr.r, 20)).rotateX(-Math.PI/2), scorchM, 0.086).position.set(cr.x*TILE, 0.086, cr.z*TILE);
+    flat(G('craterHole', () => new THREE.CircleGeometry(1.15, 16).rotateX(-Math.PI/2)), cr.wet ? water : hole, 0.09).position.set(cr.x*TILE, 0.09, cr.z*TILE);
+    // Thrown-up rim of broken ground.
+    for (let i=0;i<16;i++){
+      const a = i/16*Math.PI*2 + rnd(-0.15, 0.15), r = cr.r*rnd(0.78, 0.98), m = mesh(SH.rubbleGeo, SH.rubbleMat, Math.cos(a)*r, 0.05, Math.sin(a)*r, g);
+      m.scale.set(rnd(0.6, 1.2), rnd(0.25, 0.5), rnd(0.6, 1.2)); m.rotation.y = rnd(0, 3);
+    }
+    for (let i=0;i<8;i++){ const a = rnd(0, 6.3), m = mesh(SH.rubbleGeo, SH.rubbleMat, Math.cos(a)*1.3, 0.12, Math.sin(a)*1.3, g); m.scale.setScalar(rnd(0.5, 0.9)); m.rotation.set(rnd(0, 3), rnd(0, 3), 0); }
+  }
+  if (c.debris.length){
+    const im = own(new THREE.InstancedMesh(SH.rubbleGeo, SH.rubbleMat, c.debris.length*3));
+    let k = 0;
+    for (const [x, z] of c.debris) for (let i=0;i<3;i++){
+      dummy.position.set((x + rnd(-0.4, 0.4))*TILE, 0.06, (z + rnd(-0.4, 0.4))*TILE); dummy.rotation.set(rnd(0, 3), rnd(0, 3), 0); dummy.scale.setScalar(rnd(0.25, 0.6));
+      dummy.updateMatrix(); im.setMatrixAt(k++, dummy.matrix);
+    }
+    im.castShadow = im.receiveShadow = true; cityGroup.add(im);
+  }
+}
+
+// ---------- Smoke ----------
+// Plumes over burning wrecks, burnt houses, broken towers and lit barrels: PUFFS puffs each, all in one
+// instanced mesh that animateCity() moves every frame (rise, drift, swell, shrink away).
+function buildSmoke(c){
+  anim.puffs = []; anim.smoke = null;
+  if (!c.smoke.length) return;
+  const rnd = srand(c.smoke.length*31 + c.n);
+  const mat = own(new THREE.MeshStandardMaterial({ color:0x4a4744, roughness:1, transparent:true, opacity:0.3, depthWrite:false }));
+  const im = anim.smoke = own(new THREE.InstancedMesh(G('puff', () => new THREE.IcosahedronGeometry(1, 1)), mat, c.smoke.length*PUFFS));
+  for (const s of c.smoke) for (let i=0;i<PUFFS;i++) anim.puffs.push({ x:s.x*TILE, z:s.z*TILE, y:(s.y || 0) + 0.6, s:s.s, ph:i/PUFFS*PUFF_T + rnd(0, 0.4), wx:rnd(0.5, 1), wz:rnd(-0.4, 0.4) });
+  im.frustumCulled = false; im.renderOrder = 2; world.cityGroup.add(im);
+  animateCity(0, 0);
+}
+export function animateCity(dt, t){
+  for (const m of anim.fires) m.emissiveIntensity = 1.4 + Math.sin(t*13 + m.userData.ph)*0.4 + Math.sin(t*31)*0.25;
+  const im = anim.smoke; if (!im) return;
+  anim.puffs.forEach((p, i) => {
+    const k = ((t + p.ph) % PUFF_T)/PUFF_T, sw = (0.35 + k*1.5)*p.s*(k > 0.75 ? (1 - k)/0.25 : 1);
+    dummy.position.set(p.x + k*k*3*p.wx*p.s, p.y + k*6.5*p.s, p.z + k*k*3*p.wz*p.s); dummy.rotation.set(k*2, i, 0); dummy.scale.setScalar(Math.max(0.01, sw));
+    dummy.updateMatrix(); im.setMatrixAt(i, dummy.matrix);
+  });
+  im.instanceMatrix.needsUpdate = true;
 }
 
 // ---------- Buildings ----------
@@ -140,11 +244,14 @@ export function buildCityScene(c){
 // door) and the solid landmarks (pharmacy, hardware store, gas station shop: colour band, roof
 // sign, glass storefront). Children use the building's own materials so they fade with it.
 function buildingMesh(b){
-  const w = b.w*TILE - 0.3, d = b.d*TILE - 0.3, h = b.h, top = h/2, L = b.lm && LANDMARKS[b.lm];
-  const col = new THREE.Color(L ? L.wall : b.color);
+  if (b.style === 'frame') return frameMesh(b);
+  const w = b.w*TILE - 0.3, d = b.d*TILE - 0.3, h = b.cut || b.h, top = h/2, L = b.lm && LANDMARKS[b.lm];
+  // Fire-blackened: burnt houses, sooty towers; broken ones a little darker too.
+  const col = new THREE.Color(L ? L.wall : b.color).multiplyScalar(b.burnt ? 0.32 : b.soot ? 0.55 : b.cut ? 0.85 : 1);
+  const plain = b.ruined || b.style === 'crypt';
   let mats, uniq;
-  if (b.ruined){
-    const m = std(col.clone().multiplyScalar(0.8), { roughness:1 });
+  if (plain){
+    const m = std(b.ruined ? col.clone().multiplyScalar(0.8) : col, { roughness:1 });
     mats = [m,m,m,m,m,m]; uniq = [m];
   } else {
     const corr = b.style === 'warehouse', vr = corr ? 1 : Math.max(1, Math.round(h/2));
@@ -157,31 +264,71 @@ function buildingMesh(b){
   m.position.set((b.x + b.w/2)*TILE, h/2, (b.z + b.d/2)*TILE);
   m.castShadow = m.receiveShadow = true;
   const add = (geo, mat, x, y, z) => mesh(geo, mat, x, y, z, m);
-  if (b.style === 'house'){
-    // Gable roof along the long side; its triangular ends are plain wall.
-    const ridgeX = b.w >= b.d, span = (ridgeX ? d : w) + 0.4, len = (ridgeX ? w : d) + 0.4, rh = Math.min(1.5, span*0.36);
-    const shape = new THREE.Shape(); shape.moveTo(-span/2, 0); shape.lineTo(span/2, 0); shape.lineTo(0, rh); shape.closePath();
-    const geo = own(new THREE.ExtrudeGeometry(shape, { depth:len, bevelEnabled:false })); geo.translate(0, 0, -len/2);
-    const cap = std(col), roof = std(b.roof, { roughness:1 });
-    const r = add(geo, [cap, roof], 0, top, 0); if (ridgeX) r.rotation.y = Math.PI/2;
-    if (Math.random() < 0.5){
-      const a = len*0.25, s = span*0.15;
-      add(G('chimney', () => box(0.4, 1, 0.4, true)), roof, ridgeX ? a : s, top, ridgeX ? s : a).scale.y = rh + 0.35;
+  const rnd = srand(b.seed || (b.x*131 + b.z*17));
+  if (b.cut){
+    // Collapsed upper floors: jagged chunks of the old walls, a torn floor slab, bent rebar.
+    const conc = std(col.clone().multiplyScalar(0.75), { roughness:1 }), rebar = std(0x5a3a28, { roughness:0.8, metalness:0.4 });
+    for (const [fx, fz, fw, fd, ch] of b.chunks){
+      const c = add(own(box(w*fw, ch, d*fd, true)), [mats[0], mats[1], conc, conc, mats[4], mats[5]], -w/2 + (fx + fw/2)*w, top, -d/2 + (fz + fd/2)*d);
+      c.rotation.y = rnd(-0.06, 0.06);
     }
-    uniq.push(cap, roof);
-  } else if (b.style === 'tower'){
+    const slab = add(own(box(w + 0.25, 0.14, d + 0.25)), conc, rnd(-0.1, 0.1), top + 0.02, rnd(-0.1, 0.1)); slab.rotation.z = rnd(-0.06, 0.06); slab.rotation.x = rnd(-0.06, 0.06);
+    for (let i=0;i<6;i++){ const r = add(G('rebar', () => box(0.06, 1.3, 0.06, true)), rebar, rnd(-w/2, w/2), top, rnd(-d/2, d/2)); r.rotation.set(rnd(-0.6, 0.6), 0, rnd(-0.6, 0.6)); }
+    uniq.push(conc, rebar);
+  }
+  if (b.cut || b.soot){
+    // Blown-out holes on the faces the camera sees, soot streaked above them.
+    const dark = std(0x0d0c0b, { roughness:1 }), soot = std(0x1c1a18, { roughness:1 });
+    for (let i=0;i<(b.holes || 2);i++){
+      const onX = rnd() < 0.5, hw = rnd(0.8, 1.6), hh = rnd(0.8, 1.5), y = rnd(-top + 1, Math.max(-top + 1, top - 2.4));
+      const along = onX ? rnd(-d/2 + hw/2, d/2 - hw/2) : rnd(-w/2 + hw/2, w/2 - hw/2), at = (o, e) => onX ? [w/2 + o, along] : [along, d/2 + o];
+      const [hx, hz] = at(0.02), [sx, sz] = at(0.03), sh = Math.min(1.6, top - y - hh/2);
+      add(own(onX ? box(0.06, hh, hw) : box(hw, hh, 0.06)), dark, hx, y, hz);
+      if (sh > 0.2) add(own(onX ? box(0.05, sh, hw*0.8) : box(hw*0.8, sh, 0.05)), soot, sx, y + hh/2 + sh/2, sz);
+    }
+    uniq.push(dark, soot);
+  }
+  if (b.style === 'house' || b.style === 'crypt'){
+    // Gable roof along the long side; its triangular ends are plain wall. Burnt houses: charred, or
+    // caved in to a few blackened rafters.
+    const ridgeX = b.w >= b.d, span = (ridgeX ? d : w) + 0.4, len = (ridgeX ? w : d) + 0.4, rh = Math.min(1.5, span*0.36);
+    const roof = std(b.burnt ? 0x1a1816 : b.roof, { roughness:1 });
+    if (b.caved){
+      for (let i=0;i<5;i++){
+        const a = (i/4 - 0.5)*len*0.85, r = add(G('rafter', () => box(0.12, 0.12, 1, true)), roof, ridgeX ? a : 0, top, ridgeX ? 0 : a);
+        r.scale.z = span*rnd(0.4, 0.95); r.rotation.y = ridgeX ? 0 : Math.PI/2; r.rotation.x = rnd(-0.4, 0.4);
+      }
+      uniq.push(roof);
+    } else {
+      const shape = new THREE.Shape(); shape.moveTo(-span/2, 0); shape.lineTo(span/2, 0); shape.lineTo(0, rh); shape.closePath();
+      const geo = own(new THREE.ExtrudeGeometry(shape, { depth:len, bevelEnabled:false })); geo.translate(0, 0, -len/2);
+      const cap = std(col);
+      const r = add(geo, [cap, roof], 0, top, 0); if (ridgeX) r.rotation.y = Math.PI/2;
+      if (b.style === 'crypt'){
+        // Dark doorway on the camera side and a cross on the ridge.
+        const dk = std(0x111111, { roughness:1 });
+        add(G('cryptDoor', () => box(0.7, 1.4, 0.06, true)), dk, 0, -top, d/2 + 0.02);
+        add(G('crossV', () => box(0.12, 0.8, 0.12, true)), cap, 0, top + rh - 0.1, 0); add(G('crossH', () => box(0.5, 0.12, 0.12)), cap, 0, top + rh + 0.45, 0);
+        uniq.push(dk);
+      } else if (rnd() < 0.5 && !b.burnt){
+        const a = len*0.25, s = span*0.15;
+        add(G('chimney', () => box(0.4, 1, 0.4, true)), roof, ridgeX ? a : s, top, ridgeX ? s : a).scale.y = rh + 0.35;
+      }
+      uniq.push(cap, roof);
+    }
+  } else if (b.style === 'tower' && !b.cut){
     if (b.ac) add(own(new THREE.BoxGeometry(Math.min(1.2,w*0.4),0.5,Math.min(0.9,d*0.4))), uniq[2], w*0.15, top + 0.25, -d*0.1);
-    if (w*d > 14 && Math.random() < 0.4){
+    if (w*d > 14 && rnd() < 0.4){
       // Water tank on legs.
       const t = add(G('tank', () => new THREE.CylinderGeometry(0.75,0.75,1.2,10)), uniq[2], -w*0.2, top + 1.5, d*0.15);
       for (const [lx,lz] of [[-0.5,-0.5],[0.5,-0.5],[-0.5,0.5],[0.5,0.5]]) add(G('leg', () => box(0.1, 0.9, 0.1)), uniq[2], -w*0.2 + lx, top + 0.45, d*0.15 + lz);
       t.castShadow = true;
     }
-    if (h > 13 && Math.random() < 0.5){ const a = add(SH.poleGeo, uniq[2], 0, top, 0); a.scale.set(1, 3.5, 1); }
+    if (h > 13 && rnd() < 0.5){ const a = add(SH.poleGeo, uniq[2], 0, top, 0); a.scale.set(1, 3.5, 1); }
   } else if (b.style === 'warehouse'){
     const dm = std(0x3c3f44, { roughness:0.6, metalness:0.3 });
-    add(G('rollup', () => box(2.2, 2.2, 0.08)), dm, Math.min(0, w/2 - 1.6), -top + 1.1, d/2 + 0.04);
-    if (b.ac) add(own(new THREE.BoxGeometry(Math.min(1.4,w*0.4),0.6,Math.min(1,d*0.4))), uniq[2], -w*0.2, top + 0.3, 0);
+    if (!b.cut) add(G('rollup', () => box(2.2, 2.2, 0.08)), dm, Math.min(0, w/2 - 1.6), -top + 1.1, d/2 + 0.04);
+    if (b.ac && !b.cut) add(own(new THREE.BoxGeometry(Math.min(1.4,w*0.4),0.6,Math.min(1,d*0.4))), uniq[2], -w*0.2, top + 0.3, 0);
     uniq.push(dm);
   }
   if (L){
@@ -213,6 +360,28 @@ function buildingMesh(b){
     }
   }
   m.userData.mats = uniq;
+  return m;
+}
+
+// Building site frame: an invisible hull (it blocks, and fades like any building) around steel
+// columns on every tile corner, concrete floor slabs (the top one unfinished) and a lift core.
+function frameMesh(b){
+  const w = b.w*TILE - 0.3, d = b.d*TILE - 0.3, h = b.h, fl = b.floors, fh = h/fl;
+  const hull = std(0, { visible:false }), steel = std(0x7a4a2e, { roughness:0.7, metalness:0.3 }), conc = std(0x9a968e, { roughness:1 });
+  const m = new THREE.Mesh(own(new THREE.BoxGeometry(w, h, d)), hull);
+  m.position.set((b.x + b.w/2)*TILE, h/2, (b.z + b.d/2)*TILE);
+  const add = (geo, mat, x, y, z) => mesh(geo, mat, x, y, z, m), rnd = srand(b.x*31 + b.z*7);
+  for (let i=0;i<=b.w;i++) for (let j=0;j<=b.d;j++){
+    const top = i === b.w && j === 0 ? h*0.7 : h;
+    add(G('col' + top, () => box(0.22, top, 0.22, true)), steel, -w/2 + i*w/b.w, -h/2, -d/2 + j*d/b.d);
+  }
+  for (let k=1;k<=fl;k++){
+    const part = k === fl ? rnd(0.4, 0.7) : 1;
+    add(own(box(w*part + 0.1, 0.18, d + 0.1, true)), conc, -w/2 + w*part/2, -h/2 + k*fh - 0.18, 0);
+    for (const sd of [-1, 1]) add(own(box(w + 0.1, 0.16, 0.16, true)), steel, 0, -h/2 + k*fh - 0.34, sd*d/2);
+  }
+  add(own(box(1.3, h*0.92, 1.3, true)), conc, -w/2 + 0.75, -h/2, -d/2 + 0.75);
+  m.userData.mats = [hull, steel, conc];
   return m;
 }
 
@@ -278,8 +447,41 @@ function buildInterior(it, idx){
 // ---------- Props ----------
 // Landmark furniture and yard clutter from cityGen's props list. Returns tile -> open(), the
 // visual for searching the prop (a shelf emptied, a locker door swung open, a drawer pulled out).
+const D4S = [[1,0],[-1,0],[0,1],[0,-1]];
+const tentGeo = () => G('tent', () => {
+  const sh = new THREE.Shape(); sh.moveTo(-0.95, 0); sh.lineTo(0.95, 0); sh.lineTo(0, 1.6); sh.closePath();
+  const e = new THREE.ExtrudeGeometry(sh, { depth:1.9, bevelEnabled:false }); e.translate(0, 0, -0.95); return e;
+});
+// Fence panels: chain-link diamonds or iron bars with spear tips, see-through (alpha-tested).
+const fenceMat = kind => G('fence-' + kind, () => {
+  const iron = kind === 'iron';
+  const map = canvasTex(64, (g, s) => {
+    g.strokeStyle = iron ? '#1c1d20' : '#9aa0a6'; g.fillStyle = g.strokeStyle;
+    if (iron){ for (let x=4;x<s;x+=16){ g.fillRect(x, 6, 3, s - 6); g.beginPath(); g.moveTo(x - 2, 8); g.lineTo(x + 1.5, 0); g.lineTo(x + 5, 8); g.fill(); } g.fillRect(0, 14, s, 3); g.fillRect(0, s - 8, s, 3); }
+    else { g.lineWidth = 2; for (let k=-s;k<s*2;k+=12){ g.beginPath(); g.moveTo(k, 0); g.lineTo(k + s, s); g.stroke(); g.beginPath(); g.moveTo(k + s, 0); g.lineTo(k, s); g.stroke(); } }
+  }, iron ? 1 : 1.5, iron ? 1 : 2.5);
+  return new THREE.MeshStandardMaterial({ map, alphaTest:0.45, side:THREE.DoubleSide, roughness:0.6, metalness:0.4 });
+});
+// Lattice for crane mast and jib (yellow frame with X bracing), repeated rx × ry times.
+const latticeMat = (rx, ry) => std(0xffffff, { map:canvasTex(64, (g, s) => {
+  g.strokeStyle = '#d9a21b'; g.lineWidth = 6; g.strokeRect(3, 3, s - 6, s - 6); g.lineWidth = 4;
+  g.beginPath(); g.moveTo(0, 0); g.lineTo(s, s); g.moveTo(s, 0); g.lineTo(0, s); g.stroke();
+}, rx, ry), alphaTest:0.4, side:THREE.DoubleSide, roughness:0.7 });
+// Painted signs: quarantine notice, ROAD CLOSED board, orange-and-white barricade stripes.
+const signTex = kind => G('sign-' + kind, () => {
+  const stripes = kind === 'stripes';
+  const map = canvasTex(stripes ? 64 : 256, (g, s, hh) => {
+    if (stripes){ g.fillStyle = '#f2efe6'; g.fillRect(0, 0, s, s); g.fillStyle = '#e0601a'; for (let k=-s;k<s*2;k+=24){ g.beginPath(); g.moveTo(k, 0); g.lineTo(k + 12, 0); g.lineTo(k + 12 - s, s); g.lineTo(k - s, s); g.fill(); } return; }
+    const q = kind === 'quarantine';
+    g.fillStyle = q ? '#e8c22a' : '#f2efe6'; g.fillRect(0, 0, s, hh); g.fillStyle = q ? '#111' : '#c0281e'; g.fillRect(0, 0, s, 8); g.fillRect(0, hh - 8, s, 8);
+    g.font = `bold ${q ? 40 : 52}px Barlow, Arial, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    if (q){ g.fillText('☣ QUARANTINE', s/2, hh*0.38, s - 16); g.font = 'bold 30px Barlow, Arial, sans-serif'; g.fillText('KEEP OUT', s/2, hh*0.72, s - 16); }
+    else g.fillText('ROAD CLOSED', s/2, hh/2 + 2, s - 16);
+  }, stripes ? 3 : 1, 1, stripes ? 64 : kind === 'quarantine' ? 124 : 88);
+  return new THREE.MeshStandardMaterial({ map, roughness:0.7, side:THREE.DoubleSide });
+});
 function buildProps(c){
-  const opens = new Map(), cityGroup = world.cityGroup;
+  const opens = new Map(), cityGroup = world.cityGroup, fenceAt = new Set(c.props.filter(p => p.kind === 'fence').map(p => p.z*N + p.x));
   for (const p of c.props){
     const g = new THREE.Group(); g.position.set((p.x+0.5)*TILE, 0, (p.z+0.5)*TILE); g.rotation.y = p.rot || 0; cityGroup.add(g);
     let open = null;
@@ -351,12 +553,11 @@ function buildProps(c){
       // Two staggered courses of bags.
       mesh(G('bagsLow', () => box(TILE, 0.5, 1.0, true)), SH.sandbagMat, 0, 0, 0, g);
       mesh(G('bagsHigh', () => box(TILE - 0.3, 0.45, 0.8, true)), SH.sandbagMat, 0, 0.5, 0, g);
-    } else if (p.kind === 'tent'){
-      const t = mesh(G('tent', () => {
-        const sh = new THREE.Shape(); sh.moveTo(-0.95, 0); sh.lineTo(0.95, 0); sh.lineTo(0, 1.6); sh.closePath();
-        const e = new THREE.ExtrudeGeometry(sh, { depth:1.9, bevelEnabled:false }); e.translate(0, 0, -0.95); return e;
-      }), SH.tentMat, 0, 0, 0, g);
+    } else if (p.kind === 'tent' || p.kind === 'medtent'){
+      const med = p.kind === 'medtent', t = mesh(tentGeo(), med ? M('medTent', 0xd8d4c8, { side:THREE.DoubleSide }) : SH.tentMat, 0, 0, 0, g);
       t.rotation.y = Math.PI/2;
+      // First-aid tent: a red cross on both ends.
+      if (med) for (const sd of [-1, 1]){ mesh(G('tcA', () => box(0.5, 0.14, 0.03)), SH.redMat, 0, 0.62, sd*0.97, t, false); mesh(G('tcB', () => box(0.14, 0.5, 0.03)), SH.redMat, 0, 0.62, sd*0.97, t, false); }
     } else if (p.kind === 'tower'){
       // Watchtower: four legs, a platform with a sandbag rim, a little roof.
       for (const [lx, lz] of [[-0.7,-0.7],[0.7,-0.7],[-0.7,0.7],[0.7,0.7]]) mesh(SH.poleGeo, SH.woodMat, lx, 0, lz, g).scale.set(1.6, 3.4, 1.6);
@@ -373,6 +574,100 @@ function buildProps(c){
       // Two posts and the sign over the gap in the sandbags.
       for (const sd of [-1, 1]) mesh(SH.poleGeo, SH.woodMat, sd*2.1, 0, 0, g).scale.set(2, 3.4, 2);
       mesh(G('gateSign', () => box(4.4, 0.7, 0.12)), signMats(p.lm), 0, 3.1, 0, g);
+    } else if (p.kind === 'fence'){
+      // Posts on the tile centre, a panel toward every neighbouring fence tile (a lone one spans its
+      // tile along rot). Chain-link (with a quarantine sign where it closes a road) or cemetery iron.
+      g.rotation.y = 0;
+      const iron = p.style === 'iron', H = iron ? 1.3 : 1.9, mat = iron ? fenceMat('iron') : fenceMat('chain'), postM = M('post', 0x2a2c30, { metalness:0.4 });
+      mesh(G('fpost' + H, () => box(0.09, H + 0.08, 0.09, true)), postM, 0, 0, 0, g);
+      // A straight run ends flush with its tile's edge (gates, gaps); corners don't stick out.
+      const dirs = D4S.filter(([dx, dz]) => fenceAt.has((p.z + dz)*N + p.x + dx)), axisX = dirs.some(d => d[0]), axisZ = dirs.some(d => d[1]);
+      const runs = !dirs.length ? (p.rot ? [[0,1],[0,-1]] : [[1,0],[-1,0]]) : axisX && axisZ ? dirs : axisX ? [[1,0],[-1,0]] : [[0,1],[0,-1]];
+      for (const [dx, dz] of runs){
+        const pn = mesh(G('fpanel' + H, () => { const q = new THREE.PlaneGeometry(TILE/2, H); q.translate(TILE/4, H/2, 0); return q; }), mat, 0, 0, 0, g, false);
+        pn.rotation.y = Math.atan2(-dz, dx);
+        const rl = mesh(G('frail', () => box(TILE/2, 0.05, 0.05)), postM, dx*TILE/4, H, dz*TILE/4, g, false); rl.rotation.y = pn.rotation.y;
+      }
+      if (p.sign){ const sg = mesh(G('qsign', () => new THREE.PlaneGeometry(1.3, 0.62)), signTex('quarantine'), 0, 1.1, 0, g, false); sg.rotation.y = p.rot ? 0 : Math.PI/2; }
+    } else if (p.kind === 'jersey'){
+      // Concrete barriers, two to a tile, with an orange reflector strip.
+      for (const sd of [-0.5, 0.5]){
+        const k = new THREE.Group(); k.position.x = sd*TILE*0.5; k.rotation.y = mr(-0.12, 0.12); g.add(k);
+        mesh(G('jerseyLow', () => box(0.95, 0.3, 0.62, true)), M('concrete', 0xb3afa5), 0, 0, 0, k);
+        mesh(G('jerseyHigh', () => box(0.95, 0.55, 0.32, true)), M('concrete', 0xb3afa5), 0, 0.3, 0, k);
+        mesh(G('jerseyStripe', () => box(0.96, 0.1, 0.34, true)), M('reflect', 0xd9822b, { emissive:0x7a3a08, emissiveIntensity:0.5 }), 0, 0.65, 0, k, false);
+      }
+    } else if (p.kind === 'sawhorse'){
+      // Striped wooden barricade, some with a ROAD CLOSED board on top.
+      for (const y of [0.42, 0.85]) mesh(G('sawBoard', () => box(1.75, 0.22, 0.05, true)), signTex('stripes'), 0, y, 0.12, g);
+      for (const lx of [-0.72, 0.72]) for (const lz of [-0.18, 0.18]){ const l = mesh(G('sawLeg', () => box(0.07, 1.1, 0.07, true)), M('wood', 0x8a6a44), lx, 0, lz, g); l.rotation.x = -lz*1.1; }
+      if ((p.x + p.z) % 2) mesh(G('closedSign', () => new THREE.PlaneGeometry(1.1, 0.38)), signTex('closed'), 0, 1.35, 0.14, g, false);
+    } else if (p.kind === 'heap'){
+      // Rubble from a collapsed building: broken blocks, slabs of floor and rebar.
+      const rnd = srand(p.seed);
+      for (let i=0;i<7;i++){ const m = mesh(SH.rubbleGeo, SH.rubbleMat, rnd(-0.6, 0.6), rnd(0.15, 0.55), rnd(-0.6, 0.6), g); m.scale.setScalar(rnd(1, 1.9)); m.rotation.set(rnd(0, 3), rnd(0, 3), 0); }
+      for (let i=0;i<2;i++){ const sl = mesh(G('heapSlab', () => box(1.4, 0.16, 0.9)), M('concrete', 0xb3afa5), rnd(-0.4, 0.4), rnd(0.5, 0.9), rnd(-0.4, 0.4), g); sl.rotation.set(rnd(-0.6, 0.6), rnd(0, 3), rnd(-0.6, 0.6)); }
+      for (let i=0;i<3;i++){ const r = mesh(G('rebarP', () => box(0.06, 1.4, 0.06, true)), M('rebar', 0x5a3a28, { metalness:0.4 }), rnd(-0.6, 0.6), 0.4, rnd(-0.6, 0.6), g, false); r.rotation.set(rnd(-0.8, 0.8), 0, rnd(-0.8, 0.8)); }
+    } else if (p.kind === 'bus'){
+      // A bus slewed across both lanes, sometimes on its side or burnt out.
+      g.position.set(p.cx*TILE, 0, p.cz*TILE);
+      const body = new THREE.Group(); body.position.y = p.side ? 0.9 : 1.13; body.rotation.x = p.side ? Math.PI/2 : 0; g.add(body);
+      const col = p.burnt ? 0x2b2724 : p.color, glass = p.burnt ? carMat(0x151311) : SH.glassMat;
+      mesh(G('busBody', () => box(4.6, 1.55, 1.75)), carMat(col), 0, 0, 0, body);
+      mesh(G('busWin', () => box(4.0, 0.5, 1.77)), glass, -0.1, 0.35, 0, body, false);
+      mesh(G('busShield', () => box(0.05, 0.75, 1.5)), glass, 2.31, 0.25, 0, body, false);
+      if (!p.burnt) mesh(G('busStripe', () => box(4.62, 0.12, 1.77)), carMat(p.stripe), 0, -0.25, 0, body, false);
+      const wg = G('busWheel', () => { const w = new THREE.CylinderGeometry(0.42, 0.42, 0.25, 12); w.rotateX(Math.PI/2); return w; });
+      for (const wx of [-1.5, -0.8, 1.5]) for (const wz of [-0.8, 0.8]) mesh(wg, M('wheel', 0x16171a), wx, -0.78, wz, body);
+    } else if (p.kind === 'crane'){
+      // Tower crane: lattice mast and jib, cab, counterweight and a load hanging off the hook.
+      // It fades like a building when it's in the way (its own materials).
+      const H = p.h, J = p.jib, yel = 0xd9a21b;
+      const mastM = latticeMat(1, H/0.9), jibM = latticeMat(J/0.6, 1), solid = std(yel, { roughness:0.7 }), conc = std(0x8d8a84, { roughness:1 }), cable = std(0x222222, { roughness:0.6 });
+      mesh(G('craneBase', () => box(1.7, 0.35, 1.7, true)), conc, 0, 0, 0, g);
+      const mast = mesh(own(box(0.9, H, 0.9, true)), mastM, 0, 0, 0, g);
+      const jib = mesh(own(box(J, 0.6, 0.6, true)), jibM, J*0.22, H, 0, g);
+      mesh(G('craneCab', () => box(1.1, 0.95, 1.0, true)), solid, 0.55, H - 0.95, 0.7, g);
+      mesh(G('craneApex', () => box(0.35, 2.4, 0.35, true)), solid, 0, H + 0.6, 0, g);
+      mesh(own(box(1.5, 1.0, 0.9, true)), conc, -J*0.24, H - 0.4, 0, g);
+      const tie = mesh(own(box(J*0.75, 0.05, 0.05)), cable, J*0.36, H + 2.1, 0, g, false); tie.rotation.z = -Math.atan2(2.1, J*0.72);
+      const hx = J*0.55, L = H*0.55;
+      mesh(G('trolley', () => box(0.6, 0.25, 0.7, true)), solid, hx, H - 0.25, 0, g, false);
+      mesh(own(box(0.04, L, 0.04, true)), cable, hx, H - L, 0, g, false);
+      mesh(G('hook', () => box(0.35, 0.4, 0.3, true)), solid, hx, H - L - 0.4, 0, g);
+      const load = mesh(G('craneLoad', () => box(2.2, 0.28, 0.45, true)), M('steel', 0x7a4a2e, { metalness:0.3 }), hx, H - L - 0.75, 0, g); load.rotation.y = mr(-0.5, 0.5);
+      mast.userData.mats = [mastM, jibM, solid, conc, cable]; mast.userData.center = g.position;
+      jib.userData.fadeKey = mast; world.buildingMeshes.push(mast, jib);
+    } else if (p.kind === 'pipes'){
+      // Concrete drainage pipes, two lying side by side and one on top.
+      const pg = G('pipe', () => { const q = new THREE.CylinderGeometry(0.42, 0.42, 1.7, 14); q.rotateZ(Math.PI/2); return q; });
+      const ig = G('pipeEnd', () => { const q = new THREE.CircleGeometry(0.31, 12); q.rotateY(Math.PI/2); return q; });
+      for (const [py, pz] of [[0.42, -0.43], [0.42, 0.43], [1.15, 0]]){
+        mesh(pg, M('concrete', 0xb3afa5), 0, py, pz, g);
+        for (const sd of [-1, 1]){ const e = mesh(ig, M('pipeIn', 0x2a2826), sd*0.86, py, pz, g, false); e.rotation.y = sd > 0 ? 0 : Math.PI; }
+      }
+    } else if (p.kind === 'grave'){
+      // A row of headstones (slabs, crosses, an obelisk), some leaning, over mounds; some dug open.
+      const rnd = srand(p.seed), stone = M('stone', 0x8d8a84), dirt = M('graveDirt', 0x3e3226), hole = M('graveHole', 0x0d0b09);
+      for (let i=0;i<p.n;i++){
+        const x = (i - (p.n - 1)/2)*0.62, k = new THREE.Group(); k.position.set(x, 0, -0.45); k.rotation.set(rnd(-0.15, 0.08), rnd(-0.15, 0.15), rnd(-0.15, 0.15)); g.add(k);
+        const r = rnd();
+        if (r < 0.55){ mesh(G('stoneSlab', () => box(0.44, 0.55, 0.12, true)), stone, 0, 0, 0, k); mesh(G('stoneTop', () => { const q = new THREE.CylinderGeometry(0.22, 0.22, 0.12, 12); q.rotateX(Math.PI/2); return q; }), stone, 0, 0.55, 0, k); }
+        else if (r < 0.85){ mesh(G('crossPost', () => box(0.12, 0.85, 0.12, true)), stone, 0, 0, 0, k); mesh(G('crossArm', () => box(0.46, 0.12, 0.12)), stone, 0, 0.6, 0, k); }
+        else mesh(G('obelisk', () => new THREE.CylinderGeometry(0.06, 0.2, 1.2, 4)), stone, 0, 0.6, 0, k);
+        if (rnd() < 0.3){
+          // Dug open from below: a black hole and the earth heaped beside it.
+          const h = mesh(G('graveOpen', () => { const q = new THREE.PlaneGeometry(0.45, 0.85); q.rotateX(-Math.PI/2); return q; }), hole, x, 0.09, 0.15, g, false); h.receiveShadow = false;
+          const pile = mesh(SH.rubbleGeo, dirt, x + 0.25, 0.1, 0.25, g); pile.scale.set(0.6, 0.35, 0.8);
+        } else mesh(G('mound', () => box(0.46, 0.1, 0.85, true)), dirt, x, 0.06, 0.15, g);
+      }
+    } else if (p.kind === 'barrel'){
+      // Rusty oil drum; a lit one burns (its flame flickers in animateCity()).
+      mesh(G('barrel', () => new THREE.CylinderGeometry(0.32, 0.3, 0.85, 12)), M('rust', 0x6b3a22, { metalness:0.4 }), 0, 0.425, 0, g);
+      if (p.lit){
+        const f = std(0xff8a2a, { emissive:0xff5a00, emissiveIntensity:1.5, roughness:1 }); f.userData.ph = mr(0, 6); anim.fires.push(f);
+        mesh(G('flame', () => new THREE.ConeGeometry(0.26, 0.7, 7)), f, 0, 1.15, 0, g, false).rotation.y = mr(0, 3);
+      }
     } else if (p.kind === 'canopy'){
       // Gas station canopy over the pumps; fades like a building when it hides the player.
       const cw = (p.x1 - p.x0 + 1)*TILE, cd = (p.z1 - p.z0 + 1)*TILE;
@@ -516,6 +811,7 @@ export function teardownCity(){
   if (world.cityGroup){ scene.remove(world.cityGroup); world.cityGroup = null; }
   for (const d of disposables) if (d && d.dispose) d.dispose();
   disposables = []; geoCache = new Map(); signCache = {}; for (const k in awningCache) delete awningCache[k];
+  anim.smoke = null; anim.puffs = []; anim.fires = [];
   world.buildingMeshes = []; world.interiors = []; world.interiorAt = null; faded.clear();
   for (const z of zombies) disposeZombie(z);
   for (const d of dying) disposeCorpse(d);
