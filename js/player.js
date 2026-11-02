@@ -10,7 +10,7 @@ import { TILE, N, BREAKABLES, walkable } from './config.js';
 import { scene, camera } from './renderer.js';
 import { SH, gunModel } from './assets.js';
 import { WEAPONS, INV_SLOTS } from './items.js';
-import { state, world, players, keys, mouse, mouseNDC, dev } from './state.js';
+import { state, world, players, keys, mouse, mouseNDC, dev, pad } from './state.js';
 import { resolveCircle, reveal, groundAt, tileLevel, levelOf, toGround } from './grid.js';
 import { fire, drainHp, meleeStrike, MELEE_TIME, MELEE_HIT } from './combat.js';
 import { curWeapon, magSize } from './inventory.js';
@@ -164,9 +164,11 @@ export function readLocal(p){
     if (keys.KeyD || keys.ArrowRight){ ix += 1; iz -= 1; }
     if (keys.KeyA || keys.ArrowLeft){ ix -= 1; iz += 1; }
   }
+  if (!busy && (pad.mx || pad.mz)){ ix = pad.mx; iz = pad.mz; }  // the left stick wins over keys
   c.mx = ix; c.mz = iz;
-  c.sprint = !busy && !!(keys.ShiftLeft || keys.ShiftRight);
-  c.fire = !busy && mouse.down; c.use = !busy && !!keys.KeyE;
+  c.sprint = !busy && !!(keys.ShiftLeft || keys.ShiftRight || pad.sprint);
+  c.fire = !busy && (mouse.down || pad.fire); c.use = !busy && !!(keys.KeyE || pad.use);
+  if (pad.on){ c.aim.set(p.pos.x + pad.ax*pad.aimD, 1.1, p.pos.z + pad.az*pad.aimD); return; }  // aim with the right stick (gamepad.js)
   raycaster.setFromCamera(mouseNDC, camera);
   if (raycaster.ray.intersectPlane(aimPlane, aimHit)) c.aim.copy(aimHit);
 }

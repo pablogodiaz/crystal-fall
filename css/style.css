@@ -82,6 +82,10 @@ body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--text)
 .slot .ic{font-size:24px;line-height:1}
 .slot small{position:absolute;right:5px;bottom:2px;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
 .slot.empty{cursor:default;opacity:.55}
+.slot.pad-sel{border:2px solid var(--crystal);box-shadow:0 0 0 2px var(--crystal)}
+/* Controller in use (gamepad.js): focus rings on every overlay button, controller controls on the menu */
+body.pad .screen button:focus{outline:3px solid var(--crystal);outline-offset:3px}
+body.pad #kbControls,body:not(.pad) #padControls{display:none}
 #toasts{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,0px) + 80px);display:flex;flex-direction:column;align-items:center;gap:4px;width:min(560px,90vw)}
 .toast{font-size:13.5px;font-weight:600;padding:5px 12px;border-radius:6px;background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--muted);transition:opacity .4s;text-align:center}
 .toast.good{border-left-color:var(--good)} .toast.bad{border-left-color:var(--danger)} .toast.info{border-left-color:var(--crystal)}

@@ -5,7 +5,7 @@ import { $, fmtTime } from './utils.js';
 import { camera } from './renderer.js';
 import { WEAPONS, ITEMS, RECIPES, LANDMARKS, INV_SLOTS, RARITY, SPECIALS } from './items.js';
 import { CRYSTAL } from './threats.js';
-import { state, world, zombies, drops, pickups, keys, players } from './state.js';
+import { state, world, zombies, drops, pickups, keys, players, pad } from './state.js';
 import { me, viewed } from './player.js';
 import { craft, countItem, magSize, selectedThrowable, otherWeapons } from './inventory.js';
 import { weaponStats, weaponDps, weaponTitle, modText, isSpecial } from './weapons.js';
@@ -145,7 +145,7 @@ export function updateHUD(dt, t){
   mmTimer -= dt;
   if (mmTimer <= 0){ mmTimer = 0.1; drawMinimap(t); }
   // Full map while Tab is held.
-  const big = !!keys.Tab && state.mode === 'play';
+  const big = !!(keys.Tab || pad.map) && state.mode === 'play';
   $('bigmapWrap').classList.toggle('hidden', !big);
   if (big){ const n = world.city.n; if (world.mmDirty) paintTiles(); drawMap(bctx, bm.width, bm.width/n, n/2, n/2, t, true); renderLoadout(); }
   // Which district you're in (roads count toward the block south-east of them).
@@ -275,7 +275,7 @@ function updateInteractPrompt(){
   if (!t || state.mode !== 'play') return;
   ipos.set(t.px, 1.2, t.pz).project(camera);
   el.style.transform = `translate(${((ipos.x+1)/2*innerWidth).toFixed(1)}px, ${((1-ipos.y)/2*innerHeight).toFixed(1)}px)`;
-  setText('interactLabel', interact.label);
+  setText('interactLabel', interact.label); setText('interactKey', pad.on ? 'A' : 'E');
   $('interactRing').style.strokeDashoffset = ((1 - Math.min(1, interact.p))*RING).toFixed(1);
 }
 

@@ -25,6 +25,7 @@ import { UPGRADES, targets as cardTargets, modChoices, destChoices, cardFits, ap
 import { roster } from './host.js';
 import { cityCondition } from './cityGen.js';
 import { placeBarricade, hitBreak } from './breakables.js';
+import { padReport } from './gamepad.js';
 // Runs f on every breakable within 12 units of you.
 function nearBreaks(f){ ensureRun(); mark(); const p = P(); for (const b of [...world.breaks.values()]) if (Math.hypot((b.x + 0.5)*TILE - p.pos.x, (b.z + 0.5)*TILE - p.pos.z) < 12) f(b); }
 
@@ -422,7 +423,7 @@ function readout(){
     `City ${state.level} (${c.n}×${c.n}) · seed ${state.seed} · ${CONDITIONS[c.cond].name}\n` +
     `${zombies.length} zombies (${state.hordeAlive} takeover) · ${state.kills} kills\n` +
     (players.length > 1 ? players.map(p => `${p.name}${p === P() ? '*' : ''} ${p.dead ? 'dead' : Math.ceil(p.hp) + 'hp'} ${p.kills}k`).join(' · ') + '\n' : '') +
-    `Tile ${tx}, ${tz} · ${D.name} · ${crys}`;
+    `Tile ${tx}, ${tz} · ${D.name} · ${crys}\n` + padReport();
 }
 
 export function initDev(){ loadPrefs(); buildPanel(); }
