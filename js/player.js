@@ -52,7 +52,7 @@ const LOOKS = [[0x2f5d8a, 0xf2e6c8, '#8ec5ff'], [0x8a3a2f, 0xffa070, '#ff9a6a'],
 // swoosh are per player (the swoosh fades, the jacket and ring carry the player's colour).
 const PG = {
   // Boxes like the zombies: body, head, a cap whose box runs forward over the brow as its brim.
-  body:new THREE.BoxGeometry(0.64,0.85,0.42), head:new THREE.BoxGeometry(0.42,0.42,0.42), cap:new THREE.BoxGeometry(0.46,0.12,0.52).translate(0,0,0.05),
+  body:new THREE.BoxGeometry(0.64,0.85,0.42), head:new THREE.BoxGeometry(0.42,0.42,0.42), cap:new THREE.BoxGeometry(0.44,0.1,0.48).translate(0,0,0.04),
   pack:new THREE.BoxGeometry(0.5,0.55,0.25), arm:new THREE.BoxGeometry(0.14,0.14,0.55), swish:new THREE.RingGeometry(0.75,1.75,18,1,-Math.PI/2-0.95,1.9),
   ring:squareFrame(0.6, 0.48),
   skin:new THREE.MeshStandardMaterial({ color:0xd9a77c, roughness:0.7 }), dark:new THREE.MeshStandardMaterial({ color:0x22252b, roughness:0.6, metalness:0.3 }),

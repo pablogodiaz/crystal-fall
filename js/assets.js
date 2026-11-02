@@ -43,6 +43,21 @@ function markTexture(ch, color){
   return new THREE.CanvasTexture(c);
 }
 
+// Several boxes as one geometry (one mesh, one draw call): list of [w, h, d, x, y, z] (centres), optional
+// 7th entry = rotation about y (multiples of PI/2 keep it square to the grid).
+export function boxes(list){
+  const pos = [], nor = [], uv = [], idx = []; let off = 0;
+  for (const [w, h, d, x, y, z, ry] of list){
+    const g = new THREE.BoxGeometry(w, h, d); if (ry) g.rotateY(ry); g.translate(x, y, z);
+    pos.push(...g.attributes.position.array); nor.push(...g.attributes.normal.array); uv.push(...g.attributes.uv.array);
+    for (const i of g.index.array) idx.push(i + off);
+    off += g.attributes.position.count; g.dispose();
+  }
+  const m = new THREE.BufferGeometry();
+  m.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); m.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  m.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); m.setIndex(idx);
+  return m;
+}
 // A flat square frame (outer/inner half-widths) lying in XY, like RingGeometry: player and pickup markers.
 export function squareFrame(o, i){
   const sh = new THREE.Shape([new THREE.Vector2(-o,-o), new THREE.Vector2(o,-o), new THREE.Vector2(o,o), new THREE.Vector2(-o,o)]);

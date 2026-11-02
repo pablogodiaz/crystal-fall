@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { TILE, N, RAISE } from './config.js';
 import { mr, mpick } from './utils.js';
 import { scene } from './renderer.js';
-import { SH, WIN_TEX, CORR_TEX, CHECKER_TEX, carMat } from './assets.js';
+import { SH, WIN_TEX, CORR_TEX, CHECKER_TEX, carMat, boxes } from './assets.js';
 import { state, world, zombies, dying, bullets, particles, pickups, decals, drops, throwns, hazards, spits, puddles, rings } from './state.js';
 import { LOOT, LANDMARKS } from './items.js';
 import { disposeZombie, disposeCorpse } from './zombies.js';
@@ -495,22 +495,19 @@ const tentGeo = () => G('tent', () => {
   const sh = new THREE.Shape(); sh.moveTo(-0.95, 0); sh.lineTo(0.95, 0); sh.lineTo(0, 1.6); sh.closePath();
   const e = new THREE.ExtrudeGeometry(sh, { depth:1.9, bevelEnabled:false }); e.translate(0, 0, -0.95); return e;
 });
-// Fence panels: chain-link diamonds or iron bars with spear tips, see-through (alpha-tested).
-const fenceMat = kind => G('fence-' + kind, () => {
-  const iron = kind === 'iron';
-  const map = canvasTex(64, (g, s) => {
-    g.strokeStyle = iron ? '#1c1d20' : '#9aa0a6'; g.fillStyle = g.strokeStyle;
-    if (kind === 'picket'){
-      // White pickets with pointed tops on two rails.
-      g.fillStyle = '#ece8de'; for (let x=3;x<s;x+=16){ g.fillRect(x, 10, 9, s - 10); g.beginPath(); g.moveTo(x, 10); g.lineTo(x + 4.5, 2); g.lineTo(x + 9, 10); g.fill(); }
-      g.fillRect(0, 18, s, 5); g.fillRect(0, s - 14, s, 5);
-    } else if (kind === 'rail'){
-      // Three weathered rails.
-      g.fillStyle = '#7a5c3a'; for (const y of [6, 26, 46]){ g.fillRect(0, y, s, 9); g.fillStyle = '#6a4e30'; }
-    } else if (iron){ for (let x=4;x<s;x+=16){ g.fillRect(x, 6, 3, s - 6); g.beginPath(); g.moveTo(x - 2, 8); g.lineTo(x + 1.5, 0); g.lineTo(x + 5, 8); g.fill(); } g.fillRect(0, 14, s, 3); g.fillRect(0, s - 8, s, 3); }
-    else { g.lineWidth = 2; for (let k=-s;k<s*2;k+=12){ g.beginPath(); g.moveTo(k, 0); g.lineTo(k + s, s); g.stroke(); g.beginPath(); g.moveTo(k + s, 0); g.lineTo(k, s); g.stroke(); } }
-  }, iron || kind === 'picket' || kind === 'rail' ? 1 : 1.5, iron || kind === 'picket' || kind === 'rail' ? 1 : 2.5);
-  return new THREE.MeshStandardMaterial({ map, alphaTest:0.45, side:THREE.DoubleSide, roughness:kind === 'chain' || iron ? 0.6 : 0.95, metalness:kind === 'chain' || iron ? 0.4 : 0 });
+// Chain-link mesh: a square grid, see-through (alpha-tested) on a thin box panel.
+const chainMat = () => G('chainMesh', () => new THREE.MeshStandardMaterial({ map:canvasTex(64, (g, s) => {
+  g.fillStyle = '#9aa0a6'; for (let k=0;k<s;k+=16){ g.fillRect(k, 0, 3, s); g.fillRect(0, k, s, 3); }
+}, 2, 4), alphaTest:0.45, side:THREE.DoubleSide, roughness:0.6, metalness:0.4 }));
+// Half a fence run, from the post (x = 0) to the tile edge (x = TILE/2), as one box geometry per kind.
+// Picket: square pickets on two rails; rail: three rails; iron: square bars between two rails; chain: a frame.
+const fenceRun = (st, H) => G('frun-' + st, () => {
+  const L = TILE/2, list = [];
+  if (st === 'picket'){ for (const x of [0.25, 0.6, 0.92]) list.push([0.16, H, 0.1, x, H/2, 0]); for (const y of [0.3, 0.72]) list.push([L, 0.12, 0.1, L/2, y, -0.1]); }
+  else if (st === 'rail') for (const y of [0.3, 0.65, 1.0]) list.push([L, 0.15, 0.12, L/2, y, 0]);
+  else if (st === 'iron'){ for (const x of [0.25, 0.5, 0.75]) list.push([0.1, H, 0.1, x, H/2, 0]); for (const y of [0.18, H - 0.06]) list.push([L, 0.12, 0.12, L/2, y, 0]); }
+  else for (const y of [0.08, H - 0.05]) list.push([L, 0.1, 0.1, L/2, y, 0]);
+  return boxes(list);
 });
 // Lattice for crane mast and jib (yellow frame with X bracing), repeated rx × ry times.
 const latticeMat = (rx, ry) => std(0xffffff, { map:canvasTex(64, (g, s) => {
@@ -521,7 +518,7 @@ const latticeMat = (rx, ry) => std(0xffffff, { map:canvasTex(64, (g, s) => {
 const signTex = kind => G('sign-' + kind, () => {
   const stripes = kind === 'stripes';
   const map = canvasTex(stripes ? 64 : 256, (g, s, hh) => {
-    if (stripes){ g.fillStyle = '#f2efe6'; g.fillRect(0, 0, s, s); g.fillStyle = '#e0601a'; for (let k=-s;k<s*2;k+=24){ g.beginPath(); g.moveTo(k, 0); g.lineTo(k + 12, 0); g.lineTo(k + 12 - s, s); g.lineTo(k - s, s); g.fill(); } return; }
+    if (stripes){ g.fillStyle = '#f2efe6'; g.fillRect(0, 0, s, s); g.fillStyle = '#e0601a'; for (let k=0;k<s;k+=32) g.fillRect(k, 0, 16, s); return; }
     const q = kind === 'quarantine';
     g.fillStyle = q ? '#e8c22a' : '#f2efe6'; g.fillRect(0, 0, s, hh); g.fillStyle = q ? '#111' : '#c0281e'; g.fillRect(0, 0, s, 8); g.fillRect(0, hh - 8, s, 8);
     g.font = `bold ${q ? 40 : 52}px Barlow, Arial, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
@@ -530,6 +527,8 @@ const signTex = kind => G('sign-' + kind, () => {
   }, stripes ? 3 : 1, 1, stripes ? 64 : kind === 'quarantine' ? 124 : 88);
   return new THREE.MeshStandardMaterial({ map, roughness:0.7, side:THREE.DoubleSide });
 });
+// A painted sign on a box: the paint on front and back, plain board on the edges.
+const signFaces = kind => { const t = signTex(kind), e = M('signEdge', 0xd9d4c6, { roughness:0.8 }); return [e, e, e, e, t, t]; };
 function buildProps(c){
   const opens = new Map(), cityGroup = world.cityGroup, fenceAt = new Set(c.props.filter(p => p.kind === 'fence').map(p => p.z*N + p.x));
   for (const p of c.props){
@@ -629,18 +628,18 @@ function buildProps(c){
       // Posts on the tile centre, a panel toward every neighbouring fence tile (a lone one spans its
       // tile along rot). Chain-link (with a quarantine sign where it closes a road) or cemetery iron.
       g.rotation.y = 0;
-      const st = p.style, wood = st === 'picket' || st === 'rail', H = { iron:1.3, chain:1.9, picket:1.0, rail:1.1 }[st], mat = fenceMat(st);
+      const st = p.style, wood = st === 'picket' || st === 'rail', H = { iron:1.3, chain:1.9, picket:1.0, rail:1.1 }[st];
       const postM = wood ? M(st + 'Post', st === 'picket' ? 0xe8e4da : 0x6e5235) : M('post', 0x2a2c30, { metalness:0.4 });
-      mesh(G('fpost' + H + wood, () => wood ? box(0.14, H + 0.1, 0.14, true) : box(0.09, H + 0.08, 0.09, true)), postM, 0, 0, 0, g);
+      mesh(G('fpost' + st, () => wood ? box(0.22, H + 0.12, 0.22, true) : boxes([[0.18, H + 0.08, 0.18, 0, (H + 0.08)/2, 0], [0.26, 0.1, 0.26, 0, H + 0.1, 0]])), postM, 0, 0, 0, g);
       // A straight run ends flush with its tile's edge (gates, gaps); corners don't stick out.
       const dirs = D4S.filter(([dx, dz]) => fenceAt.has((p.z + dz)*N + p.x + dx)), axisX = dirs.some(d => d[0]), axisZ = dirs.some(d => d[1]);
       const runs = !dirs.length ? (p.rot ? [[0,1],[0,-1]] : [[1,0],[-1,0]]) : axisX && axisZ ? dirs : axisX ? [[1,0],[-1,0]] : [[0,1],[0,-1]];
       for (const [dx, dz] of runs){
-        const pn = mesh(G('fpanel' + H, () => { const q = new THREE.PlaneGeometry(TILE/2, H); q.translate(TILE/4, H/2, 0); return q; }), mat, 0, 0, 0, g, false);
-        pn.rotation.y = Math.atan2(-dz, dx);
-        if (!wood){ const rl = mesh(G('frail', () => box(TILE/2, 0.05, 0.05)), postM, dx*TILE/4, H, dz*TILE/4, g, false); rl.rotation.y = pn.rotation.y; }
+        const ry = Math.atan2(-dz, dx);
+        mesh(fenceRun(st, H), postM, 0, 0, 0, g).rotation.y = ry;
+        if (st === 'chain'){ const pn = mesh(G('chainPanel', () => box(TILE/2, H - 0.1, 0.03)), chainMat(), TILE/4*dx, H/2, TILE/4*dz, g, false); pn.rotation.y = ry; }
       }
-      if (p.sign){ const sg = mesh(G('qsign', () => new THREE.PlaneGeometry(1.3, 0.62)), signTex('quarantine'), 0, 1.1, 0, g, false); sg.rotation.y = p.rot ? 0 : Math.PI/2; }
+      if (p.sign){ const sg = mesh(G('qsign', () => box(1.3, 0.62, 0.08)), signFaces('quarantine'), 0, 1.1, 0, g, false); sg.rotation.y = p.rot ? 0 : Math.PI/2; }
     } else if (p.kind === 'jersey'){
       // Concrete barriers, two to a tile, with an orange reflector strip.
       for (const sd of [-0.5, 0.5]){
@@ -651,9 +650,9 @@ function buildProps(c){
       }
     } else if (p.kind === 'sawhorse'){
       // Striped wooden barricade, some with a ROAD CLOSED board on top.
-      for (const y of [0.42, 0.85]) mesh(G('sawBoard', () => box(1.75, 0.22, 0.05, true)), signTex('stripes'), 0, y, 0.12, g);
-      for (const lx of [-0.72, 0.72]) for (const lz of [-0.18, 0.18]){ const l = mesh(G('sawLeg', () => box(0.07, 1.1, 0.07, true)), M('wood', 0x8a6a44), lx, 0, lz, g); l.rotation.x = -lz*1.1; }
-      if ((p.x + p.z) % 2) mesh(G('closedSign', () => new THREE.PlaneGeometry(1.1, 0.38)), signTex('closed'), 0, 1.35, 0.14, g, false);
+      for (const y of [0.42, 0.85]) mesh(G('sawBoard', () => box(1.75, 0.24, 0.12, true)), signTex('stripes'), 0, y, 0.12, g);
+      mesh(G('sawLegs', () => boxes([-0.72, 0.72].map(x => [0.16, 1.1, 0.16, x, 0.55, 0]))), M('wood', 0x8a6a44), 0, 0, 0, g);
+      if ((p.x + p.z) % 2) mesh(G('closedSign', () => box(1.1, 0.38, 0.08)), signFaces('closed'), 0, 1.35, 0.14, g, false);
     } else if (p.kind === 'heap'){
       // Rubble from a collapsed building: broken blocks, slabs of floor and rebar.
       const rnd = srand(p.seed);
