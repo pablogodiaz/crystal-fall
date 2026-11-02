@@ -7,7 +7,7 @@ import { mr } from './utils.js';
 import { scene, fxLight } from './renderer.js';
 import { SH } from './assets.js';
 import { state, world, zombies, throwns, hazards, players } from './state.js';
-import { isBlockedTile, isOpaqueTile, groundAt } from './grid.js';
+import { isBlockedTile, isOpaqueTile, groundAt, onGround, gv } from './grid.js';
 import { blastBreaks } from './breakables.js';
 import { me } from './player.js';
 import { damageZombie, stunZombie, makeNoise } from './zombies.js';
@@ -40,7 +40,8 @@ export function throwPath(p){
   }
   return { sx:px, sz:pz, ex:px + ux*land, ez:pz + uz*land, T:0.3 + land/24 };
 }
-const arcY = (k, T) => 1.3*(1-k) + Math.sin(k*Math.PI)*(1 + T*3) + 0.12;
+// (On top of the ground at either end, blended along the way.)
+const arcY = (k, T, o) => groundAt(o.sx, o.sz)*(1-k) + groundAt(o.ex, o.ez)*k + 1.3*(1-k) + Math.sin(k*Math.PI)*(1 + T*3) + 0.12;
 export function throwItem(p, id){
   const path = throwPath(p);
   throwMesh(id, path.sx, path.sz, path.ex, path.ez, path.T).by = p;
@@ -51,12 +52,12 @@ export function throwItem(p, id){
 // Something in flight (ghost = a client's copy: it lands without doing anything).
 export function throwMesh(id, sx, sz, ex, ez, T, ghost){
   const m = id === 'potion' ? new THREE.Mesh(SH.flaskGeo, SH.flaskMat) : new THREE.Mesh(id === 'molotov' ? SH.bottleGeo : SH.pipeGeo, id === 'molotov' ? SH.bottleMat : SH.pipeMat);
-  m.position.set(sx, 1.3, sz); scene.add(m);
+  m.position.set(sx, groundAt(sx, sz) + 1.3, sz); scene.add(m);
   const o = { id, mesh:m, t:0, sx, sz, ex, ez, T, ghost }; throwns.push(o); return o;
 }
 // Fire zones and pipe bombs on the ground (host: with their gameplay fields; clients: ghosts).
 export function fireMesh(x, z, t, nid, ghost){
-  const m = new THREE.Mesh(SH.fireGeo, SH.fireMat); m.rotation.x = -Math.PI/2; m.position.set(x, groundAt(x, z) + 0.12, z); m.scale.setScalar(FIRE_R);  // above block slabs (top at 0.08) and decals
+  const m = new THREE.Mesh(SH.fireGeo, SH.fireMat); onGround(m, x, z, 0.12, 0, true); m.scale.setScalar(FIRE_R);  // above block slabs (top at 0.08) and decals
   scene.add(m);
   const h = { kind:'fire', x, z, mesh:m, t, tick:0, nid, ghost }; hazards.push(h); return h;
 }
@@ -67,7 +68,7 @@ export function bombMesh(x, z, t, nid, ghost){
   g.add(pipe, led); scene.add(g);
   const h = { kind:'bomb', x, z, mesh:g, led, t, beep:0, nid, ghost }; hazards.push(h); return h;
 }
-export function flashAt(x, z){ fxLight.position.set(x, 2, z); flash = 7; }
+export function flashAt(x, z){ fxLight.position.set(x, groundAt(x, z) + 2, z); flash = 7; }
 
 // The Turncoat flask (a unique weapon) flies like a throwable; it splashes in uniques.js.
 export const throwPotion = p => throwItem(p, 'potion');
@@ -104,21 +105,21 @@ export function updateThrowPreview(){
   preview = preview || buildPreview();
   const p = throwPath(pl), P = PREVIEW[id], r = (id === 'potion' || id === 'gravity') && w.id === id ? weaponStats(w).range : P.r;
   preview.mat.color.setHex(P.color); preview.fillMat.color.setHex(P.color);
-  for (const o of [preview.ring, preview.fill]){ o.position.set(p.ex, 0.13, p.ez); o.scale.setScalar(r); }
-  preview.center.position.set(p.ex, 0.13, p.ez);
+  for (const o of [preview.ring, preview.fill]){ onGround(o, p.ex, p.ez, 0.13, 0, true); o.scale.setScalar(r); }
+  onGround(preview.center, p.ex, p.ez, 0.13, 0, true);
   preview.dots.forEach((d, i) => {
     const k = (i+1)/(preview.dots.length+1);
-    d.position.set(p.sx + (p.ex-p.sx)*k, arcY(k, p.T), p.sz + (p.ez-p.sz)*k);
+    d.position.set(p.sx + (p.ex-p.sx)*k, arcY(k, p.T, p), p.sz + (p.ez-p.sz)*k);
   });
   preview.g.visible = true;
 }
 function land(o){
   const x = o.ex, z = o.ez;
-  if (o.id === 'potion'){ burst(new THREE.Vector3(x, 0.4, z), 'brew', 6, 2); splashPotion(o.by, x, z); }
+  if (o.id === 'potion'){ burst(gv(x, 0.4, z), 'brew', 6, 2); splashPotion(o.by, x, z); }
   else if (o.id === 'molotov'){
     const h = fireMesh(x, z, FIRE_TIME, nextId()); h.by = o.by;
     emit(['hz+', h.nid, 'fire', r2(x), r2(z), FIRE_TIME]);
-    burst(new THREE.Vector3(x, 0.5, z), 'fire', 16, 4); burst(new THREE.Vector3(x, 0.5, z), 'spark', 8, 4);
+    burst(gv(x, 0.5, z), 'fire', 16, 4); burst(gv(x, 0.5, z), 'spark', 8, 4);
     sfx.ignite(); makeNoise(x, z, 14);
   } else {
     const h = bombMesh(x, z, BOMB_FUSE, nextId()); world.lure = h;
@@ -138,7 +139,7 @@ export function explosion(x, z, R, zDmg, pDmg, noise){
     if (!p.dead && pd < R) hurtPlayer(p, pDmg*(1 - pd/(R*1.1)), null);
   }
   blastBreaks(x, z, R, 12);
-  const p = new THREE.Vector3(x, 0.6, z);
+  const p = gv(x, 0.6, z);
   burst(p, 'fire', 24, 8); burst(p, 'spark', 16, 9); burst(p, 'dust', 16, 6);
   shockwave(x, z, R, 0xff6a1a); addDecal(x, z, R*0.75, SH.scorchMat);
   flashAt(x, z); emit(['fl', r2(x), r2(z)]);
@@ -154,7 +155,7 @@ function stunBlast(x, z){
     stunZombie(o, STUN_TIME*(1 - 0.4*d/BOMB_R));
     o.vel.x += dx/(d||1)*o.kb*1.2; o.vel.z += dz/(d||1)*o.kb*1.2;
   }
-  const p = new THREE.Vector3(x, 0.6, z);
+  const p = gv(x, 0.6, z);
   burst(p, 'spark', 22, 9); burst(p, 'dust', 20, 7); shockwave(x, z, BOMB_R, 0x8cc8ff);
   flashAt(x, z); emit(['fl', r2(x), r2(z)]);
   shake(0.6);
@@ -166,7 +167,7 @@ export function updateThrowables(dt){
   for (let i=throwns.length-1;i>=0;i--){
     const o = throwns[i]; o.t += dt;
     const k = Math.min(1, o.t/o.T);
-    o.mesh.position.set(o.sx + (o.ex-o.sx)*k, arcY(k, o.T), o.sz + (o.ez-o.sz)*k);
+    o.mesh.position.set(o.sx + (o.ex-o.sx)*k, arcY(k, o.T, o), o.sz + (o.ez-o.sz)*k);
     o.mesh.rotation.x += dt*14;
     if (k >= 1){ scene.remove(o.mesh); throwns.splice(i,1); land(o); }
   }
@@ -176,7 +177,7 @@ export function updateThrowables(dt){
     if (h.kind === 'fire'){
       fire = fire || h;
       h.mesh.scale.setScalar(FIRE_R*(h.t < 1 ? Math.max(0.1, h.t) : 1) + Math.sin(h.t*20)*0.08);
-      if (Math.random() < dt*22) burst(new THREE.Vector3(h.x + mr(-1.8,1.8), 0.2, h.z + mr(-1.8,1.8)), 'fire', 1, 0.6, true);
+      if (Math.random() < dt*22) burst(gv(h.x + mr(-1.8,1.8), 0.2, h.z + mr(-1.8,1.8)), 'fire', 1, 0.6, true);
       h.tick -= dt;
       if (h.tick <= 0){
         h.tick = 0.25;
@@ -206,7 +207,7 @@ export function updateThrowables(dt){
       }
     }
   }
-  if (fire && flash < 2) fxLight.position.set(fire.x, 1.5, fire.z);
+  if (fire && flash < 2) fxLight.position.set(fire.x, groundAt(fire.x, fire.z) + 1.5, fire.z);
   flash = Math.max(0, flash - dt*18);
   fxLight.intensity = Math.max(flash, fire ? 1.6 + Math.sin(performance.now()*0.02)*0.3 : 0);
 }
@@ -216,7 +217,7 @@ export function animateThrowGhosts(dt){
   for (let i=throwns.length-1;i>=0;i--){
     const o = throwns[i]; o.t += dt;
     const k = Math.min(1, o.t/o.T);
-    o.mesh.position.set(o.sx + (o.ex-o.sx)*k, arcY(k, o.T), o.sz + (o.ez-o.sz)*k);
+    o.mesh.position.set(o.sx + (o.ex-o.sx)*k, arcY(k, o.T, o), o.sz + (o.ez-o.sz)*k);
     o.mesh.rotation.x += dt*14;
     if (k >= 1){ scene.remove(o.mesh); throwns.splice(i,1); }
   }
@@ -226,14 +227,14 @@ export function animateThrowGhosts(dt){
     if (h.kind === 'fire'){
       fire = fire || h;
       h.mesh.scale.setScalar(FIRE_R*(h.t < 1 ? Math.max(0.1, h.t) : 1) + Math.sin(h.t*20)*0.08);
-      if (Math.random() < dt*22) burst(new THREE.Vector3(h.x + mr(-1.8,1.8), 0.2, h.z + mr(-1.8,1.8)), 'fire', 1, 0.6, true);
+      if (Math.random() < dt*22) burst(gv(h.x + mr(-1.8,1.8), 0.2, h.z + mr(-1.8,1.8)), 'fire', 1, 0.6, true);
     } else if (h.kind === 'bomb'){
       h.beep -= dt;
       if (h.beep <= 0){ h.beep = 0.12 + Math.max(0, h.t)*0.12; h.led.visible = true; } else if (h.beep < 0.06) h.led.visible = false;
     }
     if (h.t <= -0.5){ scene.remove(h.mesh); hazards.splice(i,1); }  // the host's end event normally comes first
   }
-  if (fire && flash < 2) fxLight.position.set(fire.x, 1.5, fire.z);
+  if (fire && flash < 2) fxLight.position.set(fire.x, groundAt(fire.x, fire.z) + 1.5, fire.z);
   flash = Math.max(0, flash - dt*18);
   fxLight.intensity = Math.max(flash, fire ? 1.6 + Math.sin(performance.now()*0.02)*0.3 : 0);
 }

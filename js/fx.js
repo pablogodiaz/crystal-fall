@@ -10,7 +10,7 @@ import { viewed } from './player.js';
 import { floatText } from './hud.js';
 import { freeSpot } from './loot.js';
 import { emit, emitTo, sfxFor, nextId } from './host.js';
-import { groundAt } from './grid.js';
+import { groundAt, onGround, gv } from './grid.js';
 
 // Shared effects (burst, addDecal, rings, shake) are sent to clients too, unless `local` (effects
 // clients make themselves: ambient particles of things they mirror, corpses, the menu).
@@ -41,9 +41,9 @@ export function addDecal(x, z, s = 1, mat = SH.decalMat, local){
   if (typeof mat === 'string') mat = DECALS()[mat];
   if (!local){ const D = DECALS(); emit(['dc', r2(x), r2(z), r2(s), Object.keys(D).find(k => D[k] === mat)]); }
   const m = new THREE.Mesh(SH.decalGeo, mat);
-  m.rotation.x = -Math.PI/2;  // square to the grid; the random stretch below varies them
+  // Lying on the slope, square to the grid; the random stretch below varies them.
   const t = world.city.grid[Math.floor(z/TILE)*N + Math.floor(x/TILE)];
-  m.position.set(x, groundAt(x, z) + (t === T.ROAD ? 0.02 + Math.random()*0.004 : 0.09 + Math.random()*0.004), z);
+  onGround(m, x, z, t === T.ROAD ? 0.02 + Math.random()*0.004 : 0.09 + Math.random()*0.004, 0, true);
   m.scale.set(s*mr(0.8,1.6), s*mr(0.7,1.3), 1);
   scene.add(m); decals.push(m);
   if (decals.length > 80) scene.remove(decals.shift());
@@ -54,12 +54,12 @@ export function shockwave(x, z, r, color){
   addRing('blast', color, x, 0.14, z, r*0.25, r, 0.6, 0.95); addRing('fill', color, x, 0.14, z, r*0.25, r, 0.6, 0.4);
 }
 // A flat ring (geo: 'mark' thin ring, 'blast' blast ring, 'fill' disc) easing out from r0 to r1 over T s
-// while fading from opacity op. Entries live in `rings` (they own their material).
+// while fading from opacity op, y above the ground at (x,z). Entries live in `rings` (they own their material).
 export function addRing(geo, color, x, y, z, r0, r1, T, op, local){
   if (!local) emit(['rg', geo, color, r2(x), r2(y), r2(z), r0, r1, T, op]);
   const G = { mark:SH.markGeo, blast:SH.blastRingGeo, fill:SH.blastFillGeo }[geo];
   const m = new THREE.Mesh(G, new THREE.MeshBasicMaterial({ color, transparent:true, opacity:op, depthWrite:false, side:THREE.DoubleSide }));
-  m.rotation.x = -Math.PI/2; m.position.set(x, y, z); m.scale.setScalar(r0);
+  onGround(m, x, z, y, 0, true); m.scale.setScalar(r0);
   scene.add(m); rings.push({ mesh:m, t:0, T, r0, r1, op });
 }
 export function animateRings(dt){
@@ -103,7 +103,7 @@ export function updatePickups(dt){
     if (pl){
       const k = Math.ceil(Math.min(20, pl.maxHp - pl.hp));
       pl.hp = Math.min(pl.maxHp, pl.hp + 20); sfxFor(pl, 'pickup'); floatText(`+${k} health`, 'good', pl);
-      burst(new THREE.Vector3(p.g.position.x, 1, p.g.position.z), 'heal', 8, 2);
+      burst(gv(p.g.position.x, 1, p.g.position.z), 'heal', 8, 2);
       scene.remove(p.g); pickups.splice(i,1); emit(['h-', p.nid]); continue;
     }
     if (p.life <= 0){ scene.remove(p.g); pickups.splice(i,1); emit(['h-', p.nid]); }
@@ -141,8 +141,9 @@ export function updateFade(dt){
   camera.getWorldDirection(camDir);
   fadeAt = viewed().pos;
   const px = fadeAt.x, pz = fadeAt.z;
-  castFade(px, 0.4, pz, false); castFade(px, 1.8, pz, false);
-  for (const [ox,oz] of SAMPLES) castFade(px + ox, 0.5, pz + oz, true);
+  const py = fadeAt.y;
+  castFade(px, py + 0.4, pz, false); castFade(px, py + 1.8, pz, false);
+  for (const [ox,oz] of SAMPLES) castFade(px + ox, groundAt(px + ox, pz + oz) + 0.5, pz + oz, true);
   for (const m of want) if (!faded.has(m)) faded.set(m, 1);
   for (const [m, o] of faded){
     const n = want.has(m) ? Math.max(FADE_MIN, o - dt*FADE_SPEED) : Math.min(1, o + dt*FADE_SPEED);

@@ -7,7 +7,7 @@ import { scene, muzzleLight } from './renderer.js';
 import { SH } from './assets.js';
 import { WEAPONS, CRIT } from './items.js';
 import { state, world, zombies, bullets, dev } from './state.js';
-import { isOpaqueTile } from './grid.js';
+import { isOpaqueTile, groundAt, gv } from './grid.js';
 import { viewed, cheats, busy, knockOff } from './player.js';
 import { damageZombie, makeNoise } from './zombies.js';
 import { breakAhead, hitBreak } from './breakables.js';
@@ -77,13 +77,14 @@ const r2 = v => Math.round(v*100)/100;
 export function addBullet(kind, x, y, z, a, speed, life, o){
   const [geo, mat] = BULLET_LOOK()[kind], m = new THREE.Mesh(geo, mat);
   m.position.set(x, y, z); m.rotation.y = a; scene.add(m);
-  const b = Object.assign({ mesh:m, kind, dx:Math.sin(a), dz:Math.cos(a), speed, life, damage:0, pierce:0, kb:1, hit:new Set() }, o);
+  // h = its height above the ground: it keeps that over hills and hollows.
+  const b = Object.assign({ mesh:m, kind, dx:Math.sin(a), dz:Math.cos(a), speed, life, damage:0, pierce:0, kb:1, hit:new Set(), h:y - groundAt(x, z) }, o);
   bullets.push(b);
   if (!b.ghost) emit(['bu', kind, r2(x), r2(y), r2(z), Math.round(a*1000)/1000, r2(speed), r2(life), b.pierce, b.bounce || 0]);
   return b;
 }
 export function muzzle(x, z, intensity){
-  muzzleLight.position.set(x, 1.3, z); muzzleLight.intensity = Math.max(muzzleLight.intensity, intensity);
+  muzzleLight.position.set(x, groundAt(x, z) + 1.3, z); muzzleLight.intensity = Math.max(muzzleLight.intensity, intensity);
   emit(['mz', r2(x), r2(z), intensity]);
 }
 // ---------- Melee ----------
@@ -127,7 +128,7 @@ export function meleeStrike(p){
   if (crystal && crystal.alive){
     const dx = crystal.pos.x - p.pos.x, dz = crystal.pos.z - p.pos.z;
     if (Math.hypot(dx,dz) < 1.7 + CRYSTAL_R && offAim(p, dx, dz) < 1.0){
-      hitCrystal(dmg); burst(new THREE.Vector3(crystal.pos.x - dx*0.3, 1.2, crystal.pos.z - dz*0.3), 'crystal', 6, 3);
+      hitCrystal(dmg); burst(gv(crystal.pos.x - dx*0.3, 1.2, crystal.pos.z - dz*0.3), 'crystal', 6, 3);
     }
   }
 }
@@ -140,7 +141,7 @@ export function updateBullets(dt){
     const steps = Math.max(1, Math.ceil(b.speed*dt/0.35)), sdt = dt/steps;
     for (let s=0;s<steps && !dead;s++){
       const bp = b.mesh.position;
-      bp.x += b.dx*b.speed*sdt; bp.z += b.dz*b.speed*sdt;
+      bp.x += b.dx*b.speed*sdt; bp.z += b.dz*b.speed*sdt; bp.y = groundAt(bp.x, bp.z) + b.h;
       const tx = Math.floor(bp.x/TILE), tz = Math.floor(bp.z/TILE);
       if (crystal && crystal.alive){
         // The Crystal's whole tile is solid, so anything entering it counts as a hit (not a wall spark).

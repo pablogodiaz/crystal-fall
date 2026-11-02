@@ -11,7 +11,7 @@ import { scene, camera } from './renderer.js';
 import { SH, gunModel, squareFrame } from './assets.js';
 import { WEAPONS, INV_SLOTS } from './items.js';
 import { state, world, players, keys, mouse, mouseNDC, dev, pad } from './state.js';
-import { resolveCircle, reveal, groundAt, tileLevel, levelOf, toGround } from './grid.js';
+import { resolveCircle, reveal, groundAt, stepTo, toGround, gv } from './grid.js';
 import { fire, drainHp, meleeStrike, MELEE_TIME, MELEE_HIT } from './combat.js';
 import { curWeapon, magSize } from './inventory.js';
 import { burst } from './fx.js';
@@ -86,7 +86,7 @@ function buildMesh(p){
 // One lamp lights the area around the player being watched (lights can't be added at runtime).
 const lamp = new THREE.PointLight(0xffe2b0, 0.55, 10, 2); scene.add(lamp);
 export function updateLamp(){
-  const v = viewed(); if (v) lamp.position.set(v.pos.x, 3, v.pos.z);
+  const v = viewed(); if (v) lamp.position.set(v.pos.x, v.pos.y + 3, v.pos.z);
   for (const p of players) if (p.ring) p.ring.rotation.z = -p.g.rotation.y;  // the square under each player stays square to the grid
 }
 
@@ -174,6 +174,7 @@ export function readLocal(p){
   c.fire = !busy && (mouse.down || pad.fire); c.use = !busy && !!(keys.KeyE || pad.use);
   if (pad.on){ c.aim.set(p.pos.x + pad.ax*pad.aimD, 1.1, p.pos.z + pad.az*pad.aimD); return; }  // aim with the right stick (gamepad.js)
   raycaster.setFromCamera(mouseNDC, camera);
+  aimPlane.constant = -(p.pos.y + 1.1);  // at gun height, wherever they stand
   if (raycaster.ray.intersectPlane(aimPlane, aimHit)) c.aim.copy(aimHit);
 }
 // Every living player, every simulation step: read its controls, then move and act.
@@ -207,7 +208,7 @@ function tryVault(p, ix, iz, dt){
   const b = world.breaks.get(fz*N + fx);
   const gap = ax ? (ax > 0 ? (tx + 1)*TILE - p.pos.x : p.pos.x - tx*TILE) : (az > 0 ? (tz + 1)*TILE - p.pos.z : p.pos.z - tz*TILE);
   const lx = fx + ax, lz = fz + az, grid = world.city.grid;
-  if (!b || !BREAKABLES[b.kind].vault || gap > r + 0.25 || !walkable(grid[lz*N + lx]) || tileLevel(lx, lz) > levelOf(p.pos.y) + 1) return no();
+  if (!b || !BREAKABLES[b.kind].vault || gap > r + 0.25 || !walkable(grid[lz*N + lx]) || !stepTo(tz*N + tx, fz*N + fx, ax, az) || !stepTo(fz*N + fx, lz*N + lx, ax, az)) return no();
   p.vaultPush = (p.vaultPush || 0) + dt;
   if (p.vaultPush < VAULT.push) return false;
   p.vaultPush = 0;
@@ -322,7 +323,7 @@ function updatePlayer(p, dt){
   if (c.fire && !busy(p)) fire(p, dt);
   if (p.bleeding){
     p.bleedFx -= dt;
-    if (p.bleedFx <= 0){ p.bleedFx = 0.35; burst(new THREE.Vector3(p.pos.x, 0.9, p.pos.z), 'blood', 1, 1, true); }
+    if (p.bleedFx <= 0){ p.bleedFx = 0.35; burst(gv(p.pos.x, 0.9, p.pos.z), 'blood', 1, 1, true); }
   }
   if (p.bleeding && drainHp(p, 1.1*dt)) return;
   // The explored map is shared: everyone uncovers it.

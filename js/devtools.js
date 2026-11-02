@@ -83,6 +83,7 @@ export function teleport(x, z){
 const ray = new THREE.Raycaster(), ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hitV = new THREE.Vector3();
 export function teleportToCursor(){
   ray.setFromCamera(mouseNDC, camera);
+  ground.constant = -P().pos.y;  // roughly the ground: on the level of the player
   if (ray.ray.intersectPlane(ground, hitV)) teleport(hitV.x, hitV.z);
 }
 const tileTp = (tx, tz) => teleport((tx + 0.5)*TILE, (tz + 0.5)*TILE);
@@ -114,9 +115,17 @@ function targets(){
     const ss = (c.strips || []).filter(s => s.kind === k).map(s => ({ x:s.x0, z:s.z0 }));
     if (ss.length) out.push([`🚶 ${{ walk:'Pedestrian street', path:'Footpath', track:'Dirt track' }[k]} (${ss.length})`, () => { const o = near(ss); tileTp(o.x, o.z); }]);
   }
-  for (const k of ['knoll','dock','terrace','berm','summit']){
-    const rs = (c.raised || []).filter(r => k === 'summit' ? r.tier === 2 : r.kind === k && r.tier === 1).map(r => ({ x:r.x0, z:r.z0 }));
-    if (rs.length) out.push([`⛰ ${{ knoll:'Hill', dock:'Loading dock', terrace:'Terrace', berm:'Embankment', summit:'Second tier' }[k]} (${rs.length})`, () => { const o = near(rs); tileTp(o.x, o.z); }]);
+  // Terrain: hills, embankments, terraced lots, park terraces (and their second tier), loading docks, the
+  // highest and lowest ground.
+  for (const k of ['hill','embankment','terraced lot','terrace','second tier','dock']){
+    const fs = (c.features || []).filter(f => f.kind === k);
+    if (fs.length) out.push([`⛰ ${titleCase(k)} (${fs.length})`, () => { const o = near(fs); tileTp(o.x, o.z); }]);
+  }
+  if (c.stairs && c.stairs.length) out.push([`⛰ Stairs (${c.stairs.length})`, () => { const o = near(c.stairs); tileTp(o.x, o.z); }]);
+  if (c.hc){
+    let hi = 0, lo = 0;
+    for (let z=1;z<c.n-1;z++) for (let x=1;x<c.n-1;x++){ const i = z*N + x; if (!walkable(c.grid[i])) continue; if (c.hc[i*4] > c.hc[hi*4]) hi = i; if (c.hc[i*4] < c.hc[lo*4] || !lo) lo = i; }
+    out.push([`⛰ Highest ground (${c.hc[hi*4].toFixed(1)})`, () => tileTp(hi % N, Math.floor(hi/N))], [`⛰ Lowest ground`, () => tileTp(lo % N, Math.floor(lo/N))]);
   }
   const fences = world.breaks ? [...world.breaks.values()] : [];
   for (const k of ['picket','rail','chain','iron','planks']){

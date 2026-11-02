@@ -6,7 +6,7 @@ import { $, mr, fmtTime } from './utils.js';
 import { scene, camera, setTint } from './renderer.js';
 import { CRYSTAL, AI } from './threats.js';
 import { state, world, zombies, rings } from './state.js';
-import { reveal } from './grid.js';
+import { reveal, gv } from './grid.js';
 import { viewed, crowd } from './player.js';
 import { spawnZombieAt, findSpawnNear, alertZombie, alertNear } from './zombies.js';
 import { burst, addRing, shake } from './fx.js';
@@ -49,7 +49,7 @@ export function checkPulse(){
   crystalFx('pulse'); emit(['cr', 'pulse']);
   alertNear(x, z, C.pulseR);
   ring(x, 1.8, z, 26, 0.9, 0.8); ring(x, 0.14, z, C.pulseR*0.5, 1.4, 0.6, 'blast');
-  burst(new THREE.Vector3(x, 2.1, z), 'crystal', 30, 8);
+  burst(gv(x, 2.1, z), 'crystal', 30, 8);
   sfx.pulse(); shake(0.5);
   const [b, per, max] = C.pulseSpawn, n = Math.round(Math.min(max, b + per*(state.level - C.pulseFrom))*crowd(true));
   for (let i=0;i<n;i++){
@@ -76,7 +76,7 @@ export function breakCrystal(){
 export function endTakeover(){
   const cr = world.crystal;
   crystalFx('end'); emit(['cr', 'end']);
-  burst(new THREE.Vector3(cr.pos.x, 1.5, cr.pos.z), 'crystal', 30, 6);
+  burst(gv(cr.pos.x, 1.5, cr.pos.z), 'crystal', 30, 6);
   // The takeover's dead stay where they are and become ordinary residents there.
   for (const z of zombies){
     if (z.tracked && !z.guard){ z.hx = z.pos.x; z.hz = z.pos.z; z.leash = AI.leash; }
@@ -116,7 +116,7 @@ export function animateCrystal(dt, t){
   }
   const v = viewed();
   if (state.mode === 'play' && state.phase === 'takeover' && v && Math.random() < dt*6)
-    burst(new THREE.Vector3(v.pos.x + mr(-14,14), mr(0.3,1.2), v.pos.z + mr(-14,14)), 'crystal', 1, 0.6, true);  // drifting motes
+    burst(gv(v.pos.x + mr(-14,14), mr(0.3,1.2), v.pos.z + mr(-14,14)), 'crystal', 1, 0.6, true);  // drifting motes
 
   tint.k += Math.sign(tint.target - tint.k)*Math.min(Math.abs(tint.target - tint.k), dt/(tint.target > tint.k ? 1.4 : 3));
   setTint(tint.k);

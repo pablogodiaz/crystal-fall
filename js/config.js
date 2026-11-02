@@ -12,11 +12,28 @@ export const T = { ROAD:0, BUILDING:1, WALL:2, BARRICADE:3, EXIT:4, SIDEWALK:5, 
 export const walkable = t => t === 0 || t === 4 || t === 5 || t === 6 || t === 7 || t === 10;
 // Bullets and sight also pass through cell bars, low obstacles, water and fences.
 export const seeThrough = t => walkable(t) || t === 11 || t === 12 || t === 13 || t === 14;
-// Raised ground (hills, loading docks, terraces, embankments): city.level per tile is 0 ground,
-// 1 ramp/stairs, 2 raised (RAISE units up), 3 ramp/stairs on top of that, 4 a second tier (2×RAISE up;
-// even = flat at level/2 × RAISE, odd = a slope up to the next one). Anyone can step up one level (onto
-// a ramp, off a ramp onto the top) or drop down any amount; nobody climbs straight up onto a tier.
-export const RAISE = 1.1;
+// ---------- Terrain ----------
+// Every tile has its own four corner heights (city.hc, 4 per tile: NW, NE, SW, SE; the ground inside is
+// the blend of them, cornerH). Neighbouring tiles share their corners, so the ground runs on smoothly over
+// hills and hollows, except at ledges (retaining walls, terraced lots and parks, loading docks) where one
+// side stands higher. Anyone walks up any slope and steps up at most STEP at a tile edge; a higher edge is
+// a ledge you can only drop down (stairs lead up them).
+export const STEP = 0.45;
+// height = how far the highest ground (before lot hills and terraces) stands above the lowest; hills = hills and hollows per 100 blocks [min, max],
+// r = their radius in tiles, hollow = share that are hollows; tilt = how far the whole town falls away to
+// one side; slope = the most the ground rises between two corners (per tile); noise = small bumps.
+// cut = a lot whose ground rises more than this across it gets terraced (made flat, retaining walls round
+// it, stairs); terrace = how high a park terrace stands; dock = loading dock height; rail = embankment height.
+export const TERRAIN = { height:14, hills:[3, 5], r:[8, 20], hollow:0.3, tilt:6, slope:0.9, noise:0.7, cut:1.4, terrace:[1.6, 2.6], dock:1.1, rail:[2.2, 3.2] };
+// Height of tile i's ground at (fx, fz) across it (0..1 each way).
+export const cornerH = (hc, i, fx, fz) => { const k = i*4, a = hc[k] + (hc[k+1] - hc[k])*fx, b = hc[k+2] + (hc[k+3] - hc[k+2])*fx; return a + (b - a)*fz; };
+// Can someone on tile a step onto its neighbour b, (dx, dz) from it (diagonals meet at one corner)?
+export function stepUp(hc, a, b, dx, dz){
+  const A = a*4, B = b*4;
+  if (!dz) return dx > 0 ? hc[B] - hc[A+1] <= STEP && hc[B+2] - hc[A+3] <= STEP : hc[B+1] - hc[A] <= STEP && hc[B+3] - hc[A+2] <= STEP;
+  if (!dx) return dz > 0 ? hc[B] - hc[A+2] <= STEP && hc[B+1] - hc[A+3] <= STEP : hc[B+2] - hc[A] <= STEP && hc[B+3] - hc[A+1] <= STEP;
+  return hc[B + (dx > 0 ? 0 : 1) + (dz > 0 ? 0 : 2)] - hc[A + (dx > 0 ? 1 : 0) + (dz > 0 ? 2 : 0)] <= STEP;
+}
 // Breakable fences and barricades (T.FENCE, breakables.js), by style: hp, wood (planks repair it),
 // vault (low enough for players, and runners, to climb over: VAULT in threats.js), name for prompts. Zombie AI tuning for them is in AI (threats.js).
 export const BREAKABLES = {

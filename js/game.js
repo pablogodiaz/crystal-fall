@@ -10,7 +10,7 @@ import { CRYSTAL } from './threats.js';
 import { state, world, zombies, mouse, dev, players, net } from './state.js';
 import { generateCity } from './cityGen.js';
 import { buildCityScene, buildExitMarker, teardownCity, animateCity } from './cityScene.js';
-import { updateFlow, clearFlowCache, blockIndex, toGround } from './grid.js';
+import { updateFlow, clearFlowCache, blockIndex, toGround, gv } from './grid.js';
 import { animateBreaks } from './breakables.js';
 import { me, viewed, nearestDist, crowd, residents, zombieCap, resetPlayerStats, refreshGun, updatePlayers } from './player.js';
 import { spawnZombieAt, spawnTurnedPlayer, findSpawnTile, findBlockTile, updateZombies, updateDying } from './zombies.js';
@@ -311,7 +311,7 @@ export function bestLine(b){ return b ? `Best run: reached city ${b.city} with $
 
 // Everyone is dead: the run is over (clients show the same screen from the host's event).
 function gameOver(){
-  const p = me(); burst(new THREE.Vector3(p.pos.x, 1, p.pos.z), 'blood', 20, 4);
+  const p = me(); burst(gv(p.pos.x, 1, p.pos.z), 'blood', 20, 4);
   emit(['over', state.level, state.kills, state.runTime, state.cheated]);
   showGameOver(state.level, state.kills, state.runTime, state.cheated);
 }
@@ -419,7 +419,7 @@ export function animateWorld(dt, t){
   animateCrystal(dt, t);
   if (exitMarker){
     exitMarker.gm.opacity = 0.25 + Math.sin(t*4)*0.12;
-    exitMarker.chev.forEach((c,i) => { c.position.y = 0.35 + Math.max(0, Math.sin(t*5 - i*0.8))*0.25; });
+    exitMarker.chev.forEach((c,i) => { c.position.y = c.userData.y0 + 0.35 + Math.max(0, Math.sin(t*5 - i*0.8))*0.25; });
   }
   muzzleLight.intensity = Math.max(0, muzzleLight.intensity - dt*30);
   const flip = Math.floor(t*3) % 2;  // police lightbars

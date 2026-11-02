@@ -11,7 +11,7 @@ import { craft, countItem, magSize, selectedThrowable, otherWeapons } from './in
 import { weaponStats, weaponDps, weaponTitle, modText, isSpecial } from './weapons.js';
 import { dropName } from './loot.js';
 import { EXIT_WAIT, crafting } from './game.js';
-import { blockIndex } from './grid.js';
+import { blockIndex, groundAt } from './grid.js';
 import { emit, emitTo } from './host.js';
 import { act } from './client.js';
 
@@ -34,8 +34,8 @@ function paintTiles(){
     let ty = city.grid[z*N+x];
     if (ty === T.CRYSTAL && !(crystal && crystal.alive && state.crystalFound)) ty = T.PLAZA;
     tctx.fillStyle = MM_COLORS[ty]; tctx.fillRect(x*MS, z*MS, MS, MS);
-    const lv = city.level ? city.level[z*N+x] : 0;
-    if (lv){ tctx.fillStyle = `rgba(255,255,255,${[0, 0.1, 0.22, 0.3, 0.38][lv]})`; tctx.fillRect(x*MS, z*MS, MS, MS); }  // raised ground, brighter the higher
+    // Higher ground lighter, stairs lighter still, so hills and terraces read on the map.
+    if (city.hc){ const k = (z*N+x)*4, h = (city.hc[k] + city.hc[k+1] + city.hc[k+2] + city.hc[k+3])/4; tctx.fillStyle = `rgba(255,255,255,${(0.3*h/(city.hmax || 1) + (city.ramp[z*N+x] ? 0.15 : 0)).toFixed(3)})`; tctx.fillRect(x*MS, z*MS, MS, MS); }
   }
 }
 // Draws the explored map into a size×size canvas at s px per tile, centered on tile (cx,cz).
@@ -274,7 +274,7 @@ function updateInteractPrompt(){
   const interact = P.interact, t = P === me() && !P.dead ? interact.target : null, el = $('interact');
   el.classList.toggle('hidden', !t || state.mode !== 'play');
   if (!t || state.mode !== 'play') return;
-  ipos.set(t.px, 1.2, t.pz).project(camera);
+  ipos.set(t.px, groundAt(t.px, t.pz) + 1.2, t.pz).project(camera);
   el.style.transform = `translate(${((ipos.x+1)/2*innerWidth).toFixed(1)}px, ${((1-ipos.y)/2*innerHeight).toFixed(1)}px)`;
   setText('interactLabel', interact.label); setText('interactKey', pad.on ? 'A' : 'E');
   $('interactRing').style.strokeDashoffset = ((1 - Math.min(1, interact.p))*RING).toFixed(1);
@@ -285,7 +285,8 @@ function updateInteractPrompt(){
 // one after another (p = whose gain it is: other players' are not shown). Ground drops and health
 // crosses near the watched player get a small name tag.
 const floaters = [], tags = [], fpos = new THREE.Vector3(), FLOAT_T = 1.6;
-const toScreen = (x, y, z) => { fpos.set(x, y, z).project(camera); return [(fpos.x+1)/2*innerWidth, (1-fpos.y)/2*innerHeight]; };
+// y = height above the ground there.
+const toScreen = (x, y, z) => { fpos.set(x, groundAt(x, z) + y, z).project(camera); return [(fpos.x+1)/2*innerWidth, (1-fpos.y)/2*innerHeight]; };
 export function floatText(msg, kind, p){
   if (p && p.remote) emitTo(p, ['ft', msg, kind]);
   if (p && p !== viewed()) return;
