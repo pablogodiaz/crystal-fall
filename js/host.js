@@ -75,7 +75,7 @@ function onMessage(from, m){
     if (p.dead) return;
     const k = p.ctl;
     k.mx = +m.mx || 0; k.mz = +m.mz || 0; k.sprint = !!m.sp; k.fire = !!m.f; k.use = !!m.u; k.aim.set(+m.ax || 0, 1.1, +m.az || 0);
-    p.net = { tp:m.tp }; p.ctlAt = performance.now();
+    p.net = { tp:m.tp }; p.ctlAt = performance.now(); p.netVault = m.vt ? 1 : 0;
     // Where their machine moved them, stamped with its clock: movePlayer draws it a little in the past,
     // blended between reports (smooth.js), instead of jumping to each one as it lands.
     if (Number.isFinite(+m.ts)){
@@ -175,10 +175,11 @@ function runState(){
     rt:r2(state.runTime), ct:r2(state.cityTime), cf:state.crystalFound, cr:cr ? [r2(cr.hp), cr.maxHp] : null, ch:state.cheated };
 }
 // [slot, x, z, angle, vx, vz, hp, maxHp, flags, weapon id, rarity, uid, meleeT, stamina, tp, drone, rail charge]
-// flags: 1 dead, 2 bleeding, 4 winded, 8 spraying, 16 energized, 32 reloading.
+// flags: 1 dead, 2 bleeding, 4 winded, 8 spraying, 16 energized, 32 reloading, 64 stunned, 128 vaulting.
 function playerSnap(p){
   const w = curWeapon(p), d = p.drone && p.drone.visible ? [r2(p.drone.position.x), r2(p.drone.position.y), r2(p.drone.position.z), r2(p.drone.rotation.y)] : 0;
-  const f = (p.dead ? 1 : 0) | (p.bleeding ? 2 : 0) | (p.winded ? 4 : 0) | (p.flameT > 0 ? 8 : 0) | (p.boost > 0 ? 16 : 0) | (p.reloadT > 0 ? 32 : 0);
+  const f = (p.dead ? 1 : 0) | (p.bleeding ? 2 : 0) | (p.winded ? 4 : 0) | (p.flameT > 0 ? 8 : 0) | (p.boost > 0 ? 16 : 0) | (p.reloadT > 0 ? 32 : 0)
+    | (p.stun > 0 ? 64 : 0) | (p.vault || p.netVault ? 128 : 0);
   return [p.slot, r2(p.pos.x), r2(p.pos.z), r2(p.angle), r2(p.vel.x), r2(p.vel.z), r2(p.hp), p.maxHp, f, w.id, w.rarity, w.uid, r2(p.meleeT), r2(p.stamina), p.tp, d,
     w.id === 'railgun' && w.charge > 0 ? r2(Math.min(1, w.charge/weaponStats(w).charge)) : 0];
 }

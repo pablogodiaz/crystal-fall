@@ -6,19 +6,21 @@
 // me(), bots.js for dev-tools companions (networking will fill it for remote players). One-shot actions
 // (reload, swap, throw, items…) are plain function calls that take the player.
 import * as THREE from 'three';
-import { TILE, N } from './config.js';
+import { TILE, N, BREAKABLES, walkable } from './config.js';
 import { scene, camera } from './renderer.js';
 import { SH, gunModel } from './assets.js';
 import { WEAPONS, INV_SLOTS } from './items.js';
 import { state, world, players, keys, mouse, mouseNDC, dev } from './state.js';
-import { resolveCircle, reveal } from './grid.js';
+import { resolveCircle, reveal, groundAt, tileLevel, levelOf, toGround } from './grid.js';
 import { fire, drainHp, meleeStrike, MELEE_TIME, MELEE_HIT } from './combat.js';
 import { curWeapon, magSize } from './inventory.js';
 import { burst } from './fx.js';
 import { makeNoise } from './zombies.js';
 import { updateBot } from './bots.js';
-import { AI, COOP } from './threats.js';
+import { AI, COOP, VAULT } from './threats.js';
 import { emitTo } from './host.js';
+import { playSfx } from './audio.js';
+import { toast } from './hud.js';
 import { at } from './smooth.js';
 // A remote player is drawn this far behind their machine's reports (30 a second), so there are
 // always two to blend between (smooth.js).
@@ -184,6 +186,62 @@ export function updatePlayers(dt){
 // stamina is back to WINDED_OK.
 const SPRINT_MUL = 1.75, SPRINT_DRAIN = 0.28, REGEN = 0.24, REGEN_STILL = 1.7, REGEN_DELAY = 1, WINDED_OK = 0.4, WINDED_MUL = 0.8, BOOST_DRAIN = 0.4;
 
+// ---------- Vaulting ----------
+// Walking straight into a low fence (picket, rail: BREAKABLES[].vault) for VAULT.push s climbs over it to
+// the tile beyond: VAULT.time s in an arc, busy (busy(p): no shooting, swinging, items), for some stamina
+// and a little noise. Never while winded or stunned. A hit mid-vault knocks you off (knockOff). Both the
+// host and a client predicting its own player run this; a client tells the host it's vaulting (`vt`).
+export const busy = p => p.stun > 0 || !!p.vault || !!p.netVault;
+function tryVault(p, ix, iz, dt){
+  const no = () => { p.vaultPush = 0; return false; };
+  if (dev.noVault || p.stun > 0 || p.winded || p.stamina < VAULT.stamina || !world.breaks) return no();
+  const ax = Math.abs(ix) >= Math.abs(iz) ? Math.sign(ix) : 0, az = ax ? 0 : Math.sign(iz);
+  if (Math.max(Math.abs(ix), Math.abs(iz)) < 0.75) return no();  // heading along the fence, not over it
+  const r = p.radius, tx = Math.floor(p.pos.x/TILE), tz = Math.floor(p.pos.z/TILE), fx = tx + ax, fz = tz + az;
+  const b = world.breaks.get(fz*N + fx);
+  const gap = ax ? (ax > 0 ? (tx + 1)*TILE - p.pos.x : p.pos.x - tx*TILE) : (az > 0 ? (tz + 1)*TILE - p.pos.z : p.pos.z - tz*TILE);
+  const lx = fx + ax, lz = fz + az, grid = world.city.grid;
+  if (!b || !BREAKABLES[b.kind].vault || gap > r + 0.25 || !walkable(grid[lz*N + lx]) || tileLevel(lx, lz) > levelOf(p.pos.y) + 1) return no();
+  p.vaultPush = (p.vaultPush || 0) + dt;
+  if (p.vaultPush < VAULT.push) return false;
+  p.vaultPush = 0;
+  // Land just past the fence, in line with where you went over.
+  const ex = ax ? (ax > 0 ? lx*TILE + r + 0.15 : (lx + 1)*TILE - r - 0.15) : Math.min((tx + 1)*TILE - r, Math.max(tx*TILE + r, p.pos.x));
+  const ez = az ? (az > 0 ? lz*TILE + r + 0.15 : (lz + 1)*TILE - r - 0.15) : Math.min((tz + 1)*TILE - r, Math.max(tz*TILE + r, p.pos.z));
+  p.vault = { t:0, sx:p.pos.x, sz:p.pos.z, sy:p.pos.y, ex, ez, ey:groundAt(ex, ez) };
+  p.stamina -= VAULT.stamina; p.staminaDelay = REGEN_DELAY; p.vel.set(0, 0, 0); p.meleeT = 0; p.aiming = false;
+  makeNoise(p.pos.x, p.pos.z, VAULT.noise);
+  if (p === viewed()) playSfx('vault');
+  return true;
+}
+function vaultStep(p, dt){
+  const v = p.vault; v.t += dt;
+  const k = Math.min(1, v.t/VAULT.time), up = Math.sin(k*Math.PI);
+  p.pos.x = v.sx + (v.ex - v.sx)*k; p.pos.z = v.sz + (v.ez - v.sz)*k; p.pos.y = v.sy + (v.ey - v.sy)*k + up*VAULT.height;
+  p.g.position.copy(p.pos); p.g.rotation.y = Math.atan2(v.ex - v.sx, v.ez - v.sz);
+  // Leaning into it, legs tucked, one hand down on the fence.
+  p.inner.rotation.x = up*0.45; p.legs[0].rotation.x = -up*1.1; p.legs[1].rotation.x = -up*0.7; p.arms[0].rotation.x = -up*1.2;
+  if (k < 1) return;
+  p.vault = null; endPose(p); resolveCircle(p.pos, p.radius);
+}
+function endPose(p){ p.inner.rotation.set(0, 0, 0); p.legs[0].rotation.x = p.legs[1].rotation.x = 0; p.arms[0].rotation.x = 0; }
+// Hit while vaulting: dropped back to whichever side is nearer, dazed for VAULT.stun s. On the host;
+// a remote player's machine is snapped there (tp) and told (`stun`).
+export function knockOff(p){
+  const v = p.vault;
+  if (v){ const back = v.t/VAULT.time < 0.5; p.pos.x = back ? v.sx : v.ex; p.pos.z = back ? v.sz : v.ez; }
+  p.vault = null; p.netVault = 0; p.stun = VAULT.stun; p.vel.set(0, 0, 0); endPose(p);
+  toGround(p.pos); resolveCircle(p.pos, p.radius); p.g.position.copy(p.pos);
+  if (p.remote){ p.tp++; emitTo(p, ['stun', VAULT.stun]); }
+  toast('Knocked off the fence!', 'bad', p);
+}
+// Dazed: a slow sway (stars from the HUD side are the hurt flash).
+export function poseStun(p){
+  const t = performance.now()/1000;
+  p.inner.rotation.z = p.stun > 0 ? Math.sin(t*7)*0.16 : 0; p.inner.rotation.x = p.stun > 0 ? 0.12 : 0;
+  if (p.stun > 0 && Math.random() < 0.08) burst(new THREE.Vector3(p.pos.x, p.pos.y + 2.1, p.pos.z), 'spark', 1, 0.8, true);
+}
+
 // Knockback (and recoil) on player p; a remote player's machine moves them, so it gets told.
 export function pushPlayer(p, vx, vz){
   p.vel.x += vx; p.vel.z += vz;
@@ -194,7 +252,9 @@ export function pushPlayer(p, vx, vz){
 // accepted while it's close to where the host thinks they are.
 export function movePlayer(p, dt){
   const c = p.ctl, cheat = cheats(p);
-  let ix = c.mx, iz = c.mz;
+  if (p.stun > 0){ p.stun = Math.max(0, p.stun - dt); poseStun(p); }
+  if (p.vault){ vaultStep(p, dt); return; }
+  let ix = p.stun > 0 ? 0 : c.mx, iz = p.stun > 0 ? 0 : c.mz;
   const l = Math.hypot(ix,iz), moving = l > 0;
   if (moving){ ix /= l; iz /= l; }
   let spd = p.speed*(cheat ? dev.speed : 1);
@@ -213,6 +273,7 @@ export function movePlayer(p, dt){
     if (p.winded && p.stamina >= WINDED_OK) p.winded = false;
   }
   if (p.winded) spd *= WINDED_MUL;
+  if (moving && !(cheat && dev.noclip) && tryVault(p, ix, iz, dt)) return;
   const k = Math.min(1, dt*14);
   p.vel.x += (ix*spd - p.vel.x)*k; p.vel.z += (iz*spd - p.vel.z)*k;
   p.pos.x += p.vel.x*dt; p.pos.z += p.vel.z*dt;
@@ -252,7 +313,7 @@ function updatePlayer(p, dt){
     if (!p.meleeHit && k >= MELEE_HIT){ p.meleeHit = true; meleeStrike(p); }
     poseMelee(p, p.meleeT > 0 ? k : 0);
   }
-  if (c.fire) fire(p, dt);
+  if (c.fire && !busy(p)) fire(p, dt);
   if (p.bleeding){
     p.bleedFx -= dt;
     if (p.bleedFx <= 0){ p.bleedFx = 0.35; burst(new THREE.Vector3(p.pos.x, 0.9, p.pos.z), 'blood', 1, 1, true); }

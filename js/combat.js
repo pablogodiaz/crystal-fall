@@ -8,7 +8,7 @@ import { SH } from './assets.js';
 import { WEAPONS, CRIT } from './items.js';
 import { state, world, zombies, bullets, dev } from './state.js';
 import { isOpaqueTile } from './grid.js';
-import { viewed, cheats } from './player.js';
+import { viewed, cheats, busy, knockOff } from './player.js';
 import { damageZombie, makeNoise } from './zombies.js';
 import { breakAhead, hitBreak } from './breakables.js';
 import { AI } from './threats.js';
@@ -26,7 +26,8 @@ import { emit, emitTo, sfxFor } from './host.js';
 import { pushPlayer } from './player.js';
 
 // Players can act (shoot, reload, use items…) while the game runs and they're alive.
-export const canAct = p => state.mode === 'play' && !!p && !p.dead;
+// Not while dead, stunned or climbing over a fence.
+export const canAct = p => state.mode === 'play' && !!p && !p.dead && !busy(p);
 export function tryReload(p){
   if (!canAct(p)) return;
   const w = curWeapon(p);
@@ -187,6 +188,7 @@ export function hurtPlayer(p, dmg, z){
   p.hp -= dmg;
   if (p === viewed()) hurtFx();
   emitTo(p, ['hurt']);
+  if (p.vault || p.netVault) knockOff(p);
   if (z){
     const dx = p.pos.x - z.pos.x, dz = p.pos.z - z.pos.z, l = Math.hypot(dx,dz) || 1; pushPlayer(p, dx/l*6, dz/l*6);
     if (!p.bleeding && Math.random() < z.bleed){ p.bleeding = true; toast('You’re bleeding. Use a bandage', 'bad', p); }

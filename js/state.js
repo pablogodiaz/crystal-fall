@@ -39,7 +39,8 @@ export const spits = [], puddles = [], rings = [];
 // Dev tools (` key, devtools.js). Cheat flags read by gameplay code; timeScale (0 = frozen) and
 // zoom are applied in main.js. spawn = { type, mods } overrides the next rollThreat().
 export const dev = { open:false, god:false, ammo:false, stamina:false, noclip:false, ignored:false, freeze:false,
-  oneHit:false, clickTp:false, speed:1, timeScale:1, zoom:1, spawn:null };
+  oneHit:false, clickTp:false, speed:1, timeScale:1, zoom:1, spawn:null,
+  noVault:false, noClimb:false };  // fence vaulting off for players / runners (Fences & barricades)
 
 // Networking (net.js): role 'solo' | 'host' (runs the simulation, others join) | 'client' (mirrors the
 // host's world: client.js). id = this connection's id at the relay. state.host = role !== 'client'.

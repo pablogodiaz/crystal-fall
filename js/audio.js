@@ -86,6 +86,7 @@ export const sfx = {
   // Fences and barricades: a blow on wood (a dull knock) or metal (a rattle), splintering, hammering.
   bang: metal => metal ? (sTone(420, 300, 0.12, 'square', 0.05), sNoise(0.2, 3000, 0.22)) : (sTone(110, 60, 0.14, 'sine', 0.35), sNoise(0.12, 900, 0.3)),
   splinter: () => { sNoise(0.5, 2200, 0.5); sTone(160, 50, 0.4, 'sawtooth', 0.12); },
+  vault: () => { sNoise(0.12, 1400, 0.18); setTimeout(() => sNoise(0.1, 700, 0.22), 420); },
   hammer: () => { for (let i=0;i<3;i++) setTimeout(() => { sTone(900, 600, 0.04, 'square', 0.07); sNoise(0.05, 2500, 0.2); }, i*130); },
   alarm: () => { for (let i=0;i<8;i++) setTimeout(() => sTone(i%2 ? 700 : 950, i%2 ? 700 : 950, 0.26, 'square', 0.07), i*280); }
 };

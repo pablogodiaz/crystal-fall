@@ -14,7 +14,8 @@ import { droneModel } from './assets.js';
 import { state, world, net, players, zombies, drops, pickups, hazards, puddles, mouse } from './state.js';
 import { onNet, connect, disconnect, send, VERSION } from './net.js';
 import { playSfx, initAudio } from './audio.js';
-import { me, viewed, addPlayer, removePlayer, readLocal, movePlayer, animateLegs, refreshGun, poseMelee, resetPlayerStats } from './player.js';
+import { me, viewed, addPlayer, removePlayer, readLocal, movePlayer, animateLegs, refreshGun, poseMelee, resetPlayerStats, poseStun } from './player.js';
+import { VAULT } from './threats.js';
 import { reveal, updateFlow, groundAt, toGround } from './grid.js';
 import { mirrorBreak } from './breakables.js';
 import { updateBot } from './bots.js';
@@ -134,6 +135,7 @@ function applyPlayer(e){
   const mine = p === me();
   p.hp = hp; p.maxHp = maxHp; p.bleeding = !!(f & 2); p.winded = !!(f & 4); p.spraying = f & 8 ? wid : null;
   p.charge = charge; p.meleeT = meleeT;
+  if (!mine){ p.stun = f & 64 ? 1 : 0; p.vaulting = !!(f & 128); }
   if (!mine || Math.abs(p.stamina - st) > 0.05) p.stamina = st;
   if (!(f & 16)) p.boost = 0; else if (!(p.boost > 0)) p.boost = 1;
   if (!(f & 32) && !mine) p.reloadT = 0;
@@ -195,6 +197,7 @@ function handle(e){
     case 'bn': banner(a, b, c); break;
     case 'hurt': hurtFx(); break;
     case 'kick': me().vel.x += a; me().vel.z += b; break;
+    case 'stun': { const p = me(); p.stun = a; p.vault = null; p.inner.rotation.set(0, 0, 0); break; }
     case 'z+': {
       if (zs.has(a)) break;
       const z = mirrorSpawn(a, b, c, d, f, g, h, i, j);
@@ -286,7 +289,7 @@ export function clientUpdate(dt, t){
   if (ctlT <= 0 && state.mode !== 'menu'){
     ctlT = CTL;
     const c = p.ctl;
-    send(0, { t:'c', ts:Math.round(performance.now())/1000, a:Math.round(p.angle*1000)/1000, mx:c.mx, mz:c.mz, sp:c.sprint, f:c.fire, u:c.use, ax:r2(c.aim.x), az:r2(c.aim.z), x:r2(p.pos.x), z:r2(p.pos.z), vx:r2(p.vel.x), vz:r2(p.vel.z), tp:myTp, v:viewed().slot });
+    send(0, { t:'c', vt:p.vault ? 1 : 0, ts:Math.round(performance.now())/1000, a:Math.round(p.angle*1000)/1000, mx:c.mx, mz:c.mz, sp:c.sprint, f:c.fire, u:c.use, ax:r2(c.aim.x), az:r2(c.aim.z), x:r2(p.pos.x), z:r2(p.pos.z), vx:r2(p.vel.x), vz:r2(p.vel.z), tp:myTp, v:viewed().slot });
   }
   // Rail whine for our own charge (the host only plays it for its own screen).
   if (p.charge > 0 && !p.railStop) p.railStop = playSfx('charge');
@@ -295,8 +298,11 @@ export function clientUpdate(dt, t){
     if (o.dead) continue;
     if (o !== p){
       const v = smooth(o);
+      // Someone else climbing a fence: lift them over it (their own machine has the exact arc).
+      o.vaultT = o.vaulting ? Math.min(VAULT.time, (o.vaultT || 0) + dt) : 0;
+      o.pos.y += Math.sin(o.vaultT/VAULT.time*Math.PI)*VAULT.height;
       o.g.position.copy(o.pos); o.angle = o.g.rotation.y;
-      animateLegs(o, dt, v);
+      animateLegs(o, dt, v); poseStun(o);
     }
     if (o !== p && o.drone && o.drone.visible){
       const s = at(o.droneY, hostClock, DELAY), d = o.drone;
