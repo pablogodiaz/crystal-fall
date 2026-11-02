@@ -2,20 +2,6 @@
 // Geometries/materials reused across cities. Never disposed.
 import * as THREE from 'three';
 
-function makeWindowTexture(litChance){
-  const c = document.createElement('canvas'); c.width = 64; c.height = 64;
-  const g = c.getContext('2d');
-  g.fillStyle = '#ffffff'; g.fillRect(0,0,64,64);
-  for (let y=0;y<2;y++) for (let x=0;x<2;x++){
-    const lit = Math.random() < litChance;
-    g.fillStyle = lit ? '#ffd27a' : '#323742';
-    g.fillRect(7+x*32, 8+y*32, 18, 17);
-  }
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  return t;
-}
-export const WIN_TEX = [makeWindowTexture(0.12), makeWindowTexture(0.25), makeWindowTexture(0.04)];
 // Corrugated metal siding for warehouses (one rib per 0.25 of a tile).
 export const CORR_TEX = (() => {
   const c = document.createElement('canvas'); c.width = 64; c.height = 8;
@@ -95,15 +81,20 @@ export const SH = {};
   SH.zArm = new THREE.BoxGeometry(0.16,0.16,0.72);
   SH.zLeg = new THREE.BoxGeometry(0.22,0.62,0.25); SH.zLeg.translate(0,-0.31,0);
   SH.pantsMat = new THREE.MeshStandardMaterial({ color:0x2d2f36, roughness:1 });
-  SH.trunkGeo = new THREE.CylinderGeometry(0.14,0.2,1.3,6);
+  SH.trunkGeo = new THREE.BoxGeometry(0.3,1.3,0.3);
   SH.trunkMat = new THREE.MeshStandardMaterial({ color:0x4a3a2c, roughness:1 });
-  SH.leafGeo = new THREE.IcosahedronGeometry(0.95,0);
+  // Canopies: stacked boxes shrinking upward (three shapes), centred on the old sphere's middle.
+  SH.leafGeos = [
+    boxes([[1.7,0.7,1.7,0,-0.25,0], [1.25,0.55,1.25,0,0.35,0], [0.7,0.4,0.7,0,0.8,0]]),
+    boxes([[1.5,0.9,1.5,0,-0.15,0], [0.95,0.6,0.95,0,0.55,0]]),
+    boxes([[1.9,0.6,1.3,0,-0.3,0], [1.3,0.6,1.7,0,0.25,0], [0.8,0.45,0.8,0,0.75,0]])
+  ];
   SH.leafMats = [0x4d5a32,0x3c4728,0x5a5a30].map(c => new THREE.MeshStandardMaterial({ color:c, roughness:1, flatShading:true }));
   SH.carBody = new THREE.BoxGeometry(1.9,0.55,1.05);
   SH.carCab = new THREE.BoxGeometry(1.0,0.45,0.95);
   SH.carMats = {};
   SH.glassMat = new THREE.MeshStandardMaterial({ color:0x1d2228, roughness:0.3, metalness:0.4 });
-  SH.rubbleGeo = new THREE.DodecahedronGeometry(0.45,0);
+  SH.rubbleGeo = new THREE.BoxGeometry(0.72,0.46,0.6);  // a broken concrete block
   SH.rubbleMat = new THREE.MeshStandardMaterial({ color:0x6d6a64, roughness:1, flatShading:true });
   SH.pillarMat = new THREE.MeshStandardMaterial({ color:0x9b9384, roughness:1 });
   SH.crossA = new THREE.BoxGeometry(0.5,0.16,0.16);
@@ -201,7 +192,7 @@ export const SH = {};
   SH.pumpTopGeo = base(0.68, 0.22, 0.52);
   SH.lumberGeo = base(1.6, 0.22, 0.95);
   SH.cartGeo = base(0.5, 0.42, 0.8);
-  SH.poleGeo = new THREE.CylinderGeometry(0.06, 0.06, 1, 6); SH.poleGeo.translate(0, 0.5, 0);
+  SH.poleGeo = new THREE.BoxGeometry(0.18, 1, 0.18); SH.poleGeo.translate(0, 0.5, 0);  // square post, scaled per use
   SH.flagGeo = new THREE.BoxGeometry(0.9, 0.55, 0.03);
   SH.flagMat = new THREE.MeshStandardMaterial({ color:0x2f4f9a, roughness:0.8, side:THREE.DoubleSide });
   SH.blanketMat = new THREE.MeshStandardMaterial({ color:0x7fa6c4, roughness:0.9 });

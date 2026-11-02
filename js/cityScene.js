@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { TILE, N, RAISE } from './config.js';
 import { mr, mpick } from './utils.js';
 import { scene } from './renderer.js';
-import { SH, WIN_TEX, CORR_TEX, CHECKER_TEX, carMat, boxes } from './assets.js';
+import { SH, CORR_TEX, CHECKER_TEX, carMat, boxes } from './assets.js';
 import { state, world, zombies, dying, bullets, particles, pickups, decals, drops, throwns, hazards, spits, puddles, rings } from './state.js';
 import { LOOT, LANDMARKS } from './items.js';
 import { disposeZombie, disposeCorpse } from './zombies.js';
@@ -102,25 +102,26 @@ export function buildCityScene(c){
   const l2 = (n-e-2)*TILE; addWall(TILE, l2, W-TILE/2, (e+2)*TILE + l2/2);
 
   world.buildingMeshes = [];
+  doorAt = new Set(c.containers.filter(k => k.kind === 'door').map(k => `${k.x},${k.z},${k.dx},${k.dz}`));
   for (const b of c.buildings){ const m = buildingMesh(b); world.buildingMeshes.push(m); cityGroup.add(m); }
   world.interiors = []; world.interiorAt = new Int8Array(N*N);
   c.interiors.forEach((it, i) => buildInterior(it, i));
   for (const t of c.trees){
     const g = new THREE.Group(); g.position.set((t.x+0.5)*TILE, 0, (t.z+0.5)*TILE); g.scale.setScalar(t.s);
     const tr = new THREE.Mesh(SH.trunkGeo, SH.trunkMat); tr.position.y = 0.65; tr.castShadow = true;
-    const lf = new THREE.Mesh(SH.leafGeo, SH.leafMats[t.m]); lf.position.y = 1.75; lf.rotation.y = t.x*1.7; lf.castShadow = true;
+    const lf = new THREE.Mesh(SH.leafGeos[(t.x + t.z) % 3], SH.leafMats[t.m]); lf.position.y = 1.75; lf.rotation.y = (t.x % 2)*Math.PI/2; lf.castShadow = true;
     g.add(tr, lf); cityGroup.add(g);
   }
   for (const cr of c.cars) cityGroup.add(carMesh(cr));
   for (const r of c.rubble){
     for (let i=0;i<4;i++){
       const m = new THREE.Mesh(SH.rubbleGeo, SH.rubbleMat);
-      m.position.set((r.x+0.5)*TILE + mr(-0.5,0.5), 0.2, (r.z+0.5)*TILE + mr(-0.5,0.5));
-      m.scale.setScalar(mr(0.6,1.4)); m.rotation.set(mr(0,3), mr(0,3), 0); m.castShadow = true; cityGroup.add(m);
+      const sy = mr(0.6,1.2); m.scale.set(mr(0.6,1.4), sy, mr(0.6,1.4));
+      m.position.set((r.x+0.5)*TILE + mr(-0.5,0.5), 0.23*sy, (r.z+0.5)*TILE + mr(-0.5,0.5)); m.castShadow = true; cityGroup.add(m);
     }
   }
   for (const p of c.pillars){
-    const m = new THREE.Mesh(own(new THREE.CylinderGeometry(0.42,0.5,p.h,8)), SH.pillarMat);
+    const m = new THREE.Mesh(own(boxes([[0.9,p.h,0.9,0,0,0], [1.1,0.3,1.1,0,-p.h/2 + 0.15,0], [1.05,0.2,1.05,0,p.h/2 - 0.1,0]])), SH.pillarMat);
     m.position.set((p.x+0.5)*TILE, p.h/2, (p.z+0.5)*TILE); m.castShadow = m.receiveShadow = true; cityGroup.add(m);
   }
   buildSmoke(c);
@@ -140,12 +141,12 @@ function carMesh(cr){
   g.position.set((cr.x + 0.5 + (cr.ox || 0))*TILE, 0, (cr.z + 0.5 + (cr.oz || 0))*TILE); g.rotation.y = cr.rot;
   const st = cr.style, burnt = cr.burnt, color = burnt ? 0x2b2724 : st === 'police' || st === 'ambulance' ? 0xe9e9ee : st === 'military' ? 0x4b5320 : cr.color;
   const b = mesh(SH.carBody, carMat(color), 0, 0.42, 0, body), cab = mesh(SH.carCab, burnt ? carMat(0x151311) : SH.glassMat, -0.1, 0.9, 0, body);
-  if (cr.wreck && !cr.pose){ g.rotation.z = 0.04; cab.rotation.z = 0.12; }
+  // Four square wheels and bumpers under every car (on top when it's flipped, beside it on its side).
+  mesh(G('carParts', () => boxes([[0.5,0.48,0.22,-0.6,0.24,-0.47], [0.5,0.48,0.22,0.6,0.24,-0.47], [0.5,0.48,0.22,-0.6,0.24,0.47], [0.5,0.48,0.22,0.6,0.24,0.47],
+    [0.16,0.22,1.0,0.99,0.3,0], [0.16,0.22,1.0,-0.99,0.3,0]])), M('wheel', 0x16171a), 0, 0, 0, body);
   if (cr.crash){ cab.scale.y = 0.8; b.scale.x = 0.9; b.position.x = -0.1; }
   if (cr.pose){
     // Rolled over: on the roof (cab crushed) or on its side, wheels showing.
-    const wm = M('wheel', 0x16171a), wg = G('wheel', () => { const w = new THREE.CylinderGeometry(0.27, 0.27, 0.18, 10); w.rotateX(Math.PI/2); return w; });
-    for (const [wx, wz] of [[-0.6,-0.5],[0.6,-0.5],[-0.6,0.5],[0.6,0.5]]) mesh(wg, wm, wx, 0.15, wz, body);
     if (cr.pose === 'flip'){ body.rotation.x = Math.PI; body.position.y = 1.02; cab.scale.y = 0.55; cab.position.y = 0.82; }
     else { body.rotation.x = Math.PI/2; body.position.y = 0.53; }
   }
@@ -173,46 +174,43 @@ function buildScars(c){
   const cityGroup = world.cityGroup, rnd = srand(c.n*7 + c.exitZ);
   const sc = c.overlays.scorch;
   if (sc.length){
-    const tex = canvasTex(64, (g, s) => { const gr = g.createRadialGradient(s/2, s/2, 2, s/2, s/2, s/2); gr.addColorStop(0, 'rgba(0,0,0,0.85)'); gr.addColorStop(0.6, 'rgba(0,0,0,0.5)'); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.fillRect(0, 0, s, s); });
+    const tex = canvasTex(64, (g, s) => { for (const [k, a] of [[4, 0.25], [10, 0.45], [16, 0.7]]){ g.fillStyle = `rgba(0,0,0,${a})`; g.fillRect(k, k, s - 2*k, s - 2*k); } });
     const im = own(new THREE.InstancedMesh(SH.tilePlane, own(new THREE.MeshBasicMaterial({ map:tex, color:0x15110d, transparent:true, depthWrite:false })), sc.length));
-    sc.forEach(([x,z], i) => { dummy.position.set((x + 0.5)*TILE, 0.0845, (z + 0.5)*TILE); dummy.rotation.set(0, rnd(0, 6.3), 0); dummy.scale.setScalar(TILE*rnd(1.2, 1.7)); dummy.updateMatrix(); im.setMatrixAt(i, dummy.matrix); });
+    sc.forEach(([x,z], i) => { dummy.position.set((x + 0.5)*TILE, 0.0845, (z + 0.5)*TILE); dummy.rotation.set(0, 0, 0); dummy.scale.setScalar(TILE*rnd(1.1, 1.4)); dummy.updateMatrix(); im.setMatrixAt(i, dummy.matrix); });
     im.renderOrder = 1; cityGroup.add(im);
   }
   const water = std(0x24485a, { roughness:0.08, metalness:0.35, emissive:0x081820, emissiveIntensity:0.6 }), mud = std(0x3b3326, { roughness:1 });
-  const rounded = (x0, z0, x1, z1, r) => {
-    const sh = new THREE.Shape();
-    sh.moveTo(x0 + r, z0); sh.lineTo(x1 - r, z0); sh.quadraticCurveTo(x1, z0, x1, z0 + r); sh.lineTo(x1, z1 - r); sh.quadraticCurveTo(x1, z1, x1 - r, z1);
-    sh.lineTo(x0 + r, z1); sh.quadraticCurveTo(x0, z1, x0, z1 - r); sh.lineTo(x0, z0 + r); sh.quadraticCurveTo(x0, z0, x0 + r, z0);
-    const geo = own(new THREE.ShapeGeometry(sh, 6)); geo.rotateX(Math.PI/2); return geo;
-  };
+  // A flat rectangle on the ground, facing up.
+  const rect = (x0, z0, x1, z1) => own(new THREE.PlaneGeometry(x1 - x0, z1 - z0)).rotateX(-Math.PI/2).translate((x0 + x1)/2, 0, (z0 + z1)/2);
   const flat = (geo, mat, y) => { const m = new THREE.Mesh(geo, mat); m.position.y = y; m.receiveShadow = true; cityGroup.add(m); return m; };
   for (const p of c.ponds){
     const X0 = p.x0*TILE, Z0 = p.z0*TILE, X1 = p.x1*TILE, Z1 = p.z1*TILE;
-    flat(rounded(X0 - 0.35, Z0 - 0.35, X1 + 0.35, Z1 + 0.35, 1.6), mud, 0.084);
-    flat(rounded(X0 + 0.05, Z0 + 0.05, X1 - 0.05, Z1 - 0.05, 1.3), water, 0.088);
+    flat(rect(X0 - 0.35, Z0 - 0.35, X1 + 0.35, Z1 + 0.35), mud, 0.084);
+    flat(rect(X0 + 0.05, Z0 + 0.05, X1 - 0.05, Z1 - 0.05), water, 0.088);
     // Lily pads and reeds.
-    const pad = G('lily', () => { const g = new THREE.CircleGeometry(0.28, 8); g.rotateX(-Math.PI/2); return g; }), padM = M('lily', 0x3f6b34);
+    const pad = G('lily', () => { const g = new THREE.PlaneGeometry(0.45, 0.45); g.rotateX(-Math.PI/2); return g; }), padM = M('lily', 0x3f6b34);
     for (let i=0;i<4;i++) flat(pad, padM, 0.092).position.set(rnd(X0 + 0.6, X1 - 0.6), 0.092, rnd(Z0 + 0.6, Z1 - 0.6));
-    const reed = G('reed', () => box(0.06, 0.8, 0.06, true)), reedM = M('reed', 0x6b7a3a);
-    for (let i=0;i<10;i++){ const e = mesh(reed, reedM, rnd(X0, X1), 0, rnd() < 0.5 ? Z0 + rnd(-0.2, 0.3) : Z1 - rnd(-0.2, 0.3), cityGroup, false); e.rotation.z = rnd(-0.25, 0.25); e.scale.y = rnd(0.6, 1.3); }
+    const reed = G('reed', () => boxes([[0.16,0.7,0.16,0,0.35,0], [0.16,0.5,0.16,0.18,0.25,0.06], [0.16,0.4,0.16,-0.1,0.2,0.16]])), reedM = M('reed', 0x6b7a3a);
+    for (let i=0;i<6;i++){ const e = mesh(reed, reedM, rnd(X0, X1), 0, rnd() < 0.5 ? Z0 + rnd(-0.2, 0.3) : Z1 - rnd(-0.2, 0.3), cityGroup, false); e.scale.y = rnd(0.7, 1.3); }
   }
   const scorchM = std(0x1f1c19, { roughness:1 }), hole = std(0x0e0d0c, { roughness:1 });
   for (const cr of c.craters){
     const g = new THREE.Group(); g.position.set(cr.x*TILE, 0, cr.z*TILE); cityGroup.add(g);
-    flat(own(new THREE.CircleGeometry(cr.r, 20)).rotateX(-Math.PI/2), scorchM, 0.086).position.set(cr.x*TILE, 0.086, cr.z*TILE);
-    flat(G('craterHole', () => new THREE.CircleGeometry(1.15, 16).rotateX(-Math.PI/2)), cr.wet ? water : hole, 0.09).position.set(cr.x*TILE, 0.09, cr.z*TILE);
-    // Thrown-up rim of broken ground.
+    flat(own(new THREE.PlaneGeometry(cr.r*1.8, cr.r*1.8)).rotateX(-Math.PI/2), scorchM, 0.086).position.set(cr.x*TILE, 0.086, cr.z*TILE);
+    flat(G('craterHole', () => new THREE.PlaneGeometry(2.1, 2.1).rotateX(-Math.PI/2)), cr.wet ? water : hole, 0.09).position.set(cr.x*TILE, 0.09, cr.z*TILE);
+    // Thrown-up rim of broken ground: blocks along a square round the hole.
+    const sq = (k, n, h) => { const p = k/n*4, sd = Math.floor(p), f = (p - sd)*2 - 1; return [[f*h, -h], [h, f*h], [-f*h, h], [-h, -f*h]][sd]; };
     for (let i=0;i<16;i++){
-      const a = i/16*Math.PI*2 + rnd(-0.15, 0.15), r = cr.r*rnd(0.78, 0.98), m = mesh(SH.rubbleGeo, SH.rubbleMat, Math.cos(a)*r, 0.05, Math.sin(a)*r, g);
-      m.scale.set(rnd(0.6, 1.2), rnd(0.25, 0.5), rnd(0.6, 1.2)); m.rotation.y = rnd(0, 3);
+      const [x, z] = sq(i, 16, cr.r*rnd(0.72, 0.85)), m = mesh(SH.rubbleGeo, SH.rubbleMat, x, 0.05, z, g);
+      m.scale.set(rnd(0.6, 1.2), rnd(0.3, 0.55), rnd(0.6, 1.2));
     }
-    for (let i=0;i<8;i++){ const a = rnd(0, 6.3), m = mesh(SH.rubbleGeo, SH.rubbleMat, Math.cos(a)*1.3, 0.12, Math.sin(a)*1.3, g); m.scale.setScalar(rnd(0.5, 0.9)); m.rotation.set(rnd(0, 3), rnd(0, 3), 0); }
+    for (let i=0;i<8;i++){ const [x, z] = sq(i, 8, 1.3), s = rnd(0.5, 0.9), m = mesh(SH.rubbleGeo, SH.rubbleMat, x, 0.23*s, z, g); m.scale.setScalar(s); }
   }
   if (c.debris.length){
     const im = own(new THREE.InstancedMesh(SH.rubbleGeo, SH.rubbleMat, c.debris.length*3));
     let k = 0;
     for (const [x, z] of c.debris) for (let i=0;i<3;i++){
-      dummy.position.set((x + rnd(-0.4, 0.4))*TILE, 0.06, (z + rnd(-0.4, 0.4))*TILE); dummy.rotation.set(rnd(0, 3), rnd(0, 3), 0); dummy.scale.setScalar(rnd(0.25, 0.6));
+      const s = rnd(0.25, 0.6); dummy.position.set((x + rnd(-0.4, 0.4))*TILE, 0.23*s, (z + rnd(-0.4, 0.4))*TILE); dummy.rotation.set(0, 0, 0); dummy.scale.setScalar(s);
       dummy.updateMatrix(); im.setMatrixAt(k++, dummy.matrix);
     }
     im.castShadow = im.receiveShadow = true; cityGroup.add(im);
@@ -227,7 +225,7 @@ function buildRaised(c){
   const cityGroup = world.cityGroup;
   for (const r of c.raised){
     const L = LOOK[r.kind], top = M('top-' + r.kind, L.top, { roughness:1 }), side = M('side-' + r.kind, L.side, { roughness:1, flatShading:true });
-    const w = (r.x1 - r.x0)*TILE, d = (r.z1 - r.z0)*TILE, inset = r.kind === 'knoll' ? 0.3 : 0;
+    const w = (r.x1 - r.x0)*TILE, d = (r.z1 - r.z0)*TILE, inset = 0;
     const geo = own(box(w, RAISE, d, true)), pos = geo.attributes.position;
     for (let i=0;i<pos.count;i++) if (pos.getY(i) > 0.01){ pos.setX(i, pos.getX(i) - Math.sign(pos.getX(i))*inset); pos.setZ(i, pos.getZ(i) - Math.sign(pos.getZ(i))*inset); }
     geo.computeVertexNormals();
@@ -242,18 +240,11 @@ function buildRaised(c){
     }
     for (const [x, z, dir] of r.ramps){
       const [dx, dz] = [[1,0],[-1,0],[0,1],[0,-1]][dir], cx = (x + 0.5)*TILE, cz = (z + 0.5)*TILE;
-      if (r.kind === 'terrace'){
-        // Four steps climbing toward the top.
-        for (let k=0;k<4;k++){
-          const st = mesh(G('step' + k, () => box(TILE, RAISE*(k + 1)/4, TILE*(4 - k)/4, true)), side, cx + dx*TILE*k/8, 0, cz + dz*TILE*k/8, cityGroup);
-          st.rotation.y = dx ? Math.PI/2 : 0;
-        }
-        continue;
+      // Four steps climbing toward the top (grass-topped on hills).
+      for (let k=0;k<4;k++){
+        const st = mesh(G('step' + k, () => box(TILE, RAISE*(k + 1)/4, TILE*(4 - k)/4, true)), r.kind === 'knoll' ? [side, side, top, side, side, side] : side, cx + dx*TILE*k/8, 0, cz + dz*TILE*k/8, cityGroup);
+        st.rotation.y = dx ? Math.PI/2 : 0;
       }
-      const wg = own(box(TILE, RAISE, TILE, true)), wp = wg.attributes.position;
-      for (let i=0;i<wp.count;i++) if (wp.getY(i) > 0.01 && wp.getX(i)*dx + wp.getZ(i)*dz < 0) wp.setY(i, 0.02);
-      wg.computeVertexNormals();
-      mesh(wg, r.kind === 'knoll' ? [side, side, top, side, side, side] : side, cx, 0, cz, cityGroup);
     }
   }
 }
@@ -266,7 +257,7 @@ function buildSmoke(c){
   if (!c.smoke.length) return;
   const rnd = srand(c.smoke.length*31 + c.n);
   const mat = own(new THREE.MeshStandardMaterial({ color:0x4a4744, roughness:1, transparent:true, opacity:0.3, depthWrite:false }));
-  const im = anim.smoke = own(new THREE.InstancedMesh(G('puff', () => new THREE.IcosahedronGeometry(1, 1)), mat, c.smoke.length*PUFFS));
+  const im = anim.smoke = own(new THREE.InstancedMesh(G('puff', () => new THREE.BoxGeometry(1.5, 1.5, 1.5)), mat, c.smoke.length*PUFFS));
   for (const s of c.smoke) for (let i=0;i<PUFFS;i++) anim.puffs.push({ x:s.x*TILE, z:s.z*TILE, y:(s.y || 0) + 0.6, s:s.s, ph:i/PUFFS*PUFF_T + rnd(0, 0.4), wx:rnd(0.5, 1), wz:rnd(-0.4, 0.4) });
   im.frustumCulled = false; im.renderOrder = 2; world.cityGroup.add(im);
   animateCity(0, 0);
@@ -276,13 +267,15 @@ export function animateCity(dt, t){
   const im = anim.smoke; if (!im) return;
   anim.puffs.forEach((p, i) => {
     const k = ((t + p.ph) % PUFF_T)/PUFF_T, sw = (0.35 + k*1.5)*p.s*(k > 0.75 ? (1 - k)/0.25 : 1);
-    dummy.position.set(p.x + k*k*3*p.wx*p.s, p.y + k*6.5*p.s, p.z + k*k*3*p.wz*p.s); dummy.rotation.set(k*2, i, 0); dummy.scale.setScalar(Math.max(0.01, sw));
+    dummy.position.set(p.x + k*k*3*p.wx*p.s, p.y + k*6.5*p.s, p.z + k*k*3*p.wz*p.s); dummy.rotation.set(0, i*Math.PI/2 + k*1.5, 0); dummy.scale.setScalar(Math.max(0.01, sw));
     dummy.updateMatrix(); im.setMatrixAt(i, dummy.matrix);
   });
   im.instanceMatrix.needsUpdate = true;
 }
 
 // ---------- Buildings ----------
+let doorAt = new Set();  // "x,z,dx,dz" of every searchable door (no window drawn over it)
+const LIT = [0.12, 0.25, 0.04];
 // Towers (windows, rooftop gear), houses (gabled roofs), warehouses (corrugated siding, roll-up
 // door) and the solid landmarks (pharmacy, hardware store, gas station shop: colour band, roof
 // sign, glass storefront). Children use the building's own materials so they fade with it.
@@ -296,27 +289,48 @@ function buildingMesh(b){
   if (plain){
     const m = std(b.ruined ? col.clone().multiplyScalar(0.8) : col, { roughness:1 });
     mats = [m,m,m,m,m,m]; uniq = [m];
-  } else {
-    const corr = b.style === 'warehouse', vr = corr ? 1 : Math.max(1, Math.round(h/2));
-    const tex = n => { const t = own((corr ? CORR_TEX : WIN_TEX[b.win]).clone()); t.needsUpdate = true; t.repeat.set(n, vr); return t; };
-    const mx = std(col, { map:tex(b.d) }), mz = std(col, { map:tex(b.w) });
-    const roof = std(col.clone().multiplyScalar(b.style === 'warehouse' ? 0.8 : 0.55), { roughness:1 });
+  } else if (b.style === 'warehouse'){
+    // Corrugated siding (vertical ribs).
+    const tex = n => { const t = own(CORR_TEX.clone()); t.needsUpdate = true; t.repeat.set(n, 1); return t; };
+    const mx = std(col, { map:tex(b.d) }), mz = std(col, { map:tex(b.w) }), roof = std(col.clone().multiplyScalar(0.8), { roughness:1 });
     mats = [mx,mx,roof,roof,mz,mz]; uniq = [mx,mz,roof];
+  } else {
+    const wall = std(col, { roughness:0.95 }), roof = std(col.clone().multiplyScalar(0.55), { roughness:1 });
+    mats = [wall,wall,roof,roof,wall,wall]; uniq = [wall,wall,roof];
   }
   const m = new THREE.Mesh(own(new THREE.BoxGeometry(w, h, d)), mats);
   m.position.set((b.x + b.w/2)*TILE, h/2, (b.z + b.d/2)*TILE);
   m.castShadow = m.receiveShadow = true;
   const add = (geo, mat, x, y, z) => mesh(geo, mat, x, y, z, m);
   const rnd = srand(b.seed || (b.x*131 + b.z*17));
+  if (!plain && b.style !== 'warehouse'){
+    // Window boxes on the two faces the camera sees, one per tile per floor (some lit), none over a
+    // door or a landmark's storefront; a darker base course and, on flat roofs, a parapet.
+    const dk = [], lt = [], lit = LIT[b.win || 0];
+    for (let y = L ? 2.35 : 0.95; y < h - (L ? 1 : 0.55); y += 1.25)
+      for (const onX of [true, false]){
+        const n = onX ? b.d : b.w, span = onX ? d : w;
+        for (let k=0;k<n;k++){
+          const tx = onX ? b.x + b.w - 1 : b.x + k, tz = onX ? b.z + k : b.z + b.d - 1;
+          if (y < 2 && doorAt.has(`${tx},${tz},${onX ? 1 : 0},${onX ? 0 : 1}`)) continue;
+          const a = -span/2 + (k + 0.5)*span/n, ww = span/n - 0.6;
+          (rnd() < lit ? lt : dk).push(onX ? [0.12, 0.66, ww, w/2 + 0.03, y - top, a] : [ww, 0.66, 0.12, a, y - top, d/2 + 0.03]);
+        }
+      }
+    if (dk.length){ const wm = std(0x1f232a, { roughness:0.4, metalness:0.2 }); add(own(boxes(dk)), wm, 0, 0, 0); uniq.push(wm); }
+    if (lt.length){ const lm = std(0xffd27a, { emissive:0xffb347, emissiveIntensity:0.45, roughness:0.6 }); add(own(boxes(lt)), lm, 0, 0, 0); uniq.push(lm); }
+    const base = std(col.clone().multiplyScalar(0.7), { roughness:1 }); uniq.push(base);
+    add(own(box(w + 0.14, 0.45, d + 0.14)), base, 0, -top + 0.225, 0);
+    if (b.style !== 'house' && !b.cut) add(own(boxes([[w + 0.1, 0.4, 0.28, 0, 0, d/2 - 0.09], [w + 0.1, 0.4, 0.28, 0, 0, -d/2 + 0.09], [0.28, 0.4, d + 0.1, w/2 - 0.09, 0, 0], [0.28, 0.4, d + 0.1, -w/2 + 0.09, 0, 0]])), base, 0, top + 0.2, 0);
+  }
   if (b.cut){
     // Collapsed upper floors: jagged chunks of the old walls, a torn floor slab, bent rebar.
     const conc = std(col.clone().multiplyScalar(0.75), { roughness:1 }), rebar = std(0x5a3a28, { roughness:0.8, metalness:0.4 });
     for (const [fx, fz, fw, fd, ch] of b.chunks){
       const c = add(own(box(w*fw, ch, d*fd, true)), [mats[0], mats[1], conc, conc, mats[4], mats[5]], -w/2 + (fx + fw/2)*w, top, -d/2 + (fz + fd/2)*d);
-      c.rotation.y = rnd(-0.06, 0.06);
     }
-    const slab = add(own(box(w + 0.25, 0.14, d + 0.25)), conc, rnd(-0.1, 0.1), top + 0.02, rnd(-0.1, 0.1)); slab.rotation.z = rnd(-0.06, 0.06); slab.rotation.x = rnd(-0.06, 0.06);
-    for (let i=0;i<6;i++){ const r = add(G('rebar', () => box(0.06, 1.3, 0.06, true)), rebar, rnd(-w/2, w/2), top, rnd(-d/2, d/2)); r.rotation.set(rnd(-0.6, 0.6), 0, rnd(-0.6, 0.6)); }
+    add(own(box(w + 0.25, 0.16, d + 0.25)), conc, rnd(-0.1, 0.1), top + 0.02, rnd(-0.1, 0.1));
+    for (let i=0;i<5;i++) add(G('rebar', () => box(0.12, 1, 0.12, true)), rebar, rnd(-w/2 + 0.3, w/2 - 0.3), top, rnd(-d/2 + 0.3, d/2 - 0.3)).scale.y = rnd(0.5, 1.3);
     uniq.push(conc, rebar);
   }
   if (b.cut || b.soot){
@@ -325,37 +339,38 @@ function buildingMesh(b){
     for (let i=0;i<(b.holes || 2);i++){
       const onX = rnd() < 0.5, hw = rnd(0.8, 1.6), hh = rnd(0.8, 1.5), y = rnd(-top + 1, Math.max(-top + 1, top - 2.4));
       const along = onX ? rnd(-d/2 + hw/2, d/2 - hw/2) : rnd(-w/2 + hw/2, w/2 - hw/2), at = (o, e) => onX ? [w/2 + o, along] : [along, d/2 + o];
-      const [hx, hz] = at(0.02), [sx, sz] = at(0.03), sh = Math.min(1.6, top - y - hh/2);
-      add(own(onX ? box(0.06, hh, hw) : box(hw, hh, 0.06)), dark, hx, y, hz);
-      if (sh > 0.2) add(own(onX ? box(0.05, sh, hw*0.8) : box(hw*0.8, sh, 0.05)), soot, sx, y + hh/2 + sh/2, sz);
+      const [hx, hz] = at(0.1), [sx, sz] = at(0.11), sh = Math.min(1.6, top - y - hh/2);
+      add(own(onX ? box(0.12, hh, hw) : box(hw, hh, 0.12)), dark, hx, y, hz);
+      if (sh > 0.2) add(own(onX ? box(0.1, sh, hw*0.8) : box(hw*0.8, sh, 0.1)), soot, sx, y + hh/2 + sh/2, sz);
     }
     uniq.push(dark, soot);
   }
   if (b.style === 'house' || b.style === 'crypt'){
     // Gable roof along the long side; its triangular ends are plain wall. Burnt houses: charred, or
     // caved in to a few blackened rafters.
-    const ridgeX = b.w >= b.d, span = (ridgeX ? d : w) + 0.4, len = (ridgeX ? w : d) + 0.4, rh = Math.min(1.5, span*0.36);
+    const ridgeX = b.w >= b.d, span = (ridgeX ? d : w) + 0.4, len = (ridgeX ? w : d) + 0.4;
     const roof = std(b.burnt ? 0x1a1816 : b.roof, { roughness:1 });
     if (b.caved){
       for (let i=0;i<5;i++){
-        const a = (i/4 - 0.5)*len*0.85, r = add(G('rafter', () => box(0.12, 0.12, 1, true)), roof, ridgeX ? a : 0, top, ridgeX ? 0 : a);
-        r.scale.z = span*rnd(0.4, 0.95); r.rotation.y = ridgeX ? 0 : Math.PI/2; r.rotation.x = rnd(-0.4, 0.4);
+        const a = (i/4 - 0.5)*len*0.85, r = add(G('rafter', () => box(0.16, 0.16, 1, true)), roof, ridgeX ? a : 0, top, ridgeX ? 0 : a);
+        r.scale.z = span*rnd(0.4, 0.95); r.rotation.y = ridgeX ? 0 : Math.PI/2;
       }
       uniq.push(roof);
     } else {
-      const shape = new THREE.Shape(); shape.moveTo(-span/2, 0); shape.lineTo(span/2, 0); shape.lineTo(0, rh); shape.closePath();
-      const geo = own(new THREE.ExtrudeGeometry(shape, { depth:len, bevelEnabled:false })); geo.translate(0, 0, -len/2);
+      // Stepped roof: three boxes narrowing toward the ridge, the lowest overhanging the walls.
+      const tiers = [[1, 0.4], [0.64, 0.38], [0.3, 0.36]], parts = []; let y0 = 0;
+      for (const [f, th] of tiers){ parts.push(ridgeX ? [len, th, span*f, 0, y0 + th/2, 0] : [span*f, th, len, 0, y0 + th/2, 0]); y0 += th; }
       const cap = std(col);
-      const r = add(geo, [cap, roof], 0, top, 0); if (ridgeX) r.rotation.y = Math.PI/2;
+      add(own(boxes(parts)), roof, 0, top, 0);
       if (b.style === 'crypt'){
         // Dark doorway on the camera side and a cross on the ridge.
         const dk = std(0x111111, { roughness:1 });
         add(G('cryptDoor', () => box(0.7, 1.4, 0.06, true)), dk, 0, -top, d/2 + 0.02);
-        add(G('crossV', () => box(0.12, 0.8, 0.12, true)), cap, 0, top + rh - 0.1, 0); add(G('crossH', () => box(0.5, 0.12, 0.12)), cap, 0, top + rh + 0.45, 0);
+        add(G('crossV', () => box(0.16, 0.8, 0.16, true)), cap, 0, top + y0 - 0.05, 0); add(G('crossH', () => box(0.5, 0.16, 0.16)), cap, 0, top + y0 + 0.45, 0);
         uniq.push(dk);
       } else if (rnd() < 0.5 && !b.burnt){
         const a = len*0.25, s = span*0.15;
-        add(G('chimney', () => box(0.4, 1, 0.4, true)), roof, ridgeX ? a : s, top, ridgeX ? s : a).scale.y = rh + 0.35;
+        add(G('chimney', () => box(0.45, 1, 0.45, true)), roof, ridgeX ? a : s, top, ridgeX ? s : a).scale.y = y0 + 0.35;
       }
       uniq.push(cap, roof);
     }
@@ -363,14 +378,15 @@ function buildingMesh(b){
     if (b.ac) add(own(new THREE.BoxGeometry(Math.min(1.2,w*0.4),0.5,Math.min(0.9,d*0.4))), uniq[2], w*0.15, top + 0.25, -d*0.1);
     if (w*d > 14 && rnd() < 0.4){
       // Water tank on legs.
-      const t = add(G('tank', () => new THREE.CylinderGeometry(0.75,0.75,1.2,10)), uniq[2], -w*0.2, top + 1.5, d*0.15);
-      for (const [lx,lz] of [[-0.5,-0.5],[0.5,-0.5],[-0.5,0.5],[0.5,0.5]]) add(G('leg', () => box(0.1, 0.9, 0.1)), uniq[2], -w*0.2 + lx, top + 0.45, d*0.15 + lz);
+      const t = add(G('tank', () => boxes([[1.4,1.1,1.4,0,0,0], [1.0,0.3,1.0,0,0.7,0]])), uniq[2], -w*0.2, top + 1.45, d*0.15);
+      for (const [lx,lz] of [[-0.55,-0.55],[0.55,-0.55],[-0.55,0.55],[0.55,0.55]]) add(G('leg', () => box(0.2, 0.9, 0.2)), uniq[2], -w*0.2 + lx, top + 0.45, d*0.15 + lz);
       t.castShadow = true;
     }
     if (h > 13 && rnd() < 0.5){ const a = add(SH.poleGeo, uniq[2], 0, top, 0); a.scale.set(1, 3.5, 1); }
+    if (w > 4 && d > 4) add(G('stairHut', () => box(1.3, 1.0, 1.3, true)), uniq[2], -w/2 + 1.0, top, -d/2 + 1.0);
   } else if (b.style === 'warehouse'){
     const dm = std(0x3c3f44, { roughness:0.6, metalness:0.3 });
-    if (!b.cut) add(G('rollup', () => box(2.2, 2.2, 0.08)), dm, Math.min(0, w/2 - 1.6), -top + 1.1, d/2 + 0.04);
+    if (!b.cut) add(G('rollup', () => boxes([[2.2, 2.2, 0.12, 0, 0, 0], [2.4, 0.16, 0.18, 0, 1.1, 0]])), dm, Math.min(0, w/2 - 1.6), -top + 1.1, d/2 + 0.05);
     if (b.ac && !b.cut) add(own(new THREE.BoxGeometry(Math.min(1.4,w*0.4),0.6,Math.min(1,d*0.4))), uniq[2], -w*0.2, top + 0.3, 0);
     uniq.push(dm);
   }
@@ -383,8 +399,8 @@ function buildingMesh(b){
       const tx = fx ? (fx > 0 ? b.x + b.w - 1 : b.x) : b.x + k, tz = fx ? b.z + k : (fz > 0 ? b.z + b.d - 1 : b.z);
       if (tx === b.door[0] && tz === b.door[1]) continue;
       const px = (tx + 0.5)*TILE - m.position.x + fx*TILE*0.43, pz = (tz + 0.5)*TILE - m.position.z + fz*TILE*0.43;
-      add(G('pane' + (fx ? 'x' : 'z'), () => fx ? box(0.06, 1.3, TILE - 0.5) : box(TILE - 0.5, 1.3, 0.06)), glass, px, -top + 1.35, pz);
-      if (L.grille) for (let i=-2;i<=2;i++) add(G('grille', () => box(0.07, 1.4, 0.07)), band, px + fx*0.05 + (fx ? 0 : i*0.3), -top + 1.35, pz + fz*0.05 + (fx ? i*0.3 : 0));
+      add(G('pane' + (fx ? 'x' : 'z'), () => fx ? box(0.12, 1.3, TILE - 0.5) : box(TILE - 0.5, 1.3, 0.12)), glass, px, -top + 1.35, pz);
+      if (L.grille) for (let i=-2;i<=2;i++) add(G('grille', () => box(0.12, 1.4, 0.12)), band, px + fx*0.05 + (fx ? 0 : i*0.3), -top + 1.35, pz + fz*0.05 + (fx ? i*0.3 : 0));
     }
     uniq.push(band, glass);
     // Roof sign angled toward the camera.
@@ -491,10 +507,7 @@ function buildInterior(it, idx){
 // Landmark furniture and yard clutter from cityGen's props list. Returns tile -> open(), the
 // visual for searching the prop (a shelf emptied, a locker door swung open, a drawer pulled out).
 const D4S = [[1,0],[-1,0],[0,1],[0,-1]];
-const tentGeo = () => G('tent', () => {
-  const sh = new THREE.Shape(); sh.moveTo(-0.95, 0); sh.lineTo(0.95, 0); sh.lineTo(0, 1.6); sh.closePath();
-  const e = new THREE.ExtrudeGeometry(sh, { depth:1.9, bevelEnabled:false }); e.translate(0, 0, -0.95); return e;
-});
+const tentGeo = () => G('tent', () => boxes([[1.9,0.8,1.9,0,0.4,0], [1.4,0.42,1.9,0,1.01,0], [0.8,0.34,1.9,0,1.39,0]]));  // box tent, stepped roof
 // Chain-link mesh: a square grid, see-through (alpha-tested) on a thin box panel.
 const chainMat = () => G('chainMesh', () => new THREE.MeshStandardMaterial({ map:canvasTex(64, (g, s) => {
   g.fillStyle = '#9aa0a6'; for (let k=0;k<s;k+=16){ g.fillRect(k, 0, 3, s); g.fillRect(0, k, s, 3); }
@@ -512,7 +525,7 @@ const fenceRun = (st, H) => G('frun-' + st, () => {
 // Lattice for crane mast and jib (yellow frame with X bracing), repeated rx × ry times.
 const latticeMat = (rx, ry) => std(0xffffff, { map:canvasTex(64, (g, s) => {
   g.strokeStyle = '#d9a21b'; g.lineWidth = 6; g.strokeRect(3, 3, s - 6, s - 6); g.lineWidth = 4;
-  g.beginPath(); g.moveTo(0, 0); g.lineTo(s, s); g.moveTo(s, 0); g.lineTo(0, s); g.stroke();
+  g.fillStyle = '#d9a21b'; g.fillRect(0, s/2 - 3, s, 6);
 }, rx, ry), alphaTest:0.4, side:THREE.DoubleSide, roughness:0.7 });
 // Painted signs: quarantine notice, ROAD CLOSED board, orange-and-white barricade stripes.
 const signTex = kind => G('sign-' + kind, () => {
@@ -541,7 +554,7 @@ function buildProps(c){
       let n = 0;
       for (const sd of [-1,1]) for (const y of [0.3, 0.75, 1.2]) for (let i=0;i<4;i++){
         if (Math.random() < 0.15) continue;
-        dummy.position.set(-0.62 + i*0.41, y, sd*0.36); dummy.rotation.set(0, mr(-0.1,0.1), 0); dummy.scale.set(1, mr(0.8,1.25), 1); dummy.updateMatrix();
+        dummy.position.set(-0.62 + i*0.41, y, sd*0.36); dummy.rotation.set(0, 0, 0); dummy.scale.set(1, mr(0.8,1.25), 1); dummy.updateMatrix();
         im.setMatrixAt(n, dummy.matrix); im.setColorAt(n++, col.copy(mpick(SH.goodsMats).color));
       }
       im.count = n; im.castShadow = true; g.add(im);
@@ -558,7 +571,7 @@ function buildProps(c){
     } else if (p.kind === 'armory'){
       mesh(SH.armoryGeo, SH.armoryMat, 0, 0, 0, g);
       const guns = new THREE.Group(); g.add(guns);
-      for (let i=0;i<4;i++){ const r = mesh(SH.rifleGeo, SH.darkMetalMat, -0.55 + i*0.37, 0.4, 0.38, guns); r.rotation.x = -0.18; }
+      for (let i=0;i<4;i++){ mesh(SH.rifleGeo, SH.darkMetalMat, -0.55 + i*0.37, 0.4, 0.36, guns); }
       open = () => { guns.visible = false; };
     } else if (p.kind === 'desk'){
       mesh(SH.deskGeo, SH.woodMat, 0, 0, 0, g);
@@ -577,8 +590,8 @@ function buildProps(c){
       const s = mesh(G('pylonSign', () => box(1.9, 1.1, 0.22)), signMats(p.lm), 0, 4.6, 0, g);
       s.rotation.y = Math.PI/4 - g.rotation.y;
     } else if (p.kind === 'lumber'){
-      const ls = []; for (let i=0;i<3;i++){ const l = mesh(SH.lumberGeo, SH.lumberMat, mr(-0.08,0.08), i*0.24, mr(-0.08,0.08), g); l.rotation.y = mr(-0.08,0.08); ls.push(l); }
-      if (p.search) open = () => { ls[2].visible = false; ls[1].rotation.y = 0.5; };
+      const ls = []; for (let i=0;i<3;i++) ls.push(mesh(SH.lumberGeo, SH.lumberMat, mr(-0.08,0.08), i*0.24, mr(-0.08,0.08), g));
+      if (p.search) open = () => { ls[2].visible = false; ls[1].position.x += 0.45; };
     } else if (p.kind === 'cart'){
       g.position.x += mr(-0.4,0.4); g.position.z += mr(-0.4,0.4);
       mesh(SH.cartGeo, SH.metalMat, 0, 0.3, 0, g);
@@ -592,7 +605,7 @@ function buildProps(c){
       mesh(G('blanket', () => box(1.0, 0.06, 0.94, true)), SH.blanketMat, -0.25, 0.55, 0, g, false);
     } else if (p.kind === 'gurney'){
       mesh(G('gurney', () => box(1.6, 0.12, 0.7, true)), SH.whiteMat, 0, 0.75, 0, g);
-      for (const [lx, lz] of [[-0.65,-0.25],[0.65,-0.25],[-0.65,0.25],[0.65,0.25]]) mesh(SH.poleGeo, SH.metalMat, lx, 0, lz, g, false).scale.set(0.6, 0.75, 0.6);
+      for (const [lx, lz] of [[-0.65,-0.25],[0.65,-0.25],[-0.65,0.25],[0.65,0.25]]) mesh(SH.poleGeo, SH.metalMat, lx, 0, lz, g, false).scale.set(0.8, 0.75, 0.8);
     } else if (p.kind === 'medcab'){
       mesh(SH.lockerGeo, SH.whiteMat, 0, 0, 0, g);
       const h = new THREE.Group(); h.position.set(-0.72, 0.1, 0.31); g.add(h);
@@ -607,10 +620,10 @@ function buildProps(c){
       const med = p.kind === 'medtent', t = mesh(tentGeo(), med ? M('medTent', 0xd8d4c8, { side:THREE.DoubleSide }) : SH.tentMat, 0, 0, 0, g);
       t.rotation.y = Math.PI/2;
       // First-aid tent: a red cross on both ends.
-      if (med) for (const sd of [-1, 1]){ mesh(G('tcA', () => box(0.5, 0.14, 0.03)), SH.redMat, 0, 0.62, sd*0.97, t, false); mesh(G('tcB', () => box(0.14, 0.5, 0.03)), SH.redMat, 0, 0.62, sd*0.97, t, false); }
+      if (med) for (const sd of [-1, 1]){ mesh(G('tcA', () => box(0.5, 0.16, 0.04)), SH.redMat, 0, 0.5, sd*0.96, t, false); mesh(G('tcB', () => box(0.16, 0.5, 0.04)), SH.redMat, 0, 0.5, sd*0.96, t, false); }
     } else if (p.kind === 'tower'){
       // Watchtower: four legs, a platform with a sandbag rim, a little roof.
-      for (const [lx, lz] of [[-0.7,-0.7],[0.7,-0.7],[-0.7,0.7],[0.7,0.7]]) mesh(SH.poleGeo, SH.woodMat, lx, 0, lz, g).scale.set(1.6, 3.4, 1.6);
+      for (const [lx, lz] of [[-0.7,-0.7],[0.7,-0.7],[-0.7,0.7],[0.7,0.7]]) mesh(SH.poleGeo, SH.woodMat, lx, 0, lz, g).scale.set(1.5, 3.4, 1.5);
       mesh(G('towerDeck', () => box(1.9, 0.15, 1.9, true)), SH.woodMat, 0, 3.4, 0, g);
       mesh(G('towerRim', () => box(1.9, 0.55, 1.9, true)), SH.sandbagMat, 0, 3.55, 0, g);
       for (const [lx, lz] of [[-0.85,-0.85],[0.85,-0.85],[-0.85,0.85],[0.85,0.85]]) mesh(SH.poleGeo, SH.woodMat, lx, 3.55, lz, g, false).scale.set(1, 1.3, 1);
@@ -643,7 +656,7 @@ function buildProps(c){
     } else if (p.kind === 'jersey'){
       // Concrete barriers, two to a tile, with an orange reflector strip.
       for (const sd of [-0.5, 0.5]){
-        const k = new THREE.Group(); k.position.x = sd*TILE*0.5; k.rotation.y = mr(-0.12, 0.12); g.add(k);
+        const k = new THREE.Group(); k.position.set(sd*TILE*0.5, 0, mr(-0.1, 0.1)); g.add(k);
         mesh(G('jerseyLow', () => box(0.95, 0.3, 0.62, true)), M('concrete', 0xb3afa5), 0, 0, 0, k);
         mesh(G('jerseyHigh', () => box(0.95, 0.55, 0.32, true)), M('concrete', 0xb3afa5), 0, 0.3, 0, k);
         mesh(G('jerseyStripe', () => box(0.96, 0.1, 0.34, true)), M('reflect', 0xd9822b, { emissive:0x7a3a08, emissiveIntensity:0.5 }), 0, 0.65, 0, k, false);
@@ -656,9 +669,10 @@ function buildProps(c){
     } else if (p.kind === 'heap'){
       // Rubble from a collapsed building: broken blocks, slabs of floor and rebar.
       const rnd = srand(p.seed);
-      for (let i=0;i<7;i++){ const m = mesh(SH.rubbleGeo, SH.rubbleMat, rnd(-0.6, 0.6), rnd(0.15, 0.55), rnd(-0.6, 0.6), g); m.scale.setScalar(rnd(1, 1.9)); m.rotation.set(rnd(0, 3), rnd(0, 3), 0); }
-      for (let i=0;i<2;i++){ const sl = mesh(G('heapSlab', () => box(1.4, 0.16, 0.9)), M('concrete', 0xb3afa5), rnd(-0.4, 0.4), rnd(0.5, 0.9), rnd(-0.4, 0.4), g); sl.rotation.set(rnd(-0.6, 0.6), rnd(0, 3), rnd(-0.6, 0.6)); }
-      for (let i=0;i<3;i++){ const r = mesh(G('rebarP', () => box(0.06, 1.4, 0.06, true)), M('rebar', 0x5a3a28, { metalness:0.4 }), rnd(-0.6, 0.6), 0.4, rnd(-0.6, 0.6), g, false); r.rotation.set(rnd(-0.8, 0.8), 0, rnd(-0.8, 0.8)); }
+      // A stepped pile: big blocks at the bottom, smaller ones and slabs higher up, a few rebar stubs.
+      for (let i=0;i<7;i++){ const s = rnd(1, 1.9) - i*0.08, m = mesh(SH.rubbleGeo, SH.rubbleMat, rnd(-0.6, 0.6)*(1 - i/10), 0.23*s + (i > 3 ? 0.4 : 0), rnd(-0.6, 0.6)*(1 - i/10), g); m.scale.setScalar(s); m.rotation.y = i % 2 ? Math.PI/2 : 0; }
+      for (let i=0;i<2;i++) mesh(G('heapSlab', () => box(1.4, 0.18, 0.9)), M('concrete', 0xb3afa5), rnd(-0.4, 0.4), 0.85 + i*0.18, rnd(-0.4, 0.4), g).rotation.y = i*Math.PI/2;
+      for (let i=0;i<2;i++) mesh(G('rebarP', () => box(0.12, 0.9, 0.12, true)), M('rebar', 0x5a3a28, { metalness:0.4 }), rnd(-0.5, 0.5), 0.5, rnd(-0.5, 0.5), g, false);
     } else if (p.kind === 'bus'){
       // A bus slewed across both lanes, sometimes on its side or burnt out.
       g.position.set(p.cx*TILE, 0, p.cz*TILE);
@@ -668,7 +682,7 @@ function buildProps(c){
       mesh(G('busWin', () => box(4.0, 0.5, 1.77)), glass, -0.1, 0.35, 0, body, false);
       mesh(G('busShield', () => box(0.05, 0.75, 1.5)), glass, 2.31, 0.25, 0, body, false);
       if (!p.burnt) mesh(G('busStripe', () => box(4.62, 0.12, 1.77)), carMat(p.stripe), 0, -0.25, 0, body, false);
-      const wg = G('busWheel', () => { const w = new THREE.CylinderGeometry(0.42, 0.42, 0.25, 12); w.rotateX(Math.PI/2); return w; });
+      const wg = G('busWheel', () => box(0.82, 0.82, 0.25));
       for (const wx of [-1.5, -0.8, 1.5]) for (const wz of [-0.8, 0.8]) mesh(wg, M('wheel', 0x16171a), wx, -0.78, wz, body);
     } else if (p.kind === 'crane'){
       // Tower crane: lattice mast and jib, cab, counterweight and a load hanging off the hook.
@@ -681,31 +695,27 @@ function buildProps(c){
       mesh(G('craneCab', () => box(1.1, 0.95, 1.0, true)), solid, 0.55, H - 0.95, 0.7, g);
       mesh(G('craneApex', () => box(0.35, 2.4, 0.35, true)), solid, 0, H + 0.6, 0, g);
       mesh(own(box(1.5, 1.0, 0.9, true)), conc, -J*0.24, H - 0.4, 0, g);
-      const tie = mesh(own(box(J*0.75, 0.05, 0.05)), cable, J*0.36, H + 2.1, 0, g, false); tie.rotation.z = -Math.atan2(2.1, J*0.72);
       const hx = J*0.55, L = H*0.55;
       mesh(G('trolley', () => box(0.6, 0.25, 0.7, true)), solid, hx, H - 0.25, 0, g, false);
-      mesh(own(box(0.04, L, 0.04, true)), cable, hx, H - L, 0, g, false);
+      mesh(own(box(0.1, L, 0.1, true)), cable, hx, H - L, 0, g, false);
       mesh(G('hook', () => box(0.35, 0.4, 0.3, true)), solid, hx, H - L - 0.4, 0, g);
       const load = mesh(G('craneLoad', () => box(2.2, 0.28, 0.45, true)), M('steel', 0x7a4a2e, { metalness:0.3 }), hx, H - L - 0.75, 0, g); load.rotation.y = mr(-0.5, 0.5);
       mast.userData.mats = [mastM, jibM, solid, conc, cable]; mast.userData.center = g.position;
       jib.userData.fadeKey = mast; world.buildingMeshes.push(mast, jib);
     } else if (p.kind === 'pipes'){
       // Concrete drainage pipes, two lying side by side and one on top.
-      const pg = G('pipe', () => { const q = new THREE.CylinderGeometry(0.42, 0.42, 1.7, 14); q.rotateZ(Math.PI/2); return q; });
-      const ig = G('pipeEnd', () => { const q = new THREE.CircleGeometry(0.31, 12); q.rotateY(Math.PI/2); return q; });
-      for (const [py, pz] of [[0.42, -0.43], [0.42, 0.43], [1.15, 0]]){
-        mesh(pg, M('concrete', 0xb3afa5), 0, py, pz, g);
-        for (const sd of [-1, 1]){ const e = mesh(ig, M('pipeIn', 0x2a2826), sd*0.86, py, pz, g, false); e.rotation.y = sd > 0 ? 0 : Math.PI; }
-      }
+      // Square concrete culverts, two side by side and one on top, dark openings at the ends.
+      const pg = G('pipe', () => box(1.7, 0.8, 0.8)), ig = G('pipeEnd', () => box(1.72, 0.56, 0.56));
+      for (const [py, pz] of [[0.4, -0.42], [0.4, 0.42], [1.2, 0]]){ mesh(pg, M('concrete', 0xb3afa5), 0, py, pz, g); mesh(ig, M('pipeIn', 0x2a2826), 0, py, pz, g, false); }
     } else if (p.kind === 'grave'){
       // A row of headstones (slabs, crosses, an obelisk), some leaning, over mounds; some dug open.
       const rnd = srand(p.seed), stone = M('stone', 0x8d8a84), dirt = M('graveDirt', 0x3e3226), hole = M('graveHole', 0x0d0b09);
       for (let i=0;i<p.n;i++){
-        const x = (i - (p.n - 1)/2)*0.62, k = new THREE.Group(); k.position.set(x, 0, -0.45); k.rotation.set(rnd(-0.15, 0.08), rnd(-0.15, 0.15), rnd(-0.15, 0.15)); g.add(k);
+        const x = (i - (p.n - 1)/2)*0.62, k = new THREE.Group(); k.position.set(x, 0, -0.45); g.add(k);
         const r = rnd();
-        if (r < 0.55){ mesh(G('stoneSlab', () => box(0.44, 0.55, 0.12, true)), stone, 0, 0, 0, k); mesh(G('stoneTop', () => { const q = new THREE.CylinderGeometry(0.22, 0.22, 0.12, 12); q.rotateX(Math.PI/2); return q; }), stone, 0, 0.55, 0, k); }
-        else if (r < 0.85){ mesh(G('crossPost', () => box(0.12, 0.85, 0.12, true)), stone, 0, 0, 0, k); mesh(G('crossArm', () => box(0.46, 0.12, 0.12)), stone, 0, 0.6, 0, k); }
-        else mesh(G('obelisk', () => new THREE.CylinderGeometry(0.06, 0.2, 1.2, 4)), stone, 0, 0.6, 0, k);
+        if (r < 0.55) mesh(G('stoneSlab', () => boxes([[0.44,0.6,0.16,0,0.3,0], [0.3,0.12,0.16,0,0.66,0], [0.54,0.1,0.26,0,0.05,0]])), stone, 0, 0, 0, k);
+        else if (r < 0.85) mesh(G('stoneCross', () => boxes([[0.16,0.9,0.16,0,0.45,0], [0.5,0.16,0.16,0,0.62,0]])), stone, 0, 0, 0, k);
+        else mesh(G('obelisk', () => boxes([[0.4,0.2,0.4,0,0.1,0], [0.28,0.8,0.28,0,0.6,0], [0.18,0.3,0.18,0,1.15,0]])), stone, 0, 0, 0, k);
         if (rnd() < 0.3){
           // Dug open from below: a black hole and the earth heaped beside it.
           const h = mesh(G('graveOpen', () => { const q = new THREE.PlaneGeometry(0.45, 0.85); q.rotateX(-Math.PI/2); return q; }), hole, x, 0.09, 0.15, g, false); h.receiveShadow = false;
@@ -714,10 +724,10 @@ function buildProps(c){
       }
     } else if (p.kind === 'barrel'){
       // Rusty oil drum; a lit one burns (its flame flickers in animateCity()).
-      mesh(G('barrel', () => new THREE.CylinderGeometry(0.32, 0.3, 0.85, 12)), M('rust', 0x6b3a22, { metalness:0.4 }), 0, 0.425, 0, g);
+      mesh(G('barrel', () => boxes([[0.58,0.85,0.58,0,0,0], [0.64,0.08,0.64,0,0.22,0], [0.64,0.08,0.64,0,-0.22,0]])), M('rust', 0x6b3a22, { metalness:0.4 }), 0, 0.425, 0, g);
       if (p.lit){
         const f = std(0xff8a2a, { emissive:0xff5a00, emissiveIntensity:1.5, roughness:1 }); f.userData.ph = mr(0, 6); anim.fires.push(f);
-        mesh(G('flame', () => new THREE.ConeGeometry(0.26, 0.7, 7)), f, 0, 1.15, 0, g, false).rotation.y = mr(0, 3);
+        mesh(G('flame', () => boxes([[0.42,0.3,0.42,0,-0.2,0], [0.28,0.25,0.28,0,0.07,0], [0.14,0.2,0.14,0,0.28,0]])), f, 0, 1.15, 0, g, false);
       }
     } else if (p.kind === 'canopy'){
       // Gas station canopy over the pumps; fades like a building when it hides the player.
@@ -772,7 +782,7 @@ function buildContainers(c, opens){
       g.add(frame, hinge);
       if (lmDoor){
         const sign = new THREE.Mesh(G('doorSign', () => new THREE.BoxGeometry(1.9,0.45,0.1)), signMats(ct.lm)); sign.position.set(0,2.25,0.06); g.add(sign);
-        const aw = mesh(G('awning', () => box(2.3, 0.08, 1.1)), awningMat(ct.lm), 0, 2.62, 0.5, g); aw.rotation.x = 0.28;
+        mesh(G('awning', () => box(2.3, 0.16, 1.1)), awningMat(ct.lm), 0, 2.6, 0.5, g);
       }
       cityGroup.add(g);
       ct.open = () => { hinge.rotation.y = -1.35; };
@@ -787,11 +797,11 @@ function buildContainers(c, opens){
         g.add(body, lid); cityGroup.add(g);
         ct.open = () => { lid.rotation.x = -1.2; };
       } else if (ct.kind === 'crate'){
-        const g = new THREE.Group(); g.position.set(cx,0,cz); g.rotation.y = mr(-0.3,0.3);
+        const g = new THREE.Group(); g.position.set(cx + mr(-0.2,0.2),0,cz + mr(-0.2,0.2));
         const body = new THREE.Mesh(SH.crateBody, SH.crateMat); body.castShadow = body.receiveShadow = true;
         const lid = new THREE.Mesh(SH.crateLid, SH.crateLidMat); lid.position.y = 1.0; lid.castShadow = true;
         g.add(body, lid); cityGroup.add(g);
-        ct.open = () => { lid.position.set(0.55,0.06,0.75); lid.rotation.set(0,0.6,0.1); };
+        ct.open = () => { lid.position.set(0.3,0.06,0.85); };
       }
     }
     const gl = new THREE.Mesh(SH.glintGeo, SH.glintMat); gl.position.set(gx, gy, gz); cityGroup.add(gl);
@@ -802,21 +812,21 @@ function buildContainers(c, opens){
 function buildCrystal(tile, level){
   const g = new THREE.Group();
   g.position.set((tile.x+0.5)*TILE, 0, (tile.z+0.5)*TILE);
-  const ped = new THREE.Mesh(own(new THREE.CylinderGeometry(0.9,1.15,0.5,8)), std(0x2d2a33, { roughness:1 }));
-  ped.position.y = 0.25; ped.castShadow = ped.receiveShadow = true; g.add(ped);
-  const mat = std(0x9d6bff, { emissive:0x5a22e0, emissiveIntensity:0.9, roughness:0.2, metalness:0.1, flatShading:true });
-  const mesh = new THREE.Mesh(own(new THREE.OctahedronGeometry(0.8,0)), mat);
-  mesh.scale.set(1,1.8,1); mesh.position.y = 2.1; mesh.castShadow = true; g.add(mesh);
+  // A square column of crystal turned 45° (it spins), on a stepped square pedestal ringed by square shards.
+  const ped = new THREE.Mesh(own(boxes([[2.3,0.25,2.3,0,0.125,0], [1.7,0.3,1.7,0,0.4,0]])), std(0x2d2a33, { roughness:1 }));
+  ped.castShadow = ped.receiveShadow = true; g.add(ped);
+  const mat = std(0x9d6bff, { emissive:0x5a22e0, emissiveIntensity:0.9, roughness:0.2, metalness:0.1 });
+  const mesh = new THREE.Mesh(own(boxes([[0.95,2.4,0.95,0,0,0], [0.6,0.4,0.6,0,1.4,0]])), mat);
+  mesh.rotation.y = Math.PI/4; mesh.position.y = 2.1; mesh.castShadow = true; g.add(mesh);
   const shards = [];
-  const sg = own(new THREE.OctahedronGeometry(0.25,0));
-  for (let i=0;i<5;i++){
-    const s = new THREE.Mesh(sg, mat); const a = i/5*Math.PI*2;
-    s.position.set(Math.cos(a)*0.9, 0.6, Math.sin(a)*0.9); s.scale.y = 1.8; s.rotation.z = mr(-0.4,0.4); g.add(s); shards.push(s);
+  const sg = own(new THREE.BoxGeometry(0.3, 0.8, 0.3));
+  for (const [sx, sz, h] of [[0.65,0.65,1],[-0.65,0.65,0.75],[0.65,-0.65,0.8],[-0.65,-0.65,1.1]]){
+    const s = new THREE.Mesh(sg, mat); s.position.set(sx, 0.55 + 0.4*h, sz); s.scale.y = h; g.add(s); shards.push(s);
   }
   const light = new THREE.PointLight(0xa070ff, 2.4, 16, 2); light.position.y = 2.2; g.add(light);
   const beamMat = own(new THREE.MeshBasicMaterial({ color:0xa070ff, transparent:true, opacity:0.2, blending:THREE.AdditiveBlending, depthWrite:false, side:THREE.DoubleSide }));
   const beam = new THREE.Mesh(own(new THREE.CylinderGeometry(0.35,0.35,80,12,1,true)), beamMat); beam.position.y = 40; g.add(beam);
-  const glow = new THREE.Mesh(own(new THREE.CircleGeometry(2.6,24)), own(new THREE.MeshBasicMaterial({ color:0x8a5cff, transparent:true, opacity:0.25, blending:THREE.AdditiveBlending, depthWrite:false })));
+  const glow = new THREE.Mesh(own(new THREE.PlaneGeometry(4.6,4.6)), own(new THREE.MeshBasicMaterial({ color:0x8a5cff, transparent:true, opacity:0.25, blending:THREE.AdditiveBlending, depthWrite:false })));
   glow.rotation.x = -Math.PI/2; glow.position.y = 0.1; g.add(glow);
   world.cityGroup.add(g);
   const hp = 30 + 15*(level-1);
@@ -851,9 +861,9 @@ export function buildExitMarker(){
   const bm = own(new THREE.MeshBasicMaterial({ color:0x4ade80, transparent:true, opacity:0.2, blending:THREE.AdditiveBlending, depthWrite:false, side:THREE.DoubleSide }));
   const beam = new THREE.Mesh(own(new THREE.CylinderGeometry(0.5,0.5,80,12,1,true)), bm); beam.position.set(cx, 40, cz); g.add(beam);
   const cm = own(new THREE.MeshBasicMaterial({ color:0x7dffa8 }));
-  const cg = own(new THREE.ConeGeometry(0.45,0.8,3));
+  const cg = own(boxes([[0.2,0.2,0.9,-0.2,0,0], [0.2,0.2,0.55,0,0,0], [0.2,0.2,0.2,0.2,0,0]]));  // a stepped arrow pointing east, at the exit
   const chev = [];
-  for (let i=0;i<3;i++){ const c = new THREE.Mesh(cg, cm); c.rotation.z = -Math.PI/2; c.position.set(cx - 3.2 - i*1.4, 0.35, cz); g.add(c); chev.push(c); }
+  for (let i=0;i<3;i++){ const c = new THREE.Mesh(cg, cm); c.position.set(cx - 3.2 - i*1.4, 0.35, cz); g.add(c); chev.push(c); }
   world.cityGroup.add(g);
   return { g, pad, beam, chev, gm };
 }

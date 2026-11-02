@@ -187,7 +187,7 @@ function buildBlock(c, b){
     fill(T.SIDEWALK); dirt();
     const fw = randi(2,3), fd = randi(2,3);
     put({ x:x0 + randi(0, 5-fw), z:z0 + randi(0, 5-fd), w:fw, d:fd }, rand(6,12), { style:'frame', color:0x8a8780, floors:randi(2,4) });
-    spot(T.SIDEWALK, (x, z) => c.props.push({ kind:'crane', x, z, rot:Math.floor(rng()*4)*Math.PI/2 + rand(-0.3,0.3), h:rand(15,20), jib:rand(9,13) }));
+    spot(T.SIDEWALK, (x, z) => c.props.push({ kind:'crane', x, z, rot:Math.floor(rng()*4)*Math.PI/2 + rand(-0.3,0.3)*0, h:rand(15,20), jib:rand(9,13) }));
     for (let i=randi(1,2);i>0;i--) spot(T.SIDEWALK, (x, z) => rng() < 0.5 ? c.props.push({ kind:'pipes', x, z, rot:rng() < 0.5 ? 0 : Math.PI/2 }) : lumber(x, z));
     for (let i=randi(1,2);i>0;i--) fenceSide(c, b, Math.floor(rng()*4), 'chain');
   } else if (t === 'cemetery'){
