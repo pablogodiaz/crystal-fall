@@ -44,7 +44,7 @@
   <div id="inventory"></div>
   <div id="interact" class="hidden">
     <svg viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="18" class="track"/><circle cx="22" cy="22" r="18" class="prog" id="interactRing"/></svg>
-    <div class="label"><kbd>E</kbd><span id="interactLabel"></span></div>
+    <div class="label"><kbd id="interactKey">E</kbd><span id="interactLabel"></span></div>
   </div>
   <div id="spectate" class="hidden"><span id="spectateText"></span></div>
   <div id="hint">Hold E to search. F melee, Q swaps guns, G drops one, hold right click to aim a throw (wheel picks), C crafts. 1–8 use items. Hold Tab for the map.</div>
@@ -58,7 +58,7 @@
   <div class="card">
     <h1 class="title display">Crystal Fall</h1>
     <p class="lead">Every quarantined city hides a Crystal. Find it, shatter it, survive while it holds the city, and take the road to the next city. Downtown is crowded and well stocked, the outskirts quiet and bare. The dead hear gunshots and running feet, but lose you if you slip away. One life per run.</p>
-    <div class="controls">
+    <div class="controls" id="kbControls">
       <kbd>W A S D</kbd><span>Move</span>
       <kbd>Mouse</kbd><span>Aim, hold click to shoot</span>
       <kbd>Shift</kbd><span>Sprint (uses stamina)</span>
@@ -72,6 +72,18 @@
       <kbd>C</kbd><span>Craft molotovs and pipe bombs from scrap</span>
       <kbd>Hold Tab</kbd><span>Map of what you’ve explored, plus your weapons and their modifiers</span>
       <kbd>Esc</kbd><span>Pause (in co-op, only the host can)</span>
+    </div>
+    <div class="controls" id="padControls">
+      <kbd>Left stick</kbd><span>Move (click it, or hold L, to sprint)</span>
+      <kbd>Right stick</kbd><span>Aim (tilt further to throw further), ZR shoots</span>
+      <kbd>Hold ZL</kbd><span>Aim a molotov or pipe bomb, release to throw (B cancels, R picks which)</span>
+      <kbd>Hold A</kbd><span>Search, pick up weapons, repair</span>
+      <kbd>B</kbd><span>Melee</span>
+      <kbd>Y</kbd><span>Reload</span>
+      <kbd>X</kbd><span>Swap weapons (hold: drop the one in your hands)</span>
+      <kbd>D-pad ← →</kbd><span>Pick an item, ↑ uses it (hold: drop it)</span>
+      <kbd>D-pad ↓</kbd><span>Hold for the map (or click the right stick)</span>
+      <kbd>− / +</kbd><span>Workbench / pause. In menus: D-pad moves, A picks, B goes back</span>
     </div>
     <div class="row menuBtns">
       <button class="btn" id="startBtn">Start run</button>

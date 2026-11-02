@@ -4,13 +4,14 @@
 // dead, clicks and Q switch which living player you watch.
 import { $ } from './utils.js';
 import { renderer } from './renderer.js';
-import { state, keys, mouse, mouseNDC, dev, players, net } from './state.js';
+import { state, keys, mouse, mouseNDC, dev, players, net, pad } from './state.js';
 import { me } from './player.js';
 import { toggleMute } from './audio.js';
 import { newRun, togglePause, toggleCraft, crafting, spectate } from './game.js';
 import { startAim, releaseThrow, cancelAim, selectedThrowable, countItem } from './inventory.js';
 import { act } from './client.js';
 import { craftFromKey, toast } from './hud.js';
+import { padOff } from './gamepad.js';
 import { isDevKey, toggleDev, devTypingIn, teleportToCursor } from './devtools.js';
 
 export function initInput(){
@@ -21,7 +22,7 @@ export function initInput(){
       return;
     }
     if (devTypingIn(e.target)) return;  // typing into a dev tools field
-    keys[e.code] = true;
+    keys[e.code] = true; padOff();
     if (state.mode === 'play' && ['Space','Tab','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
     if (e.repeat) return;
     const p = me();
@@ -42,10 +43,10 @@ export function initInput(){
   });
   addEventListener('keyup', e => { keys[e.code] = false; });
   const cv = renderer.domElement;
-  cv.addEventListener('mousemove', e => { mouseNDC.x = e.clientX/innerWidth*2 - 1; mouseNDC.y = -(e.clientY/innerHeight)*2 + 1; });
+  cv.addEventListener('mousemove', e => { if (pad.on && Math.abs(e.movementX) + Math.abs(e.movementY) > 2) padOff(); mouseNDC.x = e.clientX/innerWidth*2 - 1; mouseNDC.y = -(e.clientY/innerHeight)*2 + 1; });
   // Hold right click to aim a throwable, release to throw; a left click while aiming cancels it.
   cv.addEventListener('mousedown', e => {
-    const p = me();
+    const p = me(); padOff();
     if (e.button === 0 && dev.clickTp && state.mode === 'play'){ teleportToCursor(); return; }
     if (p.dead){ if (state.mode === 'play') spectate(e.button === 2 ? -1 : 1); return; }
     if (e.button === 0){ if (p.aiming) cancelAim(p); else if (state.mode === 'play') mouse.down = true; }
@@ -73,7 +74,7 @@ export function initInput(){
   $('craftClose').addEventListener('click', toggleCraft);
 }
 // Releasing right click: the throw happens on the host, which needs the aim point (and what's selected).
-function throwNow(){
+export function throwNow(){
   const p = me();
   if (net.role !== 'client') return releaseThrow(p);
   if (!p.aiming) return;

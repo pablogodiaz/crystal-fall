@@ -6,6 +6,7 @@ import { addPlayer, viewed, updateLamp } from './player.js';
 import { updateFade, updateInteriors } from './fx.js';
 import { updateHUD } from './hud.js';
 import { initInput } from './input.js';
+import { pollPad } from './gamepad.js';
 import { initDev, updateDev } from './devtools.js';
 import { startCity, newSeed, update, animateWorld, loadBest, bestLine } from './game.js';
 import { initHost, hostTick } from './host.js';
@@ -24,7 +25,7 @@ function loop(now){
   requestAnimationFrame(loop);
   const dt = Math.min(0.05, (now - last)/1000); last = now;
   const t = now/1000;
-  updateDev(dt);
+  updateDev(dt); pollPad(dt);
   let ts = 1;
   if (net.role === 'client'){ clientUpdate(dt, t); clientEffects(dt); }  // a client only mirrors the host's world (client.js)
   else {

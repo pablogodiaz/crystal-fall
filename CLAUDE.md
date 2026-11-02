@@ -540,9 +540,19 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   - Using anything sets `state.cheated` (a violet "Dev" chip under the stamina bar; the best run
     isn't saved). The player cheats in `SAVED` are remembered in `localStorage['crystal-fall-dev']`;
     time scale, zoom, freeze and click-teleport reset on reload.
+- **Controller** (`js/gamepad.js`, Gamepad API standard mapping, buttons by position, Nintendo labels in the
+  menu's controller list `#padControls`): `pollPad(dt)` runs every frame from `main.js` and fills `pad`
+  (`state.js`), which `readLocal` folds into `p.ctl` (left stick moves, right stick aims `pad.aimD` units out,
+  2.5–13 by tilt; both undo the camera's foreshortening (`toWorld`) so the stick points where it does on
+  screen; letting go keeps the furthest aim of the last 0.15 s, and after 0.4 s untouched aim follows your
+  feet). Buttons send the keyboard's actions through `act` (tap/hold: X swaps / drops the gun, d-pad ↑ uses /
+  drops the item picked with ←/→, `pad.sel`, highlighted `.pad-sel`). While a `.screen` overlay is up it
+  moves focus spatially between its buttons (A presses, B backs out: workbench, pause, the upgrade "← Back").
+  `pad.on` (and `body.pad`: focus rings, controller controls on the menu, the interact prompt says A) turns on
+  with any controller input and off when the mouse moves or a key is pressed (`padOff`).
 - **Controls:** WASD/arrows move (walk into a low fence to vault it), mouse aims, hold left click to fire, Shift sprints, R reloads,
   F melee, Q swaps guns, G drops the held one, hold right click to aim + release to throw (wheel/T picks molotov or pipe bomb, left click cancels), hold E searches, 1–8 use items (right-click a slot drops it), C crafts, hold Tab for the map, Esc/P pauses (host only), click / Q / Space switch who you watch while dead,
-  M mutes, `` ` `` opens the dev tools.
+  M mutes, `` ` `` opens the dev tools. Controller: left stick move (L / stick click sprint), right stick aim, ZR fire, hold ZL throw (B cancels, R picks), hold A search, B melee, Y reload, X swap (hold: drop), d-pad ←/→ pick an item, ↑ use (hold: drop), ↓ / right stick click map, − workbench, + pause.
 
 ## Folder structure
 
@@ -610,6 +620,7 @@ js/
                   takeover countdown + spawning, exit wait, per-player upgrades, game over, pause/craft,
                   resident respawns, update() and animateWorld()
   input.js        Keyboard/mouse/focus listeners (one-shot actions go through act())
+  gamepad.js      Controller: polls the Gamepad API, fills `pad` for readLocal, button actions, menu focus
   net.js          Transport: WebSocket to the relay, send/onNet, reconnect, VERSION
   host.js         Host session: remote players, ACTS, emit/emitTo/sfxFor, ticks (snapshots, full state),
                   mid-run sync, disconnects; nextId() network ids

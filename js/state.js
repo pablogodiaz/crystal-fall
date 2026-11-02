@@ -51,3 +51,6 @@ export const net = { role:'solo', id:0, room:'main', name:'', bot:false };
 export const keys = {};
 export const mouse = { down:false };
 export const mouseNDC = new THREE.Vector2();
+// Controller state, written by gamepad.js every frame. on = the controller is what you're using
+// (the mouse moving takes over again); mx/mz move (world), ax/az aim direction (world, unit) aimD units ahead.
+export const pad = { on:false, mx:0, mz:0, ax:0, az:1, aimD:7, sprint:false, fire:false, use:false, map:false, sel:0 };
