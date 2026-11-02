@@ -214,11 +214,11 @@ function buildCrops(c){
 }
 
 // ---------- Ground ----------
-// The city's ground as one mesh: a quad per tile at its own corner heights (city.hc), everything but the
-// road 0.08 higher (curbs), coloured by what's on it: the lot's type, a street closed to cars, an overlay
-// (parking, forecourt, dirt, paving, tilled soil), each tile a shade lighter or darker so the slopes read.
+// The city's ground as one mesh: a quad per tile at its own corner heights (city.hc: flat, or sloping one
+// way), everything but the road 0.08 higher (curbs), coloured by what's on it: the lot's type, a street closed
+// to cars, an overlay (parking, forecourt, dirt, paving, tilled soil), each tile a shade lighter or darker.
 // Where neighbouring tiles don't meet, a wall joins them: curbs, and stone retaining walls with a coping
-// along every ledge. Rocks crop out of steep grass. Outside the city a dark apron runs on at the edge's height.
+// along every ledge. Outside the city a dark apron runs on at the edge's height.
 const GROUND = { towers:0x67655f, ruins:0x58564f, park:0x3b4a2e, field:0x4b5032, houses:0x45543a, farm:0x4b5032,
   warehouses:0x5c5b56, yard:0x55534d, lot:0x2a2c30, plaza:0x7a7468, landmark:0x67655f, construction:0x5a5247, cemetery:0x3a4630, camp:0x47483a,
   pond:0x3b4a2e, crater:0x4a4741, walk:0x67655f, path:0x45543a, track:0x4b5032, road:0x2f3136, wall:0x34363b, park_:0x2a2c30, pad:0x8f8c86,
@@ -249,16 +249,13 @@ function buildGround(c){
   for (const [x, z] of c.crops) over.set(z*N + x, 'soil');
   for (const s of c.strips) for (let z=s.z0;z<s.z0+s.d;z++) for (let x=s.x0;x<s.x0+s.w;x++) if (!over.has(z*N + x)) over.set(z*N + x, s.kind);
   const lift = i => roadish(grid[i]) ? 0 : 0.08, top = (i, j) => H[i*4 + j] + lift(i);
-  const P = [], C = [], WP = [], WC = [], caps = [], rocks = [];
+  const P = [], C = [], WP = [], WC = [], caps = [];
   const tint = (hex, f) => col.setHex(hex).multiplyScalar(f);
   for (let z=0;z<n;z++) for (let x=0;x<n;x++){
     const i = z*N + x, g = grid[i], key = roadish(g) ? 'road' : g === T.WALL ? 'wall' : over.get(i) || c.blocks[c.blockOf[i]].type;
     tint(GROUND[key] ?? GROUND.towers, rnd(0.94, 1.06));
     const v = [[x, z, top(i, 0)], [x+1, z, top(i, 1)], [x, z+1, top(i, 2)], [x+1, z+1, top(i, 3)]].map(([a, b, h]) => [a*TILE, h, b*TILE]);
     P.push(...v[0], ...v[2], ...v[1], ...v[1], ...v[2], ...v[3]); for (let k=0;k<6;k++) C.push(col.r, col.g, col.b);
-    // Rocks on steep grass.
-    const slope = Math.max(H[i*4], H[i*4+1], H[i*4+2], H[i*4+3]) - Math.min(H[i*4], H[i*4+1], H[i*4+2], H[i*4+3]);
-    if (g === T.GRASS && slope > 0.9 && rnd() < 0.3 && !c.ramp[i]) rocks.push([(x + rnd(0.2, 0.8))*TILE, (z + rnd(0.2, 0.8))*TILE, rnd(0.8, 1.6)]);
     // Walls toward the east and south neighbours where the two don't meet.
     for (const [dx, dz] of [[1, 0], [0, 1]]){
       if (x + dx >= n || z + dz >= n) continue;
@@ -289,18 +286,14 @@ function buildGround(c){
   ground.receiveShadow = true; world.cityGroup.add(ground);
   if (WP.length){ const w = new THREE.Mesh(geo(WP, WC), own(new THREE.MeshStandardMaterial({ vertexColors:true, roughness:1, side:THREE.DoubleSide }))); w.castShadow = w.receiveShadow = true; world.cityGroup.add(w); }
   if (caps.length) mesh(own(boxes(caps)), M('coping', 0x8a867c), 0, 0, 0, world.cityGroup);
-  if (rocks.length){
-    const im = own(new THREE.InstancedMesh(SH.rubbleGeo, M('rock', 0x625e57), rocks.length));
-    rocks.forEach(([x, z, s], k) => { dummy.position.set(x, groundAt(x, z) + 0.12*s, z); dummy.rotation.set(0, (k % 2)*Math.PI/2, 0); dummy.scale.set(s, s*1.2, s*0.9); dummy.updateMatrix(); im.setMatrixAt(k, dummy.matrix); });
-    im.castShadow = im.receiveShadow = true; world.cityGroup.add(im);
-  }
 }
 
 // ---------- Stairs, docks, embankments ----------
-// Stairs (and dock ramps) up a ledge: steps climbing toward (dx,dz) over the tile, stone (concrete for a
-// dock). Loading docks get a yellow edge and rubber bumpers; railway embankments their track.
+// Stairs, dock ramps and grassy banks up a ledge: steps climbing toward (dx,dz) over the tile, stone,
+// concrete for a dock, turf for a hill or embankment. Loading docks get a yellow edge and rubber bumpers;
+// railway embankments their track.
 function buildStairs(c){
-  const cityGroup = world.cityGroup, st = { stairs:[], ramp:[] };
+  const cityGroup = world.cityGroup, st = { stairs:[], ramp:[], bank:[] };
   for (const s of c.stairs){
     const n = Math.max(3, Math.ceil((s.hi - s.lo)/0.24)), cx = (s.x + 0.5)*TILE, cz = (s.z + 0.5)*TILE, along = s.dx ? 1 : 0;
     for (let k=0;k<n;k++){
@@ -310,6 +303,7 @@ function buildStairs(c){
   }
   if (st.stairs.length) mesh(own(boxes(st.stairs)), M('stairs', 0x8d897f), 0, 0, 0, cityGroup);
   if (st.ramp.length) mesh(own(boxes(st.ramp)), M('dockRamp', 0x8d8a84), 0, 0, 0, cityGroup);
+  if (st.bank.length) mesh(own(boxes(st.bank)), M('bank', 0x4a5a33), 0, 0, 0, cityGroup);
   for (const d of c.docks){
     const z = (d.z + 1)*TILE, cx = (d.x0 + d.w/2)*TILE, y = d.h + 0.08;
     mesh(own(box(d.w*TILE, 0.08, 0.3, true)), M('dockEdge', 0xd9a21b), cx, y, z - 0.15, cityGroup, false);
@@ -351,10 +345,15 @@ export function animateCity(dt, t){
 
 // ---------- Buildings ----------
 let doorAt = new Set();  // "x,z,dx,dz" of every searchable door (no window drawn over it)
-// Lowest and highest ground under a w×d footprint at tile (x,z).
+// Lowest and highest ground under a w×d footprint at tile (x,z); the lowest reaches down to the lowest open
+// ground round it (not the street), so a building beside a sunken forecourt or a lower lot stands on a plinth.
 function footing(x0, z0, w, d){
-  const H = world.city.hc; let lo = 1e9, hi = -1e9;
+  const c = world.city, H = c.hc; let lo = 1e9, hi = -1e9;
   for (let z=z0;z<z0+d;z++) for (let x=x0;x<x0+w;x++) for (let k=0;k<4;k++){ const h = H[(z*N + x)*4 + k]; lo = Math.min(lo, h); hi = Math.max(hi, h); }
+  for (let z=z0-1;z<=z0+d;z++) for (let x=x0-1;x<=x0+w;x++){
+    if (x >= x0 && x < x0+w && z >= z0 && z < z0+d) continue;
+    const g = c.grid[z*N + x]; if (g === T.SIDEWALK || g === T.GRASS || g === T.FLOOR || g === T.PLAZA) lo = Math.min(lo, groundAt((x + 0.5)*TILE, (z + 0.5)*TILE));
+  }
   return [lo + 0.04, hi + 0.04];
 }
 const LIT = [0.12, 0.25, 0.04];

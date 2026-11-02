@@ -115,9 +115,9 @@ function targets(){
     const ss = (c.strips || []).filter(s => s.kind === k).map(s => ({ x:s.x0, z:s.z0 }));
     if (ss.length) out.push([`🚶 ${{ walk:'Pedestrian street', path:'Footpath', track:'Dirt track' }[k]} (${ss.length})`, () => { const o = near(ss); tileTp(o.x, o.z); }]);
   }
-  // Terrain: hills, embankments, terraced lots, park terraces (and their second tier), loading docks, the
+  // Terrain: hills, embankments, park terraces (and their second tier), loading docks, stairs, the
   // highest and lowest ground.
-  for (const k of ['hill','embankment','terraced lot','terrace','second tier','dock']){
+  for (const k of ['hill','embankment','terrace','second tier','dock']){
     const fs = (c.features || []).filter(f => f.kind === k);
     if (fs.length) out.push([`⛰ ${titleCase(k)} (${fs.length})`, () => { const o = near(fs); tileTp(o.x, o.z); }]);
   }

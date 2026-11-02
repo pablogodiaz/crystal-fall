@@ -14,17 +14,15 @@ export const walkable = t => t === 0 || t === 4 || t === 5 || t === 6 || t === 7
 export const seeThrough = t => walkable(t) || t === 11 || t === 12 || t === 13 || t === 14;
 // ---------- Terrain ----------
 // Every tile has its own four corner heights (city.hc, 4 per tile: NW, NE, SW, SE; the ground inside is
-// the blend of them, cornerH). Neighbouring tiles share their corners, so the ground runs on smoothly over
-// hills and hollows, except at ledges (retaining walls, terraced lots and parks, loading docks) where one
-// side stands higher. Anyone walks up any slope and steps up at most STEP at a tile edge; a higher edge is
+// the blend of them, cornerH): flat, or sloping one way (a ramped street, stairs). Where neighbouring tiles
+// don't meet there's a ledge (a retaining wall). Anyone walks up any slope and steps up at most STEP at a tile edge; a higher edge is
 // a ledge you can only drop down (stairs lead up them).
 export const STEP = 0.45;
-// height = how far the highest ground (before lot hills and terraces) stands above the lowest; hills = hills and hollows per 100 blocks [min, max],
-// r = their radius in tiles, hollow = share that are hollows; tilt = how far the whole town falls away to
-// one side; slope = the most the ground rises between two corners (per tile); noise = small bumps.
-// cut = a lot whose ground rises more than this across it gets terraced (made flat, retaining walls round
-// it, stairs); terrace = how high a park terrace stands; dock = loading dock height; rail = embankment height.
-export const TERRAIN = { height:14, hills:[3, 5], r:[8, 20], hollow:0.3, tilt:6, slope:0.9, noise:0.7, cut:1.4, terrace:[1.6, 2.6], dock:1.1, rail:[2.2, 3.2] };
+// layers = how many flat layers the town is built on, layer = the height between two (5 tiles of street
+// climb one: 0.4 a tile, under STEP); hills = hills and hollows of the field that decides them, per 100
+// blocks [min, max], r = their radius in tiles, hollow = share that are hollows; tilt = how far the whole
+// town falls away to one side; noise = small bumps. dock = loading dock height.
+export const TERRAIN = { layers:5, layer:2, hills:[3, 5], r:[8, 20], hollow:0.3, tilt:1.2, noise:0.15, dock:1.1 };
 // Height of tile i's ground at (fx, fz) across it (0..1 each way).
 export const cornerH = (hc, i, fx, fz) => { const k = i*4, a = hc[k] + (hc[k+1] - hc[k])*fx, b = hc[k+2] + (hc[k+3] - hc[k+2])*fx; return a + (b - a)*fz; };
 // Can someone on tile a step onto its neighbour b, (dx, dz) from it (diagonals meet at one corner)?

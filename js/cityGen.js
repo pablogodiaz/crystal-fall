@@ -223,7 +223,7 @@ function layoutStreets(c){
     const i = id % M, j = (id - i)/M;
     if (edges(i, j).filter(([A, k]) => A[k] === 0).length === 1) c.deadEnds.push({ x:1 + 7*i, z:1 + 7*j });
   }
-  c.lots = lots;
+  c.lots = lots; c.streets = { V, H, inner };
 }
 
 // ---------- Lots ----------
@@ -522,16 +522,17 @@ const BASIC_T = new Set(['towers','ruins','houses','farm','warehouses','park','f
 // Keeps the start corner, the exit and landmark entrances clear of anything that blocks a road.
 function clearSpot(c, x, z){
   if (x < 11 && z < 11) return false;
-  if (c.ramp && c.ramp[I(x,z)]) return false;
+  // Not on stairs, nor at their foot or head.
+  if (c.ramp && (c.ramp[I(x,z)] || c.ramp[I(x+1,z)] || c.ramp[I(x-1,z)] || c.ramp[I(x,z+1)] || c.ramp[I(x,z-1)])) return false;
   if (x > c.n - 10 && Math.abs(z - c.exitZ) < 6) return false;
   return c.landmarks.every(l => Math.abs(l.ox - x) + Math.abs(l.oz - z) > 3);
 }
 // Tiles reachable on foot from the start: { n, at } (at[i] = 1 if reachable).
-function reach(c){
+function reach(c, flat){
   const at = new Uint8Array(N*N), q = [I(2,2)]; at[q[0]] = 1;
   for (let h=0;h<q.length;h++){
     const cx = q[h] % N, cz = (q[h]-cx)/N;
-    for (const [dx,dz] of D4){ const ni = I(cx+dx,cz+dz); if (!at[ni] && walkable(c.grid[ni]) && (!c.hc || stepUp(c.hc, q[h], ni, dx, dz))){ at[ni] = 1; q.push(ni); } }
+    for (const [dx,dz] of D4){ const ni = I(cx+dx,cz+dz); if (!at[ni] && walkable(c.grid[ni]) && (flat || !c.hc || stepUp(c.hc, q[h], ni, dx, dz))){ at[ni] = 1; q.push(ni); } }
   }
   return { n:q.length, at };
 }
@@ -548,146 +549,185 @@ function tryBlock(c, cells){
 }
 
 // ---------- Terrain ----------
-// The lie of the land, in three passes (heights in world units, TERRAIN in config.js).
-// 1) A smooth field of heights at the tile corners (hv): the whole town falls away to one side, with broad
-//    hills and hollows and small bumps on top; parks and fields add hills of their own.
-// 2) Ground that must be flat is pinned: landmark lots, the plaza, craters, ponds and lakes (at their lowest
-//    corner) and railway embankments (along their top, above the field). Then every other corner is eased
-//    until no two neighbours differ by more than TERRAIN.slope, so the land bends smoothly into each flat
-//    and embankments get their banks.
-// 3) Pads cut in with ledges (cutPad): terraces in downtown parks (sometimes two tiers), urban lots on steep
-//    ground (made flat, retaining walls along their edge), loading docks along warehouses; stairs (ramps on
-//    docks) lead up and down. city.hc = each tile's own corners; stairs/rails/docks for cityScene;
-//    features for the dev tools; ramp marks stair tiles (no containers, closures or wrecks on them).
-const CUT = new Set(['towers','warehouses','lot','yard','construction','ruins']);
+// The town is built in flat layers (TERRAIN.layer units apart, TERRAIN.layers of them). Every crossing of
+// the street grid sits on a layer, read off a smooth field (the town tilts toward one side, with broad hills
+// and hollows) and eased so neighbouring crossings, diagonals too, are at most one layer apart. Every lot
+// (a block, merged blocks, a landmark) is flat on the layer of its middle, kept within one of its corners.
+// Only connecting ground slopes, and always along one axis: a street between crossings on different layers
+// ramps all the way (a layer over 5 tiles, so 0.4 a tile, under STEP), stairs lead from a street onto a lot
+// above or below it (retaining walls everywhere else), and pads raised a layer on a lot (park terraces and
+// hills, railway embankments, loading docks) are reached up stairs or grassy banks. The city's border stands
+// one layer above the highest one (the quarantine wall on top), with the exit cut through it at street level.
+// city.hc = each tile's corners (flat, or sloping one way); stairs/rails/docks for cityScene; features for
+// the dev tools; ramp marks stair tiles (no containers, closures or wrecks on them).
 function addTerrain(c){
-  const n = c.n, M = N + 1, TR = TERRAIN, hv = new Float32Array(M*M), pin = new Uint8Array(M*M), area = c.b*c.b/100;
-  const V = (x, z) => z*M + x;
+  const nb = c.b, n = c.n, M = nb + 1, TR = TERRAIN, K = TR.layers, LH = TR.layer, { V, H, inner } = c.streets;
   c.features = []; c.stairs = []; c.rails = []; c.docks = []; c.ramp = new Uint8Array(N*N); c.reach = null;
-  // 1) The field.
+  const area = nb*nb/100;
+  // The field, in tile units.
   const ang = rand(0, 2*Math.PI), tilt = rand(0.4, 1)*TR.tilt, bumps = [];
   for (let k=Math.round(rand(TR.hills[0], TR.hills[1])*area);k>0;k--)
-    bumps.push({ x:rand(0, n), z:rand(0, n), r:rand(TR.r[0], TR.r[1]), s:rand(0.6, 1.6), a:rand(0, Math.PI), h:(rng() < TR.hollow ? -rand(0.3, 0.7) : rand(0.45, 1))*TR.height });
+    bumps.push({ x:rand(0, n), z:rand(0, n), r:rand(TR.r[0], TR.r[1]), s:rand(0.6, 1.6), a:rand(0, Math.PI), h:rng() < TR.hollow ? -rand(0.3, 0.7) : rand(0.45, 1) });
   const G = 7, gw = Math.ceil(n/G) + 2, noise = []; for (let i=0;i<gw*gw;i++) noise.push(rand(-1, 1));
   const sm = t => t*t*(3 - 2*t), q = (i, j) => noise[j*gw + i];
-  for (let z=0;z<=n;z++) for (let x=0;x<=n;x++){
+  const field = (x, z) => {
     let h = tilt*((x/n - 0.5)*Math.cos(ang) + (z/n - 0.5)*Math.sin(ang));
     for (const b of bumps){
       const dx = x - b.x, dz = z - b.z, ca = Math.cos(b.a), sa = Math.sin(b.a), u = (dx*ca + dz*sa)/(b.r*b.s), v = (dz*ca - dx*sa)*b.s/b.r;
       h += b.h*Math.exp(-(u*u + v*v)/2);
     }
     const gx = x/G, gz = z/G, ix = Math.floor(gx), iz = Math.floor(gz), fx = sm(gx - ix), fz = sm(gz - iz);
-    hv[V(x,z)] = h + TR.noise*((q(ix,iz)*(1-fx) + q(ix+1,iz)*fx)*(1-fz) + (q(ix,iz+1)*(1-fx) + q(ix+1,iz+1)*fx)*fz);
-  }
-  // However many hills overlap, the town spans about TR.height from its lowest to its highest ground.
-  { let a = 1e9, b = -1e9; for (let z=0;z<=n;z++) for (let x=0;x<=n;x++){ a = Math.min(a, hv[V(x,z)]); b = Math.max(b, hv[V(x,z)]); }
-    const k = TR.height*rand(0.8, 1.1)/Math.max(1, b - a); for (let i=0;i<M*M;i++) hv[i] = (hv[i] - a)*k; }
-  const bump = (cx, cz, r, h) => {
-    for (let z=Math.max(0, Math.floor(cz - 3*r));z<=Math.min(n, Math.ceil(cz + 3*r));z++) for (let x=Math.max(0, Math.floor(cx - 3*r));x<=Math.min(n, Math.ceil(cx + 3*r));x++)
-      hv[V(x,z)] += h*Math.exp(-((x - cx)**2 + (z - cz)**2)/(2*r*r));
+    return h + TR.noise*((q(ix,iz)*(1-fx) + q(ix+1,iz)*fx)*(1-fz) + (q(ix,iz+1)*(1-fx) + q(ix+1,iz+1)*fx)*fz);
   };
-  const corners = (r, f) => { for (let z=r.z0;z<=r.z0+r.d;z++) for (let x=r.x0;x<=r.x0+r.w;x++) f(V(x,z)); };
-  const stat = (r, how) => { let a = how === 'min' ? 1e9 : how === 'max' ? -1e9 : 0, k = 0; corners(r, v => { a = how === 'min' ? Math.min(a, hv[v]) : how === 'max' ? Math.max(a, hv[v]) : a + hv[v]; k++; }); return how === 'mean' ? a/k : a; };
-  const pinRect = (r, h) => corners(r, v => { hv[v] = h; pin[v] = 1; });
-  for (const L of c.lots){
-    if (L.blocks.some(b => b.bx + b.bz <= 1)) continue;
-    const R = L.raise, { x0, z0, w, d } = L.r, t = L.type;
-    if (R && R.kind === 'knoll' && R.w){ bump(R.x0 + R.w/2, R.z0 + R.d/2, Math.max(R.w, R.d)*0.55 + 0.5, rand(2.5, 5)); c.features.push({ kind:'hill', x:R.x0 + (R.w >> 1), z:R.z0 + (R.d >> 1) }); }
-    else if (!R && ((t === 'park' && rng() < 0.45) || (t === 'field' && rng() < 0.35) || (t === 'farm' && rng() < 0.25) || (t === 'camp' && rng() < 0.15))){
-      const hx = x0 + rand(1.5, w - 1.5), hz = z0 + rand(1.5, d - 1.5); bump(hx, hz, rand(1.6, 2.6), rand(1.4, 2.8)); c.features.push({ kind:'hill', x:Math.floor(hx), z:Math.floor(hz) });
+  // Crossings onto layers.
+  const raw = new Float32Array(M*M); let lo = 1e9, hi = -1e9;
+  for (let j=0;j<=nb;j++) for (let i=0;i<=nb;i++){ const v = field(2 + 7*i, 2 + 7*j); raw[j*M + i] = v; lo = Math.min(lo, v); hi = Math.max(hi, v); }
+  const layerOf = v => Math.max(0, Math.min(K - 1, Math.floor((v - lo)/(hi - lo + 1e-6)*K)));
+  const NL = new Int8Array(M*M); for (let i=0;i<M*M;i++) NL[i] = layerOf(raw[i]);
+  for (let moved=true;moved;){
+    moved = false;
+    for (let j=0;j<=nb;j++) for (let i=0;i<=nb;i++) for (let dj=-1;dj<=1;dj++) for (let di=-1;di<=1;di++){
+      const a = j*M + i, ii = i + di, jj = j + dj; if (ii < 0 || jj < 0 || ii > nb || jj > nb) continue;
+      const b = jj*M + ii; if (NL[a] > NL[b] + 1){ NL[a] = NL[b] + 1; moved = true; }
     }
   }
-  // 2) Flats, then easing the slopes.
-  const flat = new Set();
-  for (const b of c.blocks) if ((b.type === 'landmark' || b.type === 'plaza' || b.type === 'crater') && !flat.has(b.lot)){ flat.add(b.lot); pinRect(b.lot, stat(b.lot, 'mean')); }
-  for (const p of c.ponds){
-    const r = { x0:p.x0, z0:p.z0, w:p.x1 - p.x0, d:p.z1 - p.z0 }, over = c.ponds.filter(o => o !== p && o.h !== undefined && o.x0 <= p.x1 && p.x0 <= o.x1 && o.z0 <= p.z1 && p.z0 <= o.z1);
-    p.h = Math.min(stat(r, 'min'), ...over.map(o => o.h));
-    for (const o of over.concat(p)){ o.h = p.h; pinRect({ x0:o.x0, z0:o.z0, w:o.x1 - o.x0, d:o.z1 - o.z0 }, p.h); }
+  const top = Math.max(...NL);
+  const hc = c.hc = new Float32Array(N*N*4);
+  const flat = (x0, z0, w, d, h) => { for (let z=z0;z<z0+d;z++) for (let x=x0;x<x0+w;x++) hc.fill(h, I(x,z)*4, I(x,z)*4 + 4); };
+  // The border, a layer above the highest; then crossings and the streets between them.
+  for (let z=0;z<n;z++) for (let x=0;x<n;x++) hc.fill((top + 1)*LH, I(x,z)*4, I(x,z)*4 + 4);
+  for (let j=0;j<=nb;j++) for (let i=0;i<=nb;i++) if (!inner[j*M + i]) flat(1 + 7*i, 1 + 7*j, 2, 2, NL[j*M + i]*LH);
+  for (let i=0;i<=nb;i++) for (let j=0;j<nb;j++){
+    if (V[i*nb + j] !== 1){ const a = NL[j*M + i]*LH, b = NL[(j+1)*M + i]*LH; for (let k=0;k<5;k++) for (let w=0;w<2;w++){ const t = I(1 + 7*i + w, 3 + 7*j + k)*4, h0 = a + (b - a)*k/5, h1 = a + (b - a)*(k + 1)/5; hc[t] = hc[t+1] = h0; hc[t+2] = hc[t+3] = h1; } }
+    if (H[i*nb + j] !== 1){ const a = NL[i*M + j]*LH, b = NL[i*M + j + 1]*LH; for (let k=0;k<5;k++) for (let w=0;w<2;w++){ const t = I(3 + 7*j + k, 1 + 7*i + w)*4, h0 = a + (b - a)*k/5, h1 = a + (b - a)*(k + 1)/5; hc[t] = hc[t+2] = h0; hc[t+1] = hc[t+3] = h1; } }
   }
-  for (const L of c.lots){
-    const R = L.raise; if (!R || R.kind !== 'berm') continue;
-    pinRect(R, stat(R, 'max') + rand(TR.rail[0], TR.rail[1])); c.rails.push({ x0:R.x0, z0:R.z0, w:R.w, d:R.d }); c.features.push({ kind:'embankment', x:R.x0, z:R.z0 });
+  // The exit, cut through the border at the street's level.
+  for (let z=0;z<n;z++) if (c.grid[I(n-1, z)] === T.BARRICADE) hc.fill(hc[I(n-2, z)*4 + 1], I(n-1, z)*4, I(n-1, z)*4 + 4);
+  // Lots, flat: the layer under their middle, within one of every crossing round them.
+  const lots = c.lots.map(L => { const bs = L.blocks; return { r:L.r, L, bx0:Math.min(...bs.map(b => b.bx)), bz0:Math.min(...bs.map(b => b.bz)), bx1:Math.max(...bs.map(b => b.bx)), bz1:Math.max(...bs.map(b => b.bz)) }; });
+  const seen = new Set();
+  for (const b of c.blocks) if (b.type === 'landmark' && !seen.has(b.lot)){ seen.add(b.lot); lots.push({ r:b.lot, bx0:b.lot.bx, bz0:b.lot.bz, bx1:b.lot.bx + b.lot.n - 1, bz1:b.lot.bz + b.lot.n - 1 }); }
+  for (const o of lots){
+    let a = 99, b = -1; for (let j=o.bz0;j<=o.bz1+1;j++) for (let i=o.bx0;i<=o.bx1+1;i++){ a = Math.min(a, NL[j*M + i]); b = Math.max(b, NL[j*M + i]); }
+    const r = o.r, want = layerOf(field(r.x0 + r.w/2, r.z0 + r.d/2));
+    o.layer = b - a <= 2 ? Math.max(b - 1, Math.min(a + 1, want)) : Math.round((a + b)/2);
+    if (o.L) o.L.layer = o.layer;
+    flat(r.x0, r.z0, r.w, r.d, o.layer*LH);
   }
-  for (let it=0;it<90;it++){
-    let moved = false; const fw = it % 2 === 0, S = TR.slope;
-    for (let zz=0;zz<=n;zz++) for (let xx=0;xx<=n;xx++){
-      const x = fw ? xx : n - xx, z = fw ? zz : n - zz, v = V(x,z); if (pin[v]) continue;
-      let lo = -1e9, hi = 1e9;
-      const nb = u => { lo = Math.max(lo, hv[u] - S); hi = Math.min(hi, hv[u] + S); };
-      if (x > 0) nb(v - 1); if (x < n) nb(v + 1); if (z > 0) nb(v - M); if (z < n) nb(v + M);
-      const h = lo > hi ? (lo + hi)/2 : Math.min(hi, Math.max(lo, hv[v]));
-      if (Math.abs(h - hv[v]) > 1e-3){ hv[v] = h; moved = true; }
-    }
-    if (!moved) break;
-  }
-  let lo = 1e9; for (let z=0;z<=n;z++) for (let x=0;x<=n;x++) lo = Math.min(lo, hv[V(x,z)]);
-  for (let i=0;i<M*M;i++) hv[i] -= lo;
-  for (const p of c.ponds) p.h -= lo;
-  const hc = c.hc = new Float32Array(N*N*4), cv = (x, z) => hv[V(Math.min(x, n), Math.min(z, n))];
-  for (let z=0;z<N;z++) for (let x=0;x<N;x++){ const k = I(x,z)*4; hc[k] = cv(x,z); hc[k+1] = cv(x+1,z); hc[k+2] = cv(x,z+1); hc[k+3] = cv(x+1,z+1); }
-  // 3) Pads with ledges.
+  for (const p of c.ponds) p.h = hc[I(p.x0, p.z0)*4];
+  // Stairs. The two corners of tile i on its side facing (dx,dz), as indices into hc.
   const marked = new Set(c.props.filter(p => p.kind === 'fgate' || p.broken).map(p => I(p.x, p.z)));
-  const open = i => { const g = c.grid[i]; return (g === T.SIDEWALK || g === T.GRASS || g === T.PLAZA) && !marked.has(i) && !c.ramp[i]; };
-  // The two corners of tile i on its side facing (dx,dz), as indices into hc.
+  const open = i => { const g = c.grid[i]; return (g === T.SIDEWALK || g === T.GRASS || g === T.PLAZA || g === T.FLOOR) && !marked.has(i) && !c.ramp[i]; };
   const side = (i, dx, dz) => dx > 0 ? [i*4+1, i*4+3] : dx < 0 ? [i*4, i*4+2] : dz > 0 ? [i*4+2, i*4+3] : [i*4, i*4+1];
-  const mean = r => { let a = 0, k = 0; for (let z=r.z0;z<r.z0+r.d;z++) for (let x=r.x0;x<r.x0+r.w;x++){ for (let j=0;j<4;j++) a += hc[I(x,z)*4+j]; k += 4; } return a/k; };
-  const range = r => { let a = 1e9, b = -1e9; for (let z=r.z0;z<r.z0+r.d;z++) for (let x=r.x0;x<r.x0+r.w;x++) for (let j=0;j<4;j++){ a = Math.min(a, hc[I(x,z)*4+j]); b = Math.max(b, hc[I(x,z)*4+j]); } return [a, b]; };
-  // Every tile of rect r flat at height h. exits: [x, z, dx, dz] edge tiles whose side facing out (dx,dz)
-  // drops or climbs to the ground outside: stairs. With want = 'auto' it picks a stair on each side that
-  // needs one (more if that's what it takes to cut nothing off). Kept only if nothing gets cut off.
-  const cutPad = (kind, r, h, exits) => {
-    const R0 = c.reach || (c.reach = reach(c)), saved = new Map();
-    const keep = i => { if (!saved.has(i)) saved.set(i, hc.slice(i*4, i*4 + 4)); };
-    for (let z=r.z0;z<r.z0+r.d;z++) for (let x=r.x0;x<r.x0+r.w;x++){ const i = I(x,z); keep(i); hc.fill(h, i*4, i*4 + 4); }
-    // Edge tiles that could hold stairs, by side: open, with open ground outside that isn't level with the pad.
+  // Edge tile (x,z) of a flat pad at height h becomes stairs down (or up) to the ground outside it, facing
+  // out (dx,dz): one way only, its outer edge level at the height there.
+  const lay = (x, z, dx, dz, h, kind) => {
+    const i = I(x,z), j = I(x+dx, z+dz), [a, b] = side(i, dx, dz), [ja, jb] = side(j, -dx, -dz), out = (hc[ja] + hc[jb])/2;
+    if (c.ramp[i]) return false;
+    hc.fill(h, i*4, i*4 + 4); hc[a] = hc[b] = out; c.ramp[i] = 1;
+    c.stairs.push({ x, z, dx:out < h ? -dx : dx, dz:out < h ? -dz : dz, lo:Math.min(out, h), hi:Math.max(out, h), kind });
+    return true;
+  };
+  // Edge tiles of rect r that could hold stairs, by side (N, E, S, W): open, with walkable ground outside
+  // that isn't level with h. [x, z, dx, dz, distance from the middle of the side]
+  const edges = (r, h) => {
     const cand = [[], [], [], []];
     [[0,-1],[1,0],[0,1],[-1,0]].forEach(([dx, dz], si) => {
       const n2 = dx ? r.d : r.w;
       for (let k=0;k<n2;k++){
         const x = dx > 0 ? r.x0 + r.w - 1 : dx < 0 ? r.x0 : r.x0 + k, z = dz > 0 ? r.z0 + r.d - 1 : dz < 0 ? r.z0 : r.z0 + k, i = I(x,z), j = I(x+dx, z+dz);
-        if (!open(i) || !walkable(c.grid[j]) || c.ramp[j]) continue;
+        // Open itself, walkable ground beyond it and somewhere to step off at the top (or bottom).
+        if (!open(i) || !walkable(c.grid[j]) || c.ramp[j] || !walkable(c.grid[I(x-dx, z-dz)]) || c.ramp[I(x-dx, z-dz)]) continue;
         const [a, b] = side(j, -dx, -dz);
         if (Math.max(Math.abs(hc[a] - h), Math.abs(hc[b] - h)) > STEP) cand[si].push([x, z, dx, dz, Math.abs(k - (n2 >> 1))]);
       }
     });
-    const stairs = [];
-    const lay = ([x, z, dx, dz]) => {
-      const i = I(x,z), j = I(x+dx, z+dz), [a, b] = side(i, dx, dz), [ja, jb] = side(j, -dx, -dz), out = (hc[ja] + hc[jb])/2;
-      if (c.ramp[i]) return;  // a corner tile already holding stairs out of the other side
-      hc[a] = hc[ja]; hc[b] = hc[jb]; c.ramp[i] = 1;
-      stairs.push({ x, z, dx:out < h ? -dx : dx, dz:out < h ? -dz : dz, lo:Math.min(out, h), hi:Math.max(out, h), kind:kind === 'dock' ? 'ramp' : 'stairs' });
-    };
-    const tries = exits === 'auto' || exits.mid
-      ? [cand.map(l => l.length && rng() < 0.75 ? [exits.mid ? l.reduce((m, e) => e[4] < m[4] ? e : m) : pick(l)] : []).flat(),
-         cand.map(l => l.length ? [pick(l)] : []).flat(), cand.flat()]
-      : [exits];
+    return cand;
+  };
+  // Every lot reachable: where a lot (or part of it) can't be walked onto, stairs from the ground beside it
+  // that can, a side at a time.
+  const flatAt = reach(c, true).at;
+  for (let round=0;round<6;round++){
+    const at = reach(c).at; let more = false;
+    for (const o of shuffle(lots.slice())){
+      const r = o.r; let cut = false;
+      for (let z=r.z0;z<r.z0+r.d && !cut;z++) for (let x=r.x0;x<r.x0+r.w;x++) if (flatAt[I(x,z)] && !at[I(x,z)]){ cut = true; break; }
+      if (!cut) continue;
+      const cand = edges(r, o.layer*LH).map(l => l.filter(([x, z, dx, dz]) => at[I(x+dx, z+dz)]));
+      const sides = shuffle(cand.filter(l => l.length)); if (!sides.length) continue;
+      for (const l of sides.slice(0, round < 2 ? 1 : 2)){ const e = pick(l); if (lay(e[0], e[1], e[2], e[3], o.layer*LH, 'stairs')) more = true; }
+    }
+    if (!more) break;
+  }
+  // Still cut off (a forecourt boxed in by its building, say): that part of the lot drops (or rises) to the
+  // level of the ground beside it, a forecourt flush with the street.
+  for (let round=0;round<4;round++){
+    const at = reach(c).at; let more = false;
+    for (const o of lots){
+      const r = o.r, inR = (x, z) => x >= r.x0 && x < r.x0 + r.w && z >= r.z0 && z < r.z0 + r.d, done = new Set();
+      for (let z=r.z0;z<r.z0+r.d;z++) for (let x=r.x0;x<r.x0+r.w;x++){
+        const i0 = I(x,z); if (!flatAt[i0] || at[i0] || done.has(i0) || !walkable(c.grid[i0])) continue;
+        const comp = [i0], q2 = [i0]; done.add(i0); let link = null;
+        for (let h=0;h<q2.length;h++){
+          const cx = q2[h] % N, cz = (q2[h] - cx)/N;
+          for (const [dx, dz] of D4){
+            const j = I(cx+dx, cz+dz); if (!walkable(c.grid[j])) continue;
+            if (inR(cx+dx, cz+dz) && !at[j] && !done.has(j)){ done.add(j); comp.push(j); q2.push(j); }
+            else if (at[j] && !link) link = [j, -dx, -dz];
+          }
+        }
+        if (!link) continue;
+        const [ja, jb] = side(link[0], link[1], link[2]), h = (hc[ja] + hc[jb])/2;
+        for (const t of comp) if (!c.ramp[t]) hc.fill(h, t*4, t*4 + 4);
+        more = true;
+      }
+    }
+    if (!more) break;
+  }
+  // Pads raised a layer on a lot. exits: [x, z, dx, dz] tiles to lay stairs on, 'auto' (one on each side at
+  // random), or { mid } (one in the middle of each side). Kept only if nothing gets cut off.
+  const cutPad = (r, h, exits, kind) => {
+    const R0 = c.reach || (c.reach = reach(c)), saved = new Map();
+    for (let z=r.z0;z<r.z0+r.d;z++) for (let x=r.x0;x<r.x0+r.w;x++){ const i = I(x,z); saved.set(i, hc.slice(i*4, i*4 + 4)); hc.fill(h, i*4, i*4 + 4); }
+    const cand = Array.isArray(exits) ? null : edges(r, h);
+    const tries = cand ? [cand.map(l => l.length && rng() < 0.75 ? [exits.mid ? l.reduce((m, e) => e[4] < m[4] ? e : m) : pick(l)] : []).flat(), cand.map(l => l.length ? [pick(l)] : []).flat()] : [exits];
     for (const ex of tries){
-      for (const e of ex) lay(e);
+      const laid = [];
+      for (const [x, z, dx, dz] of ex) if (lay(x, z, dx, dz, h, kind)) laid.push(I(x,z));
       const r2 = reach(c);
-      if (r2.n === R0.n){ c.reach = r2; c.stairs.push(...stairs); return true; }
-      for (const st of stairs){ const i = I(st.x, st.z); c.ramp[i] = 0; hc.fill(h, i*4, i*4 + 4); }
-      stairs.length = 0;
+      if (r2.n === R0.n){ c.reach = r2; return true; }
+      for (const i of laid){ c.ramp[i] = 0; hc.fill(h, i*4, i*4 + 4); }
+      c.stairs.length -= laid.length;
     }
     for (const [i, v] of saved) hc.set(v, i*4);
     return false;
   };
   for (const L of c.lots){
     if (L.blocks.some(b => b.bx + b.bz <= 1)) continue;
-    const R = L.raise, r = L.r;
+    const R = L.raise, r = L.r, t = L.type, base = L.layer*LH;
     if (R && R.kind === 'terrace'){
       // A terrace: up stairs in the middle of its sides, sometimes a second tier on top.
-      const T1 = R.w ? R : { x0:r.x0 + (r.w >> 1) - 1, z0:r.z0 + (r.d >> 1) - 1, w:3, d:3 }, h = range(T1)[1] + rand(TR.terrace[0], TR.terrace[1]);
-      if (!cutPad('terrace', T1, h, { mid:true })) continue;
+      const T1 = R.w ? R : { x0:r.x0 + (r.w >> 1) - 1, z0:r.z0 + (r.d >> 1) - 1, w:3, d:3 };
+      if (!cutPad(T1, base + LH, { mid:true }, 'stairs')) continue;
       c.features.push({ kind:'terrace', x:T1.x0, z:T1.z0 });
       if (T1.w >= 4 && T1.d >= 3 && rng() < 0.65){
         const T2 = { x0:T1.x0 + 1, z0:T1.z0 + 1, w:T1.w - 2, d:Math.max(1, T1.d - 2) };
-        if (cutPad('terrace', T2, h + rand(1.2, 1.8), { mid:true })) c.features.push({ kind:'second tier', x:T2.x0, z:T2.z0 });
+        if (cutPad(T2, base + 2*LH, { mid:true }, 'stairs')) c.features.push({ kind:'second tier', x:T2.x0, z:T2.z0 });
       }
-    } else if (CUT.has(L.type)){
-      // A lot on steep ground is levelled: retaining walls where it meets the streets, stairs up or down.
-      const [a, b] = range(r);
-      if (b - a > TR.cut && rng() < 0.85 && cutPad('lot', r, mean(r), 'auto')) c.features.push({ kind:'terraced lot', x:r.x0 + (r.w >> 1), z:r.z0 + (r.d >> 1) });
+    } else if (R && R.kind === 'berm'){
+      // A railway embankment a layer up along the lot, a grassy bank at each end.
+      const ax = R.w >= R.d, ex = ax ? [[R.x0, R.z0, -1, 0], [R.x0 + R.w - 1, R.z0, 1, 0]] : [[R.x0, R.z0, 0, -1], [R.x0, R.z0 + R.d - 1, 0, 1]];
+      if (cutPad(R, base + LH, ex, 'bank')){ c.rails.push({ x0:R.x0, z0:R.z0, w:R.w, d:R.d }); c.features.push({ kind:'embankment', x:R.x0, z:R.z0 }); }
+    } else if ((R && R.kind === 'knoll' && R.w) || (!R && ((t === 'park' && rng() < 0.45) || (t === 'field' && rng() < 0.35) || (t === 'farm' && rng() < 0.25) || (t === 'camp' && rng() < 0.15)))){
+      // A hill: a flat top a layer up, grassy banks up one or two sides (a big one may have a second tier).
+      const hw = R && R.w ? R.w : randi(2,3), hd = R && R.w ? R.d : (hw === 3 ? 2 : randi(2,3));
+      const P = R && R.w ? R : { x0:r.x0 + 1 + randi(0, r.w - 2 - hw), z0:r.z0 + 1 + randi(0, r.d - 2 - hd), w:hw, d:hd };
+      if (!cutPad(P, base + LH, 'auto', 'bank')) continue;
+      c.features.push({ kind:'hill', x:P.x0, z:P.z0 });
+      if (P.w >= 4 && P.d >= 3 && rng() < 0.5){
+        const P2 = { x0:P.x0 + 1, z0:P.z0 + 1, w:P.w - 2, d:Math.max(1, P.d - 2) };
+        if (cutPad(P2, base + 2*LH, 'auto', 'bank')) c.features.push({ kind:'second tier', x:P2.x0, z:P2.z0 });
+      }
     }
   }
   // Loading docks: a platform along a warehouse's front (its roll-up door side, +z), a ramp at one end.
@@ -700,11 +740,11 @@ function addTerrain(c){
       if (rx < r.x0 || rx >= r.x0 + r.w || !walkable(c.grid[I(rx + ex, zf)])) continue;
       let ok = true; for (let x=pad.x0;x<pad.x0+pad.w;x++) if (c.grid[I(x,zf)] !== T.SIDEWALK || !open(I(x,zf))) ok = false;
       if (!ok) continue;
-      const h = range(pad)[1] + TR.dock;
-      if (cutPad('dock', pad, h, [[rx, zf, ex, 0]])){ c.docks.push({ x0:b.x, z:zf, w:b.w, h }); c.features.push({ kind:'dock', x:b.x, z:zf }); break; }
+      const h = hc[I(b.x, zf)*4] + TR.dock;
+      if (cutPad(pad, h, [[rx, zf, ex, 0]], 'ramp')){ c.docks.push({ x0:b.x, z:zf, w:b.w, h }); c.features.push({ kind:'dock', x:b.x, z:zf }); break; }
     }
   }
-  c.hmax = 0; for (let i=0;i<N*N*4;i++) if (hc[i] > c.hmax) c.hmax = hc[i];
+  c.hmax = (top + 1)*LH;
 }
 
 // Collapsed and burnt-out buildings. Broken towers and warehouses stop at `cut` of their height with
@@ -1081,6 +1121,7 @@ const BASIC = new Set(['towers','ruins','houses','farm','warehouses','park','fie
 const LABEL = { tower:'shop', house:'house', warehouse:'warehouse', crypt:'crypt' };
 function placeLoot(c){
   const { grid, buildings, cars, containers } = c;
+  c.reach = null;
   for (const L of c.lots){
     if (!BASIC.has(L.type)) continue;
     const { x0, z0, w, d } = L.r, D = DISTRICTS[L.district], free = [];
@@ -1104,7 +1145,8 @@ function placeLoot(c){
     }
     for (let i=0;i<n && free.length;i++){
       const [x,z] = free.splice(Math.floor(rng()*free.length),1)[0];
-      grid[I(x,z)] = T.OBSTACLE;
+      // Never in the way of stairs, never cutting anything off.
+      if ([[0,0],[1,0],[-1,0],[0,1],[0,-1]].some(([dx, dz]) => c.ramp[I(x+dx, z+dz)]) || !tryBlock(c, [[x, z, T.OBSTACLE]])){ i--; continue; }
       containers.push({ kind, x, z, rot:(x === x0 || x === x0+w-1) ? Math.PI/2 : 0 });
     }
   }
