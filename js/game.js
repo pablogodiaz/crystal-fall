@@ -2,7 +2,7 @@
 // Run/city lifecycle (explore -> takeover -> open -> upgrade), spawning, per-frame update.
 import * as THREE from 'three';
 import { TILE, N, T, POP, cityBlocks, walkable } from './config.js';
-import { LANDMARKS } from './items.js';
+import { LANDMARKS, RARITY } from './items.js';
 import { $, mr, mpick, fmtTime } from './utils.js';
 import { camFocus, muzzleLight, fxLight } from './renderer.js';
 import { SH } from './assets.js';
@@ -235,8 +235,9 @@ function upgButton(cls, html, click){
 function upgCards(){
   const wrap = upgStep('Pick one upgrade for your weapons. You also recover 40% of your health.', 'cards');
   for (const id of upg.ids){
-    const u = card(id);
-    wrap.appendChild(upgButton('upg', `<div class="ic">${u.icon}</div><b>${u.name}</b><span>${u.desc}</span>`, () => u.on ? upgWeapon(u) : upgPlay([u.id, -1, -1, -1])));
+    const u = card(id), b = upgButton('upg upg-card', `<div class="ic">${u.icon}<em>${RARITY[u.tier].name}</em></div><b>${u.name}</b><span>${u.desc}</span>`, () => u.on ? upgWeapon(u) : upgPlay([u.id, -1, -1, -1]));
+    b.dataset.r = u.tier;  // its draw tier, in the weapon rarity colours
+    wrap.appendChild(b);
   }
 }
 function upgWeapon(u){

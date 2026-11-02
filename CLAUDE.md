@@ -51,8 +51,8 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
   - **Host only:** Esc/P pause (pauses everyone) and the dev tools (`` ` ``). With more than one player the
     workbench (C) doesn't pause: `p.crafting` freezes only your controls; losing window focus only
     pauses a solo game.
-  - **Upgrades:** each player gets their own three cards that fit their weapons (`completeCity` deals
-    different ones while there are enough), the dead pick too; each sees the result and presses Continue,
+  - **Upgrades:** each player gets their own hand (`completeCity`; a card already dealt to another player is
+    redrawn once, so hands differ), the dead pick too; each sees the result and presses Continue,
     and the next city starts when everyone has (`pickUpgrade` then `readyUp`, `p.picked`/`p.ready`; players
     this machine doesn't control pick at random (`autoChoice`), "Waiting for …" shows otherwise).
   - **HUD:** a coloured name chip (`P2 (watching)` while spectating), name + health tags over the other
@@ -145,7 +145,16 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
      resets it, `updateExit`, `state.exitT`/`exitIn`, shown in the objective panel) → upgrade screen
      (each player picks 1 of 3 upgrade cards, the living heal 40% of max HP) → next city with a new seed.
 - **Upgrades** (`UPGRADES` in `js/upgrades.js`; screen in `game.js`): gunsmithing cards, every one about
-  your weapons. Only cards that can change something you carry are dealt (`cardFits`/`targets`/`dealCards`).
+  your weapons.
+  - **Dealing** (`dealCards`): a hand is `HAND` (3) weighted draws without repeats from the whole deck
+    (`deck(level)`: every card whose `from` city has been reached), **whatever you carry**. Each card has a
+    `tier` whose weight is in `CARD_TIERS` (common 1, uncommon 0.7, rare 0.5, legendary 0.35); a drawn card
+    that can't change anything you carry (`cardFits`/`targets`) becomes the **Ammo cache** (`fallback`, never
+    drawn itself: fills every carried weapon's reserve), at most once per hand, so the hand shrinks. That
+    way dropping weapons before the exit can't raise the odds of the cards you want (it was how to farm
+    Holster). Tiers: common = Gunsmith, Tinker, Calibrate, Strip down, Wild card, Trade-in; uncommon =
+    Masterwork, Prototype, Supply drop; rare = Transplant; legendary = Holster (dealt from the end of City 3,
+    about 12% of hands). The card shows its tier in the weapon rarity colours (`data-r`; legendary glows).
   Flow: pick a card → pick the weapon it works on (only the ones it fits) → Gunsmith / Transplant: pick the
   modifier (`modChoices`) → Transplant: pick the weapon that gets it (`destChoices`) → result screen (what
   changed + the weapon's card) → Continue. A choice is `[card id, slot, modifier, destination]`
@@ -444,7 +453,8 @@ lighting intensities, `PCFSoftShadowMap` look, and APIs are tuned for r128.
     or lucky odds, for the tooltip); refill ammo (also fuel, charge and the flask); refill every gas
     pump; turn or freeze the zombies near you; fill/empty the pack.
   - Upgrades: "Upgrade screen: every card" (clears the city and deals you every card that fits, to try the
-    whole pick → weapon → modifier → result flow), each card as a button that plays it at once on
+    whole pick → weapon → modifier → result flow; ignores `from`), "Card odds" (each card's chance to be in a
+    hand at this city, from 4000 simulated hands, `cardOdds`), each card as a button that plays it at once on
     the held weapon (or the first it fits; a random modifier and destination where it asks), and every
     special (✦) as a button that puts it on its unique (giving you the unique first if needed, past the cap).
   - World: time scale (stopped, 0.25–3×; >1 runs several capped `update` steps per frame), camera
