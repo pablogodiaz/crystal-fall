@@ -12,10 +12,26 @@ export const T = { ROAD:0, BUILDING:1, WALL:2, BARRICADE:3, EXIT:4, SIDEWALK:5, 
 export const walkable = t => t === 0 || t === 4 || t === 5 || t === 6 || t === 7 || t === 10;
 // Bullets and sight also pass through cell bars, low obstacles, water and fences.
 export const seeThrough = t => walkable(t) || t === 11 || t === 12 || t === 13 || t === 14;
-// Raised ground (hills, loading docks, terraces): city.level per tile is 0 ground, 1 ramp/stairs,
-// 2 raised (RAISE units up). Anyone can step up one level (onto a ramp, off a ramp onto the top) or
-// drop down any amount; nobody climbs straight from the ground onto raised tiles.
-export const RAISE = 1.1;
+// ---------- Terrain ----------
+// Every tile has its own four corner heights (city.hc, 4 per tile: NW, NE, SW, SE; the ground inside is
+// the blend of them, cornerH): flat, or sloping one way (a ramped street, stairs). Where neighbouring tiles
+// don't meet there's a ledge (a retaining wall). Anyone walks up any slope and steps up at most STEP at a tile edge; a higher edge is
+// a ledge you can only drop down (stairs lead up them).
+export const STEP = 0.45;
+// layers = how many flat layers the town is built on, layer = the height between two (5 tiles of street
+// climb one: 0.4 a tile, under STEP); hills = hills and hollows of the field that decides them, per 100
+// blocks [min, max], r = their radius in tiles, hollow = share that are hollows; tilt = how far the whole
+// town falls away to one side; noise = small bumps. dock = loading dock height.
+export const TERRAIN = { layers:5, layer:2, hills:[3, 5], r:[8, 20], hollow:0.3, tilt:1.2, noise:0.15, dock:1.1 };
+// Height of tile i's ground at (fx, fz) across it (0..1 each way).
+export const cornerH = (hc, i, fx, fz) => { const k = i*4, a = hc[k] + (hc[k+1] - hc[k])*fx, b = hc[k+2] + (hc[k+3] - hc[k+2])*fx; return a + (b - a)*fz; };
+// Can someone on tile a step onto its neighbour b, (dx, dz) from it (diagonals meet at one corner)?
+export function stepUp(hc, a, b, dx, dz){
+  const A = a*4, B = b*4;
+  if (!dz) return dx > 0 ? hc[B] - hc[A+1] <= STEP && hc[B+2] - hc[A+3] <= STEP : hc[B+1] - hc[A] <= STEP && hc[B+3] - hc[A+2] <= STEP;
+  if (!dx) return dz > 0 ? hc[B] - hc[A+2] <= STEP && hc[B+1] - hc[A+3] <= STEP : hc[B+2] - hc[A] <= STEP && hc[B+3] - hc[A+1] <= STEP;
+  return hc[B + (dx > 0 ? 0 : 1) + (dz > 0 ? 0 : 2)] - hc[A + (dx > 0 ? 1 : 0) + (dz > 0 ? 2 : 0)] <= STEP;
+}
 // Breakable fences and barricades (T.FENCE, breakables.js), by style: hp, wood (planks repair it),
 // vault (low enough for players, and runners, to climb over: VAULT in threats.js), name for prompts. Zombie AI tuning for them is in AI (threats.js).
 export const BREAKABLES = {
@@ -37,14 +53,18 @@ export const WAREHOUSE_PALETTE = [0x6c7378,0x7a7468,0x5f6b70,0x80786a];
 // ---------- Districts ----------
 // Every block belongs to one. density = resident zombies per block in City 1 (+ perLevel for each
 // city after), ×0.75–1.25 per block; the district also sets how much loot gets built there.
-// blocks = weighted block types; dumpster = [chance of one, chance of a second] per block;
+// blocks = weighted block types; merged = the same for a big lot of several blocks (STREETS); dumpster = [chance of one, chance of a second] per block;
 // door = chance an ordinary building has a searchable door.
 // name/note = shown under the city name while you're in it.
 export const DISTRICTS = {
-  downtown:    { name:'Downtown', note:'crowded', density:1.4, perLevel:0.18, blocks:[['towers',9],['lot',1],['park',0.5],['construction',0.7],['crater',0.25],['pond',0.2]], dumpster:[0.85,0.4], door:0.35 },
-  industrial:  { name:'Industrial park', note:'busy', density:0.75, perLevel:0.1, blocks:[['warehouses',5],['yard',3],['ruins',1.5],['lot',1],['construction',1],['camp',0.3],['crater',0.35]], dumpster:[0.4,0], door:0.3 },
-  residential: { name:'Suburbs', note:'', density:0.5, perLevel:0.08, blocks:[['houses',7],['park',1.4],['pond',0.8],['lot',1],['cemetery',0.35],['camp',0.2]], dumpster:[0.2,0], door:0.42 },
-  outskirts:   { name:'Outskirts', note:'quiet', density:0.12, perLevel:0.04, blocks:[['field',4],['ruins',2],['farm',1.6],['park',0.6],['pond',0.5],['lot',0.6],['cemetery',0.4],['camp',0.35],['crater',0.3]], dumpster:[0.1,0], door:0.35 }
+  downtown:    { name:'Downtown', note:'crowded', density:1.4, perLevel:0.18, blocks:[['towers',9],['lot',1],['park',0.5],['construction',0.7],['crater',0.25],['pond',0.2]],
+    merged:[['towers',6],['park',2],['construction',1],['lot',0.5]], dumpster:[0.85,0.4], door:0.35 },
+  industrial:  { name:'Industrial park', note:'busy', density:0.75, perLevel:0.1, blocks:[['warehouses',5],['yard',3],['ruins',1.5],['lot',1],['construction',1],['camp',0.3],['crater',0.35]],
+    merged:[['warehouses',5],['yard',3],['construction',1],['ruins',0.8]], dumpster:[0.4,0], door:0.3 },
+  residential: { name:'Suburbs', note:'', density:0.5, perLevel:0.08, blocks:[['houses',7],['park',1.4],['pond',0.8],['lot',1],['cemetery',0.35],['camp',0.2]],
+    merged:[['houses',4],['park',3],['pond',1.2],['cemetery',0.7]], dumpster:[0.2,0], door:0.42 },
+  outskirts:   { name:'Outskirts', note:'quiet', density:0.12, perLevel:0.04, blocks:[['field',4],['ruins',2],['farm',1.6],['park',0.6],['pond',0.5],['lot',0.6],['cemetery',0.4],['camp',0.35],['crater',0.3]],
+    merged:[['field',4],['farm',3],['pond',0.8],['ruins',0.6],['camp',0.4],['cemetery',0.3]], dumpster:[0.1,0], door:0.35 }
 };
 // Block types that hold more residents than their district's density (a cemetery is crowded).
 export const BLOCK_DENSITY = { cemetery:1.8, camp:1.3, construction:1.2 };
@@ -69,5 +89,17 @@ export const CLOSURES = { base:7, perCity:0.8 };
 // The start's own blocks (bx + bz <= 1) are always outskirts.
 export const LAYOUT = { cores:[1, 0.15, 3], core:[1.5, 2.3], coreGrow:0.08, ring:[1.4, 2.1], ringGrow:0.1,
   pockets:[1, 2], pocket:[1.2, 1.9], startGap:3.5, coreGap:3.5, pocketGap:2.5 };
+// How the block grid gets broken up, per district (layoutStreets in cityGen.js). merge = chance a block
+// joins its neighbours into one big lot (the streets between them go; big = share of 2×2 lots, long =
+// share of 3×1 rows, the rest 2×1); extend = chance a block takes over a street beside it, growing by
+// 2 tiles (T-junctions and dead ends); walk = chance a street is closed to cars for good (a paved walk
+// downtown, a footpath in the suburbs, a dirt track in the outskirts). Border streets and the ones
+// round the start, the plaza and landmarks never change; every crossing stays reachable.
+export const STREETS = {
+  downtown:    { merge:0.2,  big:0.25, long:0.1,  extend:0.22, walk:0.12 },
+  industrial:  { merge:0.32, big:0.4,  long:0.15, extend:0.28, walk:0.05 },
+  residential: { merge:0.22, big:0.3,  long:0.3,  extend:0.34, walk:0.1 },
+  outskirts:   { merge:0.34, big:0.5,  long:0.2,  extend:0.34, walk:0.14 }
+};
 // Residents spawn at least startGap units from the start; respawns at least respawnGap from you.
 export const POP = { startGap:26, respawnGap:32 };

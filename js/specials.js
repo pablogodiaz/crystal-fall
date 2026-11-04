@@ -8,7 +8,7 @@ import { scene } from './renderer.js';
 import { SH } from './assets.js';
 import { ZTYPES, ZMODS, THREAT_BASE, THREAT_POOL, SHUFFLE_INTRO, INTRO_FORCED, SPOT_RANGE } from './threats.js';
 import { state, zombies, spits, puddles, dev, players } from './state.js';
-import { isBlockedTile, lineOfSight, groundAt } from './grid.js';
+import { isBlockedTile, lineOfSight, groundAt, onGround, gv } from './grid.js';
 import { viewed, crowd, cheats } from './player.js';
 import { spawnZombieAt, findSpawnNear, alertZombie, alertNear } from './zombies.js';
 import { hurtPlayer } from './combat.js';
@@ -85,7 +85,7 @@ function scream(z, p){
   for (let i=0;i<n;i++){
     const s = findSpawnNear(z.pos.x, z.pos.z, S.spawnR[0], S.spawnR[1]); if (!s) continue;
     spawnZombieAt(s.x, s.z, horde, true, false, 'screamer');
-    burst(new THREE.Vector3(s.x, 0.3, s.z), 'dust', 6, 2.5);
+    burst(gv(s.x, 0.3, s.z), 'dust', 6, 2.5);
   }
   if (Math.hypot(z.pos.x - viewed().pos.x, z.pos.z - viewed().pos.z) < 40) toastAll('A screamer called more of them', 'bad');
 }
@@ -127,7 +127,7 @@ export function spitMesh(sx, sz, ex, ez, T, ghost){
   const S = ZTYPES.spitter, g = new THREE.Group(); scene.add(g);
   const ball = new THREE.Mesh(SH.acidGeo, SH.acidMat);
   const ring = new THREE.Mesh(SH.markGeo, SH.markMat), fill = new THREE.Mesh(SH.fireGeo, SH.markFillMat);
-  for (const m of [ring, fill]){ m.rotation.x = -Math.PI/2; m.position.set(ex, 0.13, ez); }
+  for (const m of [ring, fill]) onGround(m, ex, ez, 0.13, 0, true);
   ring.scale.setScalar(S.puddleR); fill.scale.setScalar(0.01);
   g.add(ball, ring, fill);
   spits.push({ mesh:g, ball, ring, fill, sx, sz, ex, ez, t:0, T, ghost });
@@ -136,11 +136,11 @@ function splash(o){
   const S = ZTYPES.spitter, nid = nextId();
   puddleMesh(o.ex, o.ez, S.puddleTime, nid);
   emit(['hz+', nid, 'acid', r2(o.ex), r2(o.ez), S.puddleTime]);
-  burst(new THREE.Vector3(o.ex, 0.3, o.ez), 'acid', 12, 3.5); sfx.splash();
+  burst(gv(o.ex, 0.3, o.ez), 'acid', 12, 3.5); sfx.splash();
 }
 export function puddleMesh(x, z, t, nid, ghost){
   const S = ZTYPES.spitter;
-  const m = new THREE.Mesh(SH.fireGeo, SH.acidPoolMat); m.rotation.x = -Math.PI/2; m.position.set(x, groundAt(x, z) + 0.11, z); m.scale.setScalar(S.puddleR);  // above slabs and decals, below fire
+  const m = new THREE.Mesh(SH.fireGeo, SH.acidPoolMat); onGround(m, x, z, 0.11, 0, true); m.scale.setScalar(S.puddleR);  // above slabs and decals, below fire
   scene.add(m); const h = { mesh:m, x, z, t, tick:0, nid, ghost }; puddles.push(h); return h;
 }
 // Acid in flight and puddles, looks only: clients run this on their copies (ghosts).
@@ -149,14 +149,14 @@ export function animateAcid(dt){
   for (let i=spits.length-1;i>=0;i--){
     const o = spits[i]; o.t += dt;
     const k = Math.min(1, o.t/o.T);
-    o.ball.position.set(o.sx + (o.ex-o.sx)*k, 1.5*(1-k) + Math.sin(k*Math.PI)*(2.5 + o.T*2) + 0.15, o.sz + (o.ez-o.sz)*k);
+    o.ball.position.set(o.sx + (o.ex-o.sx)*k, groundAt(o.sx, o.sz)*(1-k) + groundAt(o.ex, o.ez)*k + 1.5*(1-k) + Math.sin(k*Math.PI)*(2.5 + o.T*2) + 0.15, o.sz + (o.ez-o.sz)*k);
     o.fill.scale.setScalar(Math.max(0.01, k*S.puddleR));
     if (k >= 1){ scene.remove(o.mesh); spits.splice(i,1); if (!o.ghost) splash(o); }
   }
   for (let i=puddles.length-1;i>=0;i--){
     const h = puddles[i]; h.t -= dt;
     h.mesh.scale.setScalar(S.puddleR*Math.max(0.01, Math.min(1, h.t/0.6)) + Math.sin(h.t*7)*0.04);
-    if (Math.random() < dt*6) burst(new THREE.Vector3(h.x + mr(-1,1), 0.15, h.z + mr(-1,1)), 'acid', 1, 0.5, true);
+    if (Math.random() < dt*6) burst(gv(h.x + mr(-1,1), 0.15, h.z + mr(-1,1)), 'acid', 1, 0.5, true);
     if (h.t <= 0 && h.ghost){ scene.remove(h.mesh); puddles.splice(i,1); }
   }
 }

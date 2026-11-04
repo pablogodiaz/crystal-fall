@@ -6,7 +6,7 @@ import { mr, mri, mpick } from './utils.js';
 import { scene } from './renderer.js';
 import { SH, gunModel } from './assets.js';
 import { world, drops, pickups, players } from './state.js';
-import { isBlockedTile, lineOfSight, groundAt } from './grid.js';
+import { isBlockedTile, lineOfSight, groundAt, gv } from './grid.js';
 import { WEAPONS, ITEMS, LOOT, LANDMARKS, GUNS, AMMO_ODDS, LUCK_SHOP } from './items.js';
 import { addItem, addAmmo, giveWeapon, replaceWeapon, carried, curWeapon } from './inventory.js';
 import { rollWeapon, weaponTitle } from './weapons.js';
@@ -183,7 +183,7 @@ export function animateDrop(d, dt){
     d.fly = Math.max(0, d.fly - dt);
     const k = 1 - d.fly/TOSS;
     const gx = d.fx + (d.px - d.fx)*k, gz = d.fz + (d.pz - d.fz)*k; d.g.position.set(gx, groundAt(gx, gz), gz); d.box.position.y += Math.sin(k*Math.PI)*1.5;
-    if (!d.fly) burst(new THREE.Vector3(d.px, 0.3, d.pz), 'dust', 4, 1.5, true);
+    if (!d.fly) burst(gv(d.px, 0.3, d.pz), 'dust', 4, 1.5, true);
     return false;
   }
   if (d.held && (d.held.dead || Math.hypot(d.px - d.held.pos.x, d.pz - d.held.pos.z) > 1.8)) d.held = null;
@@ -269,7 +269,7 @@ function finishSearch(p, c){
   c.searched = true; c.open(); c.glint.visible = false;
   emit(['open', world.city.containers.indexOf(c)]);
   p.interact.target = null; p.interact.p = 0;
-  burst(new THREE.Vector3(c.px, 0.8, c.pz), 'dust', 6, 2);
+  burst(gv(c.px, 0.8, c.pz), 'dust', 6, 2);
   const { notes, found } = grantLoot(p, rollLoot(c, p), { x:c.px, z:c.pz });
   if (found) sfxFor(p, 'loot'); else floatText(`Nothing useful in this ${c.name}`, 'dim', p);
   if (notes.length) toast(notes.join('. '), 'info', p);

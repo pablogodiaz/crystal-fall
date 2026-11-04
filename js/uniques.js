@@ -14,7 +14,7 @@ import { scene, muzzleLight } from './renderer.js';
 import { SH, droneModel } from './assets.js';
 import { WEAPONS, SPECIALS as SP } from './items.js';
 import { state, world, zombies, bullets, players } from './state.js';
-import { isOpaqueTile, lineOfSight, resolveCircle } from './grid.js';
+import { isOpaqueTile, lineOfSight, resolveCircle, groundAt, onGround, gv } from './grid.js';
 import { viewed, pushPlayer } from './player.js';
 import { damageZombie, stunZombie, alertZombie, makeNoise, turnZombie, chillZombie, killZombie } from './zombies.js';
 import { hitCrystal, tryReload, offAim, CRYSTAL_R } from './combat.js';
@@ -109,10 +109,10 @@ export function sprayFx(p, id, dt, range){
   const ox = p.pos.x + ux*1.1, oz = p.pos.z + uz*1.1;
   for (let i=0, n=Math.max(1, Math.round(dt*70)); i<n && flames.length < 220; i++){
     const a = a0 + mr(-W.cone, W.cone)*0.75, sp = mr(10, 13);
-    puff(ox, 1.15, oz, Math.sin(a)*sp + p.vel.x*0.5, mr(-0.3, 0.6), Math.cos(a)*sp + p.vel.z*0.5, range/sp*mr(0.8, 1.05),
+    puff(ox, p.pos.y + 1.15, oz, Math.sin(a)*sp + p.vel.x*0.5, mr(-0.3, 0.6), Math.cos(a)*sp + p.vel.z*0.5, range/sp*mr(0.8, 1.05),
       cold ? SH.frostMats : SH.flameMats, cold ? SH.mistMat : SH.smokeMat, 4.5);
   }
-  muzzleLight.position.set(ox + ux, 1.3, oz + uz); muzzleLight.intensity = Math.max(muzzleLight.intensity, cold ? 1.2 : 2.2);
+  muzzleLight.position.set(ox + ux, p.pos.y + 1.3, oz + uz); muzzleLight.intensity = Math.max(muzzleLight.intensity, cold ? 1.2 : 2.2);
 }
 // A short-lived particle (flames, frost, gravity swirl, railgun charge): moves in a straight line for T s,
 // stepping through `mats` and ending as `end`; grow = how much it scales up (negative shrinks).
@@ -155,7 +155,7 @@ function updateFlames(dt){
   for (const [z, b] of burning){
     if (z.dead){ if (b.napalm) napalmPatch(z.pos.x, z.pos.z, b.by); burning.delete(z); continue; }
     b.t -= dt; b.tick -= dt;
-    if (Math.random() < dt*14) burst(new THREE.Vector3(z.pos.x + mr(-0.3,0.3), mr(0.6,1.6)*z.g.scale.y, z.pos.z + mr(-0.3,0.3)), 'fire', 1, 0.8, true);
+    if (Math.random() < dt*14) burst(gv(z.pos.x + mr(-0.3,0.3), mr(0.6,1.6)*z.g.scale.y, z.pos.z + mr(-0.3,0.3)), 'fire', 1, 0.8, true);
     if (b.tick <= 0){ b.tick = 0.25; damageZombie(z, WEAPONS.flamer.burnDps*0.25*lvMul(), 0, 0, 'fire', b.by); }
     if (b.t <= 0) burning.delete(z);
   }
@@ -174,7 +174,7 @@ export function splashPotion(p, x, z){
   let n = 0;
   const o2 = fl ? { by:p, contagion:hasMod(fl, 'contagion'), poison:hasMod(fl, 'poison') } : null;
   for (const o of zombies) if (!o.dead && !(o.rise > 0) && Math.hypot(o.pos.x - x, o.pos.z - z) < S.range + o.r){ turnZombie(o, W.turn, o2); n++; }
-  const at = new THREE.Vector3(x, 0.5, z);
+  const at = gv(x, 0.5, z);
   burst(at, 'brew', 22, 5); burst(at, 'spark', 6, 3);
   shockwave(x, z, S.range, 0xff5fd2); addDecal(x, z, S.range*0.6, SH.brewMat);
   sfx.splash(); sfx.brew(); makeNoise(x, z, S.noise);
@@ -190,7 +190,7 @@ function fireArc(p, w){
   const S = weaponStats(w), cap = hasMod(w, 'capacitor'), cool = hasMod(w, 'supercool');
   w.mag -= W.cost; w.idle = 0; p.fireCd = S.rate;
   const px = p.pos.x, pz = p.pos.z, ux = Math.sin(p.angle), uz = Math.cos(p.angle);
-  const pts = [new THREE.Vector3(px + ux*1.1, 1.25, pz + uz*1.1)];
+  const pts = [gv(px + ux*1.1, 1.25, pz + uz*1.1)];
   let cur = null, best = S.range;
   for (const z of zombies){
     if (!targetable(z)) continue;
@@ -201,13 +201,13 @@ function fireArc(p, w){
   if (cr && cr.alive){
     const dx = cr.pos.x - px, dz = cr.pos.z - pz, d = Math.hypot(dx, dz);
     if (d - CRYSTAL_R < best && offAim(p, dx, dz) < W.cone + 0.2){
-      cur = null; hitCrystal(S.dmg*2); pts.push(new THREE.Vector3(cr.pos.x, 1.6, cr.pos.z)); burst(pts[1], 'crystal', 8, 4);
+      cur = null; hitCrystal(S.dmg*2); pts.push(gv(cr.pos.x, 1.6, cr.pos.z)); burst(pts[1], 'crystal', 8, 4);
     }
   }
   if (cur){
     const hit = new Set(); let dmg = S.dmg;
     for (let i=0;i<=W.chain && cur;i++){
-      hit.add(cur); pts.push(new THREE.Vector3(cur.pos.x, 1.2*cur.g.scale.y, cur.pos.z));
+      hit.add(cur); pts.push(gv(cur.pos.x, 1.2*cur.g.scale.y, cur.pos.z));
       const prev = pts[pts.length - 2], dx = cur.pos.x - prev.x, dz = cur.pos.z - prev.z, l = Math.hypot(dx, dz) || 1;
       damageZombie(cur, dmg, dx/l*0.5, dz/l*0.5, 'bullet', p); stunZombie(cur, W.stun);
       if (cur.dead){ if (cap) w.mag = Math.min(magSize(w), w.mag + W.cost); }
@@ -224,7 +224,7 @@ function fireArc(p, w){
   } else if (pts.length === 1){
     // Nothing in reach: the arc crackles out a few units ahead.
     let s = 0.5; while (s < 4.5 && !isOpaqueTile(Math.floor((px + ux*s)/TILE), Math.floor((pz + uz*s)/TILE))) s += 0.5;
-    pts.push(new THREE.Vector3(px + ux*s, 1.1, pz + uz*s)); burst(pts[1], 'spark', 4, 2);
+    pts.push(gv(px + ux*s, 1.1, pz + uz*s)); burst(pts[1], 'spark', 4, 2);
   }
   drawBolt(pts);
   muzzle(pts[0].x, pts[0].z, 3.5);
@@ -295,14 +295,14 @@ function fireGravity(p, w){
 }
 // ghost = a client's copy: flies the same, but opens no well (the host's well arrives as its own event).
 export function orbMesh(sx, sz, ex, ez, T, ghost){
-  const m = new THREE.Mesh(SH.orbGeo, SH.voidMat); m.position.set(sx, 1.2, sz); scene.add(m);
+  const m = new THREE.Mesh(SH.orbGeo, SH.voidMat); m.position.set(sx, groundAt(sx, sz) + 1.2, sz); scene.add(m);
   const o = { m, sx, sz, ex, ez, t:0, T, ghost }; orbs.push(o); return o;
 }
 function updateOrbs(dt){
   for (let i=orbs.length-1;i>=0;i--){
     const o = orbs[i]; o.t += dt;
     const k = Math.min(1, o.t/o.T), p = o.m.position;
-    p.set(o.sx + (o.ex - o.sx)*k, 1.2, o.sz + (o.ez - o.sz)*k);
+    p.set(o.sx + (o.ex - o.sx)*k, groundAt(o.sx, o.sz)*(1-k) + groundAt(o.ex, o.ez)*k + 1.2, o.sz + (o.ez - o.sz)*k);
     o.m.rotation.y += dt*8; o.m.scale.setScalar(1 + Math.sin(o.t*30)*0.12);
     if (Math.random() < dt*30) puff(p.x, p.y, p.z, mr(-1,1), mr(-0.5,0.5), mr(-1,1), 0.4, SH.gravMats, null, -0.5);
     if (k >= 1){ scene.remove(o.m); orbs.splice(i,1); if (!o.ghost) openWell(o.ex, o.ez, o); }
@@ -315,11 +315,11 @@ function openWell(x, z, o){
   const W = WEAPONS.gravity, nid = nextId();
   Object.assign(wellMesh(x, z, W.time, nid), { by:o.by, singularity:o.singularity, implosion:o.implosion, tick:0.5 });
   emit(['hz+', nid, 'well', r2(x), r2(z), W.time]);
-  burst(new THREE.Vector3(x, 1.2, z), 'void', 14, 4); shockwave(x, z, W.radius, 0xa070ff);
+  burst(gv(x, 1.2, z), 'void', 14, 4); shockwave(x, z, W.radius, 0xa070ff);
   sfx.well(); makeNoise(x, z, 18, true);
 }
 export function wellMesh(x, z, t, nid, ghost){
-  const W = WEAPONS.gravity, g = new THREE.Group(); g.position.set(x, 0, z);
+  const W = WEAPONS.gravity, g = new THREE.Group(); onGround(g, x, z);
   const core = new THREE.Mesh(SH.orbGeo, SH.voidMat); core.position.y = 1.2; core.scale.setScalar(1.5);
   const r1 = new THREE.Mesh(SH.wellRingGeo, SH.wellRingMat); r1.position.y = 1.2; r1.scale.setScalar(0.8);
   const r2 = new THREE.Mesh(SH.wellRingGeo, SH.wellRingMat); r2.position.y = 1.2; r2.scale.setScalar(1.25);
@@ -358,7 +358,7 @@ function updateWells(dt){
         if (w.implosion) damageZombie(z, SP.implosion.dmg*lvMul(), dx/d*3, dz/d*3, 'blast', w.by);
         stunZombie(z, W.stun);
       }
-      burst(new THREE.Vector3(w.x, 1.2, w.z), 'void', 24, 7); shockwave(w.x, w.z, W.radius, 0xc8a8ff);
+      burst(gv(w.x, 1.2, w.z), 'void', 24, 7); shockwave(w.x, w.z, W.radius, 0xc8a8ff);
       shake(0.3); sfx.pop();
       scene.remove(w.g); wells.splice(i,1); emit(['hz-', w.nid]);
     }
@@ -380,10 +380,10 @@ function chargeRail(p, w, dt){
 // Railgun charge look (k = 0..1): the muzzle brightens while sparks get sucked into it.
 export function chargeFx(p, k, dt){
   const ux = Math.sin(p.angle), uz = Math.cos(p.angle), mx = p.pos.x + ux*1.6, mz = p.pos.z + uz*1.6;
-  muzzleLight.position.set(mx, 1.3, mz); muzzleLight.intensity = Math.max(muzzleLight.intensity, 0.5 + 2.5*k);
+  muzzleLight.position.set(mx, groundAt(mx, mz) + 1.3, mz); muzzleLight.intensity = Math.max(muzzleLight.intensity, 0.5 + 2.5*k);
   if (Math.random() < dt*(10 + 40*k)){
     const a = Math.random()*Math.PI*2, r = mr(0.6, 1.2);
-    puff(mx + Math.sin(a)*r, 1.2 + mr(-0.5,0.5), mz + Math.cos(a)*r, -Math.sin(a)*r/0.25, 0, -Math.cos(a)*r/0.25, 0.25, SH.frostMats, null, -0.7);
+    puff(mx + Math.sin(a)*r, groundAt(mx, mz) + 1.2 + mr(-0.5,0.5), mz + Math.cos(a)*r, -Math.sin(a)*r/0.25, 0, -Math.cos(a)*r/0.25, 0.25, SH.frostMats, null, -0.7);
   }
 }
 function updateRail(dt){
@@ -408,22 +408,22 @@ function fireRail(p, w){
   for (let s=0.9;s<S.range;s+=0.2){
     const op = isOpaqueTile(Math.floor((px + ux*s)/TILE), Math.floor((pz + uz*s)/TILE));
     if (op && !wall) wall = 1;
-    else if (!op && wall === 1){ wall = 2; burst(new THREE.Vector3(px + ux*s, 1.2, pz + uz*s), 'spark', 8, 4); }
+    else if (!op && wall === 1){ wall = 2; burst(gv(px + ux*s, 1.2, pz + uz*s), 'spark', 8, 4); }
     else if (op && wall === 2 && !phase){ end = s; break; }
     else if (!op && wall === 2 && phase) wall = 0;  // phase beam: through every wall
   }
   const onBeam = (x, z, r) => { const rx = x - px, rz = z - pz, t = rx*ux + rz*uz; return t > 0.3 && t < end && Math.abs(rx*uz - rz*ux) < r; };
   for (const z of zombies.slice()){
     if (!targetable(z) || !onBeam(z.pos.x, z.pos.z, z.r + 0.35)) continue;
-    burst(new THREE.Vector3(z.pos.x, 1.2, z.pos.z), 'spark', 6, 4);
+    burst(gv(z.pos.x, 1.2, z.pos.z), 'spark', 6, 4);
     damageZombie(z, S.dmg, ux*W.kb*S.kb, uz*W.kb*S.kb, 'rail', p);
     if (stun) stunZombie(z, SP.concussive.stun);
   }
   const cr = world.crystal;
-  if (cr && cr.alive && onBeam(cr.pos.x, cr.pos.z, CRYSTAL_R + 0.3)){ hitCrystal(S.dmg); burst(new THREE.Vector3(cr.pos.x, 1.4, cr.pos.z), 'crystal', 10, 5); }
+  if (cr && cr.alive && onBeam(cr.pos.x, cr.pos.z, CRYSTAL_R + 0.3)){ hitCrystal(S.dmg); burst(gv(cr.pos.x, 1.4, cr.pos.z), 'crystal', 10, 5); }
   beamFx(px, pz, p.angle, end);
   emit(['beam', r2(px), r2(pz), Math.round(p.angle*1000)/1000, r2(end)]);
-  burst(new THREE.Vector3(px + ux*end, 1.2, pz + uz*end), 'spark', 10, 5);
+  burst(gv(px + ux*end, 1.2, pz + uz*end), 'spark', 10, 5);
   muzzle(px + ux*1.6, pz + uz*1.6, 6);
   shake(0.35, p);
   pushPlayer(p, -ux*4, -uz*4);  // recoil
@@ -437,7 +437,7 @@ export function beamFx(px, pz, a, end){
     const mat = new THREE.MeshBasicMaterial({ color, transparent:true, opacity:0.9, blending:THREE.AdditiveBlending, depthWrite:false });
     const m = new THREE.Mesh(SH.boltGeo, mat); m.scale.set(w0, w0, end - 0.9); m.position.z = (end + 0.9)/2; g.add(m); mats.push(mat);
   }
-  g.position.set(px, 1.2, pz); g.rotation.y = a; scene.add(g);
+  g.position.set(px, groundAt(px, pz) + 1.2, pz); g.rotation.y = a; scene.add(g);
   beams.push({ g, mats, t:0, T:0.45 });
 }
 function updateBeams(dt){
@@ -475,7 +475,7 @@ function shardKill(p, w){
     const a0 = Math.atan2(b.dx, b.dz);
     for (const da of [-0.45, 0.45]){
       const a = a0 + da;
-      addBullet('shard', z.pos.x + Math.sin(a)*(z.r + 0.2), 1.15, z.pos.z + Math.cos(a)*(z.r + 0.2), a, WEAPONS.shard.speed, 0.6, { damage:b.damage, pierce:1, kb:1, bounce:1, owner:p, split:true, kill:b.kill });
+      addBullet('shard', z.pos.x + Math.sin(a)*(z.r + 0.2), z.pos.y + 1.15, z.pos.z + Math.cos(a)*(z.r + 0.2), a, WEAPONS.shard.speed, 0.6, { damage:b.damage, pierce:1, kb:1, bounce:1, owner:p, split:true, kill:b.kill });
     }
   };
 }
@@ -511,8 +511,8 @@ function droneFor(p, dt){
   if (!drone){ drone = p.drone = droneModel(); scene.add(drone); drone.visible = false; p.droneA = 0; p.droneShot = 0; }
   p.droneA += dt*1.3;
   const droneA = p.droneA;
-  const tx = p.pos.x + Math.sin(droneA)*W.orbit, tz = p.pos.z + Math.cos(droneA)*W.orbit, ty = 2.6 + Math.sin(droneA*3)*0.15;
-  if (!drone.visible){ drone.visible = true; drone.position.set(p.pos.x, 1.5, p.pos.z); }
+  const tx = p.pos.x + Math.sin(droneA)*W.orbit, tz = p.pos.z + Math.cos(droneA)*W.orbit, ty = p.pos.y + 2.6 + Math.sin(droneA*3)*0.15;
+  if (!drone.visible){ drone.visible = true; drone.position.set(p.pos.x, p.pos.y + 1.5, p.pos.z); }
   drone.position.x += (tx - drone.position.x)*Math.min(1, dt*5); drone.position.z += (tz - drone.position.z)*Math.min(1, dt*5);
   drone.position.y += (ty - drone.position.y)*Math.min(1, dt*4);
   for (const r of drone.rotors) r.rotation.y += dt*40;

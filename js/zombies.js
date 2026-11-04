@@ -7,7 +7,7 @@ import { mr, lerpAngle } from './utils.js';
 import { scene } from './renderer.js';
 import { SH } from './assets.js';
 import { state, world, zombies, dying, dev, players, net } from './state.js';
-import { reachable, isBlockedTile, resolveCircle, lineOfSight, flowTo, groundAt, levelOf, walkClear } from './grid.js';
+import { reachable, isBlockedTile, resolveCircle, lineOfSight, flowTo, groundAt, stepTo, walkClear, gv, onGround } from './grid.js';
 import { breakAhead, hitBreak } from './breakables.js';
 import { viewed, nearestPlayer, nearestDist, cheats, capParts } from './player.js';
 import { hurtPlayer } from './combat.js';
@@ -98,7 +98,7 @@ export function spawnZombieAt(x,z,horde,alert,guard,exclude,rise = mr(RISE[0], R
     // Facing the player it's coming for (if any), buried up to the top of its head.
     if (t) m.g.rotation.y = Math.atan2(t.pos.x - x, t.pos.z - z);
     m.b.position.y = -RISE_DEPTH;
-    addDecal(x, z, 1.3, SH.holeMat); burst(new THREE.Vector3(x, 0.2, z), 'dirt', 8, 2.5);
+    addDecal(x, z, 1.3, SH.holeMat); burst(gv(x, 0.2, z), 'dirt', 8, 2.5);
     const v = viewed(); if (v && Math.hypot(v.pos.x - x, v.pos.z - z) < 22) playSfx('dig');
   }
   zombies.push(zz); if (horde) state.hordeAlive++;
@@ -118,7 +118,7 @@ export function spawnTurnedPlayer(p){
   const z = spawnZombieAt(p.pos.x, p.pos.z, false, false, false, null, 0, { type:'walker', mods:{}, look:p.mats[0].color.getHex() });
   z.g.rotation.y = p.angle;
   z.stun = 1.8; z.fromPlayer = p.name;
-  burst(new THREE.Vector3(p.pos.x, 1.2, p.pos.z), 'blood', 14, 3);
+  burst(gv(p.pos.x, 1.2, p.pos.z), 'blood', 14, 3);
   return z;
 }
 
@@ -129,7 +129,7 @@ function updateRise(z, dt){
   z.rise -= dt;
   if (z.rise <= 0){
     z.rise = 0; z.b.position.y = 0; z.b.rotation.set(0, 0, 0);
-    burst(new THREE.Vector3(z.pos.x, 0.3, z.pos.z), 'dirt', 6, 2, true);
+    burst(gv(z.pos.x, 0.3, z.pos.z), 'dirt', 6, 2, true);
     return;
   }
   const k = 1 - z.rise/z.riseT, u = 1 - k, t = z.riseT - z.rise;
@@ -137,7 +137,7 @@ function updateRise(z, dt){
   z.b.rotation.set(0.55*u, 0, Math.sin(t*14)*0.1*u);
   z.arms[0].rotation.x = -0.1 - 0.9*u + Math.sin(t*9)*0.4*u;
   z.arms[1].rotation.x = -0.1 - 0.9*u - Math.sin(t*9)*0.4*u;
-  if (Math.random() < dt*14*u) burst(new THREE.Vector3(z.pos.x + mr(-0.4,0.4), 0.15, z.pos.z + mr(-0.4,0.4)), 'dirt', 2, 2, true);
+  if (Math.random() < dt*14*u) burst(gv(z.pos.x + mr(-0.4,0.4), 0.15, z.pos.z + mr(-0.4,0.4)), 'dirt', 2, 2, true);
 }
 
 // ---------- Explosive warning ring ----------
@@ -156,7 +156,7 @@ function updateWarnRing(z, nd, t){
   const w = z.warn, E = ZMODS.explosive;
   w.visible = !z.dead && (z.fuse > 0 || (z.alert && nd < 14));
   if (!w.visible) return;
-  w.position.x = z.pos.x; w.position.z = z.pos.z;
+  onGround(w, z.pos.x, z.pos.z, 0.13);
   if (z.fuse > 0){
     const k = 1 - z.fuse/E.fuse, blink = Math.floor(z.fuse*16) % 2;
     w.ring.scale.setScalar(E.radius); w.ring.material.opacity = blink ? 1 : 0.6;
@@ -283,7 +283,7 @@ function perceive(z){
   else if (see){ z.tgt = see; z.lx = see.pos.x; z.lz = see.pos.z; if (!away || sd < AI.closeR) z.mem = AI.memory; }
   if (z.mode !== 'idle' && !see){
     const ret = z.mode === 'return', tx = ret ? z.hx : z.lx, tz = ret ? z.hz : z.lz;
-    z.direct = Math.hypot(tx - z.pos.x, tz - z.pos.z) < 30 && lineOfSight(z.pos.x, z.pos.z, tx, tz) && walkClear(z.pos.x, z.pos.z, tx, tz, z.pos.y);
+    z.direct = Math.hypot(tx - z.pos.x, tz - z.pos.z) < 30 && lineOfSight(z.pos.x, z.pos.z, tx, tz) && walkClear(z.pos.x, z.pos.z, tx, tz);
   }
 }
 // Memory and patience: hunters forget you (fast once far from home), searchers give up, and
@@ -309,16 +309,16 @@ function think(z, dt, dist){
 }
 // Step toward the neighbouring tile with the lowest value in a flow field (null if none is lower).
 // z = anything with a pos (bots.js uses it to follow players).
-// Never toward a raised tile it can't climb onto (fields only lead up ramps, but a neighbour up a
-// ledge can still score lower).
+// Never up a ledge it can't climb (fields only lead up stairs, but a neighbour up a ledge can still
+// score lower).
 export function descend(z, f){
-  const tx = Math.floor(z.pos.x/TILE), tz = Math.floor(z.pos.z/TILE), L = world.city.level, lv = levelOf(z.pos.y);
+  const tx = Math.floor(z.pos.x/TILE), tz = Math.floor(z.pos.z/TILE);
   let best = (tx>=0&&tz>=0&&tx<N&&tz<N) ? f[tz*N+tx] : -1, bx = -1, bz = -1;
   for (const [ox,oz] of DIRS8){
     const nx = tx+ox, nz = tz+oz;
     if (nx < 0 || nz < 0 || nx >= N || nz >= N) continue;
     const d = f[nz*N+nx]; if (d < 0) continue;
-    if (L && L[nz*N+nx] > lv + 1) continue;
+    if (!stepTo(tz*N+tx, nz*N+nx, ox, oz)) continue;
     if (ox !== 0 && oz !== 0 && (isBlockedTile(tx+ox,tz) || isBlockedTile(tx,tz+oz))) continue;
     if (best < 0 || d < best){ best = d; bx = nx; bz = nz; }
   }
@@ -391,13 +391,13 @@ export function freezeZombie(z, t){
   if (z.windup > 0) cancelScream(z);
   z.b.rotation.set(0, 0, 0); setGlow(z, ICE_EM);
   if (!z.ice){ z.ice = new THREE.Mesh(SH.iceGeo, SH.iceMat); z.g.add(z.ice); }
-  burst(new THREE.Vector3(z.pos.x, 1, z.pos.z), 'ice', 8, 2); sfx.freeze();
+  burst(gv(z.pos.x, 1, z.pos.z), 'ice', 8, 2); sfx.freeze();
 }
 function thaw(z){
   z.frozen = 0; z.chill = 0.4;
   if (z.ice){ z.g.remove(z.ice); z.ice = null; }
   setGlow(z, null);
-  if (!z.dead) burst(new THREE.Vector3(z.pos.x, 1, z.pos.z), 'ice', 6, 2.5);
+  if (!z.dead) burst(gv(z.pos.x, 1, z.pos.z), 'ice', 6, 2.5);
 }
 // Who z is fighting right now (null = nobody: business as usual).
 function foeOf(z, dt){
@@ -438,7 +438,7 @@ export function damageZombie(z, dmg, dx, dz, cause, by){
     // Frozen solid: fire melts the ice, anything else shatters it, zombie and all.
     if (cause === 'fire'){ thaw(z); return false; }
     if (dmg > 0){
-      burst(new THREE.Vector3(z.pos.x, 1.1, z.pos.z), 'ice', 22, 6); sfx.shatterIce();
+      burst(gv(z.pos.x, 1.1, z.pos.z), 'ice', 22, 6); sfx.shatterIce();
       killZombie(z, true, 'blast', dx, dz, 99, by);
       if (z.shrapnelBy) shrapnelBurst(z);  // frozen by a cryo sprayer with Shrapnel ice
       return false;
@@ -454,8 +454,8 @@ export function damageZombie(z, dmg, dx, dz, cause, by){
   for (const m of z.mats) m.emissive.setHex(quiet ? 0x804010 : blocked ? 0x2a3a55 : 0x663333);
   z.vel.x += dx*z.kb; z.vel.z += dz*z.kb;
   if (!quiet){
-    if (blocked){ burst(new THREE.Vector3(z.pos.x - dx/l*0.8*z.g.scale.x, 1.2, z.pos.z - dz/l*0.8*z.g.scale.x), 'spark', 5, 3); sfx.clank(); }
-    else { burst(new THREE.Vector3(z.pos.x, 1.2, z.pos.z), 'blood', 4, 3); sfx.hit(); }
+    if (blocked){ burst(gv(z.pos.x - dx/l*0.8*z.g.scale.x, 1.2, z.pos.z - dz/l*0.8*z.g.scale.x), 'spark', 5, 3); sfx.clank(); }
+    else { burst(gv(z.pos.x, 1.2, z.pos.z), 'blood', 4, 3); sfx.hit(); }
   }
   if (z.hp <= 0) killZombie(z, true, cause, dx, dz, dmg, by);
   return blocked;
@@ -477,7 +477,7 @@ export function killZombie(z, credit = true, cause, dx = 0, dz = 0, dmg = 0, by)
   if (z.horde) state.hordeAlive--;
   if (credit){ state.kills++; state.cityKills++; if (by) by.kills++; }
   addDecal(z.pos.x, z.pos.z);
-  burst(new THREE.Vector3(z.pos.x, 1, z.pos.z), 'blood', 10, 4);
+  burst(gv(z.pos.x, 1, z.pos.z), 'blood', 10, 4);
   for (const m of z.mats) m.emissive.setHex(0);
   if (z.type === 'screamer') cancelScream(z);
   if (z.mods.explosive) z.parts.cans.visible = false;
@@ -502,8 +502,12 @@ function shoveFromPlayers(z, tp){
   for (const p of players){
     if (p.dead) continue;
     const minD = z.r + p.radius, ndx = p.pos.x - z.pos.x, ndz = p.pos.z - z.pos.z, nd = Math.hypot(ndx, ndz);
-    // Up on a ledge (or a ramp's top) above it, a player is out of its reach.
-    if (Math.abs(p.pos.y - z.pos.y) > 0.6 && !p.vault && !p.netVault) continue;
+    // Up on a ledge above it (or down below one), a player is out of its reach; on a slope or stairs
+    // with nothing between them they're not.
+    if (Math.abs(p.pos.y - z.pos.y) > 0.6 && !p.vault && !p.netVault){
+      const zx = Math.floor(z.pos.x/TILE), zz = Math.floor(z.pos.z/TILE), px = Math.floor(p.pos.x/TILE), pz = Math.floor(p.pos.z/TILE), dx = px - zx, dz = pz - zz;
+      if (Math.abs(dx) > 1 || Math.abs(dz) > 1 || !stepTo(zz*N + zx, pz*N + px, dx, dz) || !stepTo(pz*N + px, zz*N + zx, -dx, -dz)) continue;
+    }
     if (nd < minD + 0.35 && (!reach || p === tp)) reach = p;
     if (nd < minD && nd > 1e-4){ z.pos.x = p.pos.x - ndx/nd*minD; z.pos.z = p.pos.z - ndz/nd*minD; }
   }
@@ -539,7 +543,7 @@ export function updateZombies(dt){
       if (z.turned <= 0){
         unturn(z);
         // Poisoned brew (a flask special): when the turn wears off, it drops dead.
-        if (z.poison){ burst(new THREE.Vector3(z.pos.x, 1, z.pos.z), 'brew', 10, 3); killZombie(z, true, 'melee', 0, 0, 1, z.turnBy); continue; }
+        if (z.poison){ burst(gv(z.pos.x, 1, z.pos.z), 'brew', 10, 3); killZombie(z, true, 'melee', 0, 0, 1, z.turnBy); continue; }
       }
     }
     const turned = z.turned > 0, foe = foeOf(z, dt);
@@ -578,7 +582,7 @@ export function updateZombies(dt){
     } else if (z.mode === 'hunt'){
       if (z.sees && tp){
         // Down its player's flow field, or straight at them up close (or when cut off, e.g. in a cell).
-        dir = dist < 4.5 && walkClear(z.pos.x, z.pos.z, tp.pos.x, tp.pos.z, z.pos.y) ? null : descend(z, tp.dist);
+        dir = dist < 4.5 && walkClear(z.pos.x, z.pos.z, tp.pos.x, tp.pos.z) ? null : descend(z, tp.dist);
         if (!dir){ desX = dx/dist; desZ = dz/dist; }
       }
       // Lost sight: go to where it last saw (or heard) you, and look around there.
@@ -648,9 +652,9 @@ export function updateZombies(dt){
       // Dazed: slow drunken sway, arms hanging, the odd spark above the head.
       z.b.rotation.z = Math.sin(t*7 + z.phase)*0.2; z.b.rotation.x = 0.15;
       z.arms[0].rotation.x = z.arms[1].rotation.x = 0.3;
-      if (Math.random() < dt*4) burst(new THREE.Vector3(z.pos.x, 2.1*z.g.scale.y, z.pos.z), 'spark', 1, 0.8, true);
+      if (Math.random() < dt*4) burst(gv(z.pos.x, 2.1*z.g.scale.y, z.pos.z), 'spark', 1, 0.8, true);
     } else if (z.stun < 0){ z.stun = 0; z.b.rotation.x = 0; }
-    if (z.flash <= 0 && turned && Math.random() < dt*3) burst(new THREE.Vector3(z.pos.x, 1.9*z.g.scale.y, z.pos.z), 'brew', 1, 0.6, true);
+    if (z.flash <= 0 && turned && Math.random() < dt*3) burst(gv(z.pos.x, 1.9*z.g.scale.y, z.pos.z), 'brew', 1, 0.6, true);
     if (z.alert){ z.groan -= dt; if (z.groan <= 0){ z.groan = mr(5,11); if (vd < 14) playSfx('groan'); } }
   }
 }
@@ -660,8 +664,8 @@ export function updateZombies(dt){
 function startClimb(z, b){
   const fx = (b.x + 0.5)*TILE - z.pos.x, fz = (b.z + 0.5)*TILE - z.pos.z;
   const ax = Math.abs(fx) >= Math.abs(fz) ? Math.sign(fx) : 0, az = ax ? 0 : Math.sign(fz), lx = b.x + ax, lz = b.z + az;
-  const L = world.city.level, r = z.r;
-  if (!walkable(world.city.grid[lz*N + lx]) || (L && L[lz*N + lx] > levelOf(z.pos.y) + 1)) return false;
+  const r = z.r;
+  if (!walkable(world.city.grid[lz*N + lx]) || !stepTo(b.z*N + b.x, lz*N + lx, ax, az)) return false;
   const ex = ax ? (ax > 0 ? lx*TILE + r + 0.15 : (lx + 1)*TILE - r - 0.15) : Math.min((b.x + 1)*TILE - r, Math.max(b.x*TILE + r, z.pos.x));
   const ez = az ? (az > 0 ? lz*TILE + r + 0.15 : (lz + 1)*TILE - r - 0.15) : Math.min((b.z + 1)*TILE - r, Math.max(b.z*TILE + r, z.pos.z));
   z.climb = { t:0, sx:z.pos.x, sz:z.pos.z, sy:z.pos.y, ex, ez, ey:groundAt(ex, ez) };
@@ -716,7 +720,7 @@ function makeCorpse(z, cause, dx, dz, dmg){
       const ox = tmpV.x - z.pos.x, oz = tmpV.z - z.pos.z, s = mr(3,7);
       addGib(d, m, ux*s + ox*5 + mr(-2.5,2.5), mr(5,10), uz*s + oz*5 + mr(-2.5,2.5), 16);
     }
-    burst(new THREE.Vector3(z.pos.x, 1, z.pos.z), 'blood', 18, 7, true);
+    burst(gv(z.pos.x, 1, z.pos.z), 'blood', 18, 7, true);
     for (let i=0;i<3;i++) addDecal(z.pos.x + mr(-1.2,1.2), z.pos.z + mr(-1.2,1.2), mr(0.8,1.3), undefined, true);
     return d;
   }
@@ -745,7 +749,7 @@ function makeCorpse(z, cause, dx, dz, dmg){
       d.flop = d.flop.filter(f => f.m !== m);
     }
     d.spurt = 0.8;
-    burst(new THREE.Vector3(z.pos.x, 1.3, z.pos.z), 'blood', 10, 4, true);
+    burst(gv(z.pos.x, 1.3, z.pos.z), 'blood', 10, 4, true);
   }
   return d;
 }
@@ -844,7 +848,7 @@ export function animateMirror(z, dt, t, vd, vl){
   z.g.visible = vd < 50;
   if (z.rise > 0){
     if (f & F.rising){ updateRise(z, dt); if (z.rise <= 0) z.rise = 0.01; return; }
-    z.rise = 0; z.b.position.y = 0; z.b.rotation.set(0, 0, 0); burst(new THREE.Vector3(z.pos.x, 0.3, z.pos.z), 'dirt', 6, 2, true);
+    z.rise = 0; z.b.position.y = 0; z.b.rotation.set(0, 0, 0); burst(gv(z.pos.x, 0.3, z.pos.z), 'dirt', 6, 2, true);
   }
   // Turned: pink glow and a heart; frozen: a block of ice and a blue glow.
   if ((f & F.turned) && !(z.turned > 0)){ z.turned = 1; setGlow(z, TURN_EM); z.mark.material = SH.markMats.turned; z.mark.scale.setScalar(0.7); z.mark.visible = true; z.markT = 0; }
@@ -890,10 +894,10 @@ export function animateMirror(z, dt, t, vd, vl){
   if (stunned){
     z.b.rotation.z = Math.sin(t*7 + z.phase)*0.2; z.b.rotation.x = 0.15;
     z.arms[0].rotation.x = z.arms[1].rotation.x = 0.3;
-    if (Math.random() < dt*4) burst(new THREE.Vector3(z.pos.x, 2.1*z.g.scale.y, z.pos.z), 'spark', 1, 0.8, true);
+    if (Math.random() < dt*4) burst(gv(z.pos.x, 2.1*z.g.scale.y, z.pos.z), 'spark', 1, 0.8, true);
   } else if (z.stunned){ z.b.rotation.x = 0; }
   z.stunned = stunned;
-  if (z.turned && Math.random() < dt*3) burst(new THREE.Vector3(z.pos.x, 1.9*z.g.scale.y, z.pos.z), 'brew', 1, 0.6, true);
-  if ((f & F.burning) && Math.random() < dt*14) burst(new THREE.Vector3(z.pos.x + mr(-0.3,0.3), mr(0.6,1.6)*z.g.scale.y, z.pos.z + mr(-0.3,0.3)), 'fire', 1, 0.8, true);
+  if (z.turned && Math.random() < dt*3) burst(gv(z.pos.x, 1.9*z.g.scale.y, z.pos.z), 'brew', 1, 0.6, true);
+  if ((f & F.burning) && Math.random() < dt*14) burst(gv(z.pos.x + mr(-0.3,0.3), mr(0.6,1.6)*z.g.scale.y, z.pos.z + mr(-0.3,0.3)), 'fire', 1, 0.8, true);
   if (z.alert){ z.groan -= dt; if (z.groan <= 0){ z.groan = mr(5,11); if (vd < 14) playSfx('groan'); } }
 }

@@ -11,7 +11,7 @@ import { TILE, N, T, BREAKABLES, BARRICADE, walkable } from './config.js';
 import { mr } from './utils.js';
 import { world, zombies, players, drops, pickups } from './state.js';
 import { AI } from './threats.js';
-import { clearFlowCache, updateFlow, groundAt, tileLevel, levelOf } from './grid.js';
+import { clearFlowCache, updateFlow, groundAt } from './grid.js';
 import { burst } from './fx.js';
 import { makeNoise } from './zombies.js';
 import { sfx } from './audio.js';
@@ -30,7 +30,7 @@ const falling = [];  // broken ones toppling over (cosmetic)
 export function initBreaks(c){
   world.breaks = new Map(); world.broken = []; falling.length = 0;
   for (const p of c.props){
-    if (p.kind !== 'fence') continue;
+    if (p.kind !== 'fence' || p.broken) continue;  // pieces already lying broken are only scenery
     const B = BREAKABLES[p.style], idx = p.z*N + p.x;
     world.breaks.set(idx, { idx, x:p.x, z:p.z, kind:p.style, hp:B.hp, max:B.hp, under:p.under, g:p.g, lean:0, shake:0, dx:0, dz:1 });
   }
@@ -106,7 +106,7 @@ export function placeBarricade(p){
   const idx = tz*N + tx, x = (tx + 0.5)*TILE, z = (tz + 0.5)*TILE;
   const no = msg => { toast(msg, 'bad', p); return false; };
   if (tx < 1 || tz < 1 || tx >= c.n - 2 || tz >= c.n - 1 || !walkable(c.grid[idx])) return no('Can’t put a barricade there');
-  if (tileLevel(tx, tz) !== levelOf(p.pos.y)) return no('The ground there isn’t level with you');
+  if (Math.abs(groundAt(x, z) - p.pos.y) > 0.8) return no('The ground there isn’t level with you');
   const inTile = (o, r) => Math.abs(o.x - x) < TILE/2 + r && Math.abs(o.z - z) < TILE/2 + r;
   if (zombies.some(o => !o.dead && inTile(o.pos, o.r)) || players.some(o => !o.dead && inTile(o.pos, o.radius))) return no('Something’s in the way');
   if (drops.some(d => inTile({ x:d.px, z:d.pz }, 0)) || pickups.some(h => inTile(h.g.position, 0))) return no('Pick up what’s there first');

@@ -191,7 +191,7 @@ function handle(e){
     case 'rg': addRing(a, b, c, d, f, g, h, i, j, true); break;
     case 'sh': state.shake = Math.max(state.shake, a); break;
     case 'fl': flashAt(a, b); break;
-    case 'mz': muzzleLight.position.set(a, 1.3, b); muzzleLight.intensity = Math.max(muzzleLight.intensity, c); break;
+    case 'mz': muzzleLight.position.set(a, groundAt(a, b) + 1.3, b); muzzleLight.intensity = Math.max(muzzleLight.intensity, c); break;
     case 't': toast(a, b); break;
     case 'ft': floatText(a, b); break;
     case 'bn': banner(a, b, c); break;

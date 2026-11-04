@@ -1,5 +1,6 @@
 // ---------- Grid queries: collision, flow field, fog of war ----------
-import { TILE, N, T, RAISE, walkable, seeThrough, DIRS8 } from './config.js';
+import * as THREE from 'three';
+import { TILE, N, T, walkable, seeThrough, DIRS8, cornerH, stepUp } from './config.js';
 import { AI } from './threats.js';
 import { clamp } from './utils.js';
 import { world, players } from './state.js';
@@ -12,43 +13,56 @@ export function isBlockedTile(tx,tz){
   if (tx < 0 || tz < 0 || tx >= N || tz >= N) return true;
   return !walkable(world.city.grid[tz*N+tx]);
 }
-// ---------- Raised ground ----------
-// Height of the ground at world point (x,z): 0, RAISE on raised tiles, a slope across ramps
-// (city.rampDir = the D4 direction you climb in).
-const D4 = [[1,0],[-1,0],[0,1],[0,-1]];
+// ---------- Terrain ----------
+// Height of the ground at world point (x,z): the blend of its tile's corner heights (city.hc).
 export function groundAt(x, z){
-  const c = world.city; if (!c || !c.level) return 0;
+  const c = world.city; if (!c || !c.hc) return 0;
   const tx = Math.floor(x/TILE), tz = Math.floor(z/TILE);
   if (tx < 0 || tz < 0 || tx >= N || tz >= N) return 0;
-  const l = c.level[tz*N+tx];
-  if (l !== 1) return l ? RAISE : 0;
-  const [dx, dz] = D4[c.rampDir[tz*N+tx]], fx = x/TILE - tx, fz = z/TILE - tz;
-  return RAISE*(dx > 0 ? fx : dx < 0 ? 1 - fx : dz > 0 ? fz : 1 - fz);
+  return cornerH(c.hc, tz*N + tx, x/TILE - tx, z/TILE - tz);
 }
-// Level (0 ground, 1 ramp, 2 raised) of something standing at height y.
-export const levelOf = y => y < RAISE*0.3 ? 0 : y > RAISE*0.7 ? 2 : 1;
-export const tileLevel = (tx, tz) => world.city.level ? world.city.level[tz*N+tx] : 0;
+// Which way the ground faces at (x,z) (straight up on the flat).
+const UP = new THREE.Vector3(0, 1, 0), nrm = new THREE.Vector3(), qN = new THREE.Quaternion(), qFlat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI/2), qYaw = new THREE.Quaternion();
+export function groundNormal(x, z, out = nrm){
+  const c = world.city; out.set(0, 1, 0); if (!c || !c.hc) return out;
+  const tx = Math.floor(x/TILE), tz = Math.floor(z/TILE); if (tx < 0 || tz < 0 || tx >= N || tz >= N) return out;
+  const k = (tz*N + tx)*4, H = c.hc, fx = x/TILE - tx, fz = z/TILE - tz;
+  return out.set(-((H[k+1] - H[k])*(1 - fz) + (H[k+3] - H[k+2])*fz)/TILE, 1, -((H[k+2] - H[k])*(1 - fx) + (H[k+3] - H[k+1])*fx)/TILE).normalize();
+}
+// Lays something on the ground at (x,z), lift above it, tilted to the slope and turned yaw about it. flat:
+// it's a plane made facing +z (rings, discs, decals), laid down onto the ground first.
+export function onGround(o, x, z, lift = 0, yaw = 0, flat = false){
+  o.position.set(x, groundAt(x, z) + lift, z);
+  qN.setFromUnitVectors(UP, groundNormal(x, z)); qYaw.setFromAxisAngle(UP, yaw);
+  o.quaternion.copy(qN).multiply(qYaw); if (flat) o.quaternion.multiply(qFlat);
+  return o;
+}
+// A point h above the ground at (x,z) (effects: sparks, blood, rings).
+export const gv = (x, h, z) => new THREE.Vector3(x, groundAt(x, z) + h, z);
+// Can someone on tile a step onto neighbour b, (dx,dz) from it? (No: a ledge, they could only drop down it.)
+export const stepTo = (a, b, dx, dz) => { const c = world.city; return a === b || !c || !c.hc || stepUp(c.hc, a, b, dx, dz); };
 // Snaps a position's height to the ground under it (after a teleport or a spawn).
 export function toGround(p){ p.y = groundAt(p.x, p.z); return p; }
-// True if someone at height y can walk in a straight line from (x0,z0) to (x1,z1): nothing blocking
-// on the way and no ledge to climb (fences and raised ground let sight through but not feet).
-export function walkClear(x0, z0, x1, z1, y = 0){
-  let lv = levelOf(y);
+// True if someone can walk in a straight line from (x0,z0) to (x1,z1): nothing blocking on the way and
+// no ledge to climb (fences and ledges let sight through but not feet).
+export function walkClear(x0, z0, x1, z1){
   const n = Math.ceil(Math.hypot(x1-x0, z1-z0)/0.5);
+  let px = Math.floor(x0/TILE), pz = Math.floor(z0/TILE);
   for (let i=1;i<=n;i++){
     const k = i/n, tx = Math.floor((x0 + (x1-x0)*k)/TILE), tz = Math.floor((z0 + (z1-z0)*k)/TILE);
-    if (isBlockedTile(tx, tz)) return false;
-    const l = tileLevel(tx, tz); if (l > lv + 1) return false; lv = l;
+    if (tx === px && tz === pz) continue;
+    if (isBlockedTile(tx, tz) || !stepTo(pz*N + px, tz*N + tx, Math.sign(tx - px), Math.sign(tz - pz))) return false;
+    px = tx; pz = tz;
   }
   return true;
 }
-// Pushes a circle at p (radius r) out of any blocked tiles, and out of raised tiles it can't step up
-// onto from its height p.y; then sets p.y to the ground under it (stepping up a ramp, dropping off a ledge).
+// Pushes a circle at p (radius r) out of any blocked tiles, and out of neighbouring tiles it can't step up
+// onto from the tile it's on (a ledge); then sets p.y to the ground under it (up a slope, off a ledge).
 export function resolveCircle(p, r){
   const tx0 = Math.floor((p.x-r)/TILE), tx1 = Math.floor((p.x+r)/TILE), tz0 = Math.floor((p.z-r)/TILE), tz1 = Math.floor((p.z+r)/TILE);
-  const L = world.city.level, lv = levelOf(p.y);
+  const ox = Math.floor(p.x/TILE), oz = Math.floor(p.z/TILE), own = oz*N + ox;
   for (let tz=tz0;tz<=tz1;tz++) for (let tx=tx0;tx<=tx1;tx++){
-    if (!isBlockedTile(tx,tz) && !(L && L[tz*N+tx] > lv + 1)) continue;
+    if (!isBlockedTile(tx,tz) && (tx === ox && tz === oz || stepTo(own, tz*N + tx, Math.sign(tx - ox), Math.sign(tz - oz)))) continue;
     const minX = tx*TILE, maxX = minX+TILE, minZ = tz*TILE, maxZ = minZ+TILE;
     const cx = clamp(p.x,minX,maxX), cz = clamp(p.z,minZ,maxZ);
     const dx = p.x-cx, dz = p.z-cz, d2 = dx*dx+dz*dz;
@@ -59,7 +73,7 @@ export function resolveCircle(p, r){
       if (m === l) p.x = minX - r; else if (m === rr) p.x = maxX + r; else if (m === t) p.z = minZ - r; else p.z = maxZ + r;
     }
   }
-  if (L) p.y = groundAt(p.x, p.z);
+  if (world.city.hc) p.y = groundAt(p.x, p.z);
 }
 // Tiles bullets fly and zombies see through (open ground and cell bars).
 export function isOpaqueTile(tx,tz){
@@ -69,7 +83,7 @@ export function isOpaqueTile(tx,tz){
 // Distance field from tile (sx,sz) into field (-1 = unreachable): how far each tile is from it on
 // foot. Steps cost 1, but stepping onto a fence or barricade costs extra (it has to be broken down:
 // breakCost() from its health), so a field leads through one only when walking round is longer. Edges
-// follow the raised-ground rule (no climbing a ledge; dropping off one is fine). Most steps cost 1, so
+// follow the terrain (no climbing a ledge; dropping off one is fine). Most steps cost 1, so
 // it's a BFS with the dearer steps held back in `held` until their turn (a small Dijkstra).
 // A blocked start (a crate, a door) seeds its walkable neighbours instead, so noises made at
 // containers can still be walked to.
@@ -77,7 +91,7 @@ const held = [];
 export const breakCost = b => 1 + Math.ceil(b.hp*AI.breakCost);
 function bfs(field, sx, sz){
   field.fill(-1);
-  const c = world.city, grid = c.grid, L = c.level, br = world.breaks;
+  const c = world.city, grid = c.grid, H = c.hc, br = world.breaks;
   let head = 0, tail = 0;
   held.length = 0;
   if (isBlockedTile(sx,sz)){
@@ -97,14 +111,14 @@ function bfs(field, sx, sz){
       field[id] = d; cur = id;
     } else if (head < tail) cur = bfsQueue[head++];
     else break;
-    const cx = cur % N, cz = (cur - cx)/N, cd = field[cur], cl = L ? L[cur] : 0;
+    const cx = cur % N, cz = (cur - cx)/N, cd = field[cur];
     for (let k=0;k<4;k++){
       const nx = cx + DIRS8[k][0], nz = cz + DIRS8[k][1];
       if (nx < 0 || nz < 0 || nx >= N || nz >= N) continue;
       const ni = nz*N+nx;
       if (field[ni] !== -1) continue;
-      // Someone on ni walks to cur: they can't climb more than one level.
-      if (L && cl > L[ni] + 1) continue;
+      // Someone on ni walks to cur: not up a ledge.
+      if (H && !stepUp(H, ni, cur, cx - nx, cz - nz)) continue;
       const g = grid[ni];
       if (g === T.FENCE){
         const b = br && br.get(ni); if (!b) continue;
@@ -134,10 +148,12 @@ export function flowTo(tx, tz){
   return f;
 }
 export function clearFlowCache(){ flowCache.clear(); }
-// Index into city.blocks of the block a world point belongs to (roads count toward the block
-// south-east of them).
+// Index into city.blocks of the block a world point belongs to (city.blockOf per tile: a block that took
+// over a street owns it; other streets count toward the block south-east of them).
 export function blockIndex(x, z){
-  const b = world.city.b, f = v => Math.min(b-1, Math.max(0, Math.floor((v/TILE - 1)/7)));
+  const c = world.city, tx = Math.floor(x/TILE), tz = Math.floor(z/TILE);
+  if (c.blockOf && tx >= 0 && tz >= 0 && tx < N && tz < N) return c.blockOf[tz*N + tx];
+  const b = c.b, f = v => Math.min(b-1, Math.max(0, Math.floor((v/TILE - 1)/7)));
   return f(z)*b + f(x);
 }
 // Marks tiles within radius R as explored (minimap fog of war).
